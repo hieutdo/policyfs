@@ -1,0 +1,12 @@
+root = "/workspace"
+tmp_dir = "tmp"
+
+[build]
+cmd = "true"
+entrypoint = ["/workspace/scripts/fuse.sh", "mount"]
+include_ext = ["go", "mod", "sum", "yaml"]
+exclude_dir = [".git", "tmp", "bin"]
+delay = 500
+
+[log]
+time = true

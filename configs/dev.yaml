@@ -1,0 +1,12 @@
+mountpoint: /mnt/pfs/media
+
+storage_paths:
+  - id: ssd1
+    path: /mnt/ssd1/media
+    indexed: false
+    min_free_gb: 0.1
+
+  - id: hdd1
+    path: /mnt/hdd1/media
+    indexed: true
+    min_free_gb: 0.2

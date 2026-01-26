@@ -1,0 +1,29 @@
+services:
+  dev:
+    container_name: pfs-dev
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    environment:
+      - GOPROXY=https://proxy.golang.org,direct
+      - CGO_ENABLED=1
+    devices:
+      - /dev/fuse
+    device_cgroup_rules:
+      - 'b 7:* rmw'
+      - 'c 10:237 rmw'
+    privileged: true
+    working_dir: /workspace
+    command: sleep infinity
+    volumes:
+      - .:/workspace
+      - go-mod-cache:/go/pkg/mod
+      - go-build-cache:/root/.cache/go-build
+      - pfs-disks:/var/lib/pfs-disks
+    ports:
+      - 40000:40000
+
+volumes:
+  go-mod-cache:
+  go-build-cache:
+  pfs-disks:

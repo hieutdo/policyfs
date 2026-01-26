@@ -1,0 +1,22 @@
+version: 2
+
+run:
+  timeout: 3m
+  tests: true
+
+output:
+  sort-results: true
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+

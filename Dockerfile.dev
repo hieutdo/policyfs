@@ -1,0 +1,40 @@
+FROM golang:1.25-trixie
+
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    pkg-config \
+    fuse3 \
+    libfuse3-dev \
+    inotify-tools \
+    sqlite3 \
+    shfmt \
+    nodejs \
+    npm \
+    util-linux \
+    e2fsprogs \
+    xfsprogs \
+    procps \
+    git \
+    make \
+    bash \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN go install github.com/go-delve/delve/cmd/dlv@latest \
+ && go install github.com/air-verse/air@latest \
+ && go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.8.0 \
+ && go install golang.org/x/tools/cmd/goimports@latest \
+ && npm install -g prettier@3
+
+RUN echo "user_allow_other" >> /etc/fuse.conf
+
+RUN mkdir -p /mnt/ssd1 /mnt/ssd2 /mnt/hdd1 /mnt/hdd2 /mnt/hdd3 \
+    && mkdir -p /mnt/pfs/media \
+    && mkdir -p /etc/pfs/mounts \
+    && mkdir -p /var/lib/pfs-disks \
+    && mkdir -p /var/lib/pfs \
+    && mkdir -p /run/pfs
+
+ENTRYPOINT ["/workspace/scripts/entrypoint.sh"]
+
+CMD ["sleep", "infinity"]

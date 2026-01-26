@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export PATH=/go/bin:/usr/local/go/bin:/usr/local/bin:/usr/bin:$PATH
+
+mode="${1:-all}"
+if [[ "$mode" != "all" && "$mode" != "staged" ]]; then
+  echo "usage: $0 [all|staged]" >&2
+  exit 2
+fi
+
+list_files() {
+  if [[ "$mode" == "staged" ]]; then
+    git diff --name-only --cached --diff-filter=ACMR
+  else
+    git ls-files
+  fi
+}
+
+files=()
+while IFS= read -r f; do
+  [[ -n "$f" ]] && files+=("$f")
+done < <(list_files)
+
+go_files=()
+sh_files=()
+md_files=()
+
+for f in "${files[@]}"; do
+  case "$f" in
+    *.go)
+      go_files+=("$f")
+      ;;
+    *.md)
+      md_files+=("$f")
+      ;;
+    *.sh | scripts/* | .githooks/*)
+      sh_files+=("$f")
+      ;;
+  esac
+done
+
+if ((${#go_files[@]} > 0)); then
+  printf '%s\n' "${go_files[@]}" | xargs -r goimports -w
+fi
+
+if ((${#sh_files[@]} > 0)); then
+  printf '%s\n' "${sh_files[@]}" | xargs -r shfmt -w -i 2 -ci -bn
+fi
+
+if ((${#md_files[@]} > 0)); then
+  prettier -w -- "${md_files[@]}"
+fi

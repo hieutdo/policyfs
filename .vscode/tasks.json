@@ -1,0 +1,103 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "make dev-dlv",
+      "type": "shell",
+      "command": "make",
+      "args": ["dev-dlv"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBackground": true,
+      "problemMatcher": [
+        {
+          "owner": "pfs-dlv",
+          "fileLocation": ["absolute"],
+          "pattern": [
+            {
+              "regexp": "^(/__nomatch__):(\\d+):(.*)$",
+              "file": 1,
+              "line": 2,
+              "message": 3
+            }
+          ],
+          "background": {
+            "activeOnStart": true,
+            "beginsPattern": ".",
+            "endsPattern": "DAP server listening at:"
+          }
+        }
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "make dev-dlv-test",
+      "type": "shell",
+      "command": "make",
+      "args": ["dev-dlv-test"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "problemMatcher": [
+        {
+          "owner": "pfs-dlv",
+          "fileLocation": ["absolute"],
+          "pattern": [
+            {
+              "regexp": "^(/__nomatch__):(\\d+):(.*)$",
+              "file": 1,
+              "line": 2,
+              "message": 3
+            }
+          ],
+          "background": {
+            "activeOnStart": true,
+            "beginsPattern": ".",
+            "endsPattern": "DAP server listening at:"
+          }
+        }
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "make dev-dlv-test-integration",
+      "type": "shell",
+      "command": "make",
+      "args": ["dev-dlv-test-integration"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "problemMatcher": [
+        {
+          "owner": "pfs-dlv",
+          "fileLocation": ["absolute"],
+          "pattern": [
+            {
+              "regexp": "^(/__nomatch__):(\\d+):(.*)$",
+              "file": 1,
+              "line": 2,
+              "message": 3
+            }
+          ],
+          "background": {
+            "activeOnStart": true,
+            "beginsPattern": ".",
+            "endsPattern": "DAP server listening at:"
+          }
+        }
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    }
+  ]
+}

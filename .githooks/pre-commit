@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DCD=${DCD:-"docker compose -f docker-compose.dev.yaml"}
+
+staged_files=()
+while IFS= read -r f; do
+  [[ -n "$f" ]] && staged_files+=("$f")
+done < <(git diff --name-only --cached)
+
+if ! $DCD ps -q dev >/dev/null 2>&1 || [[ -z "$($DCD ps -q dev 2>/dev/null || true)" ]]; then
+  echo "pre-commit: dev container is not running. Run 'make dev' first." >&2
+  exit 1
+fi
+
+make fmt-staged
+
+if ((${#staged_files[@]} > 0)); then
+  git add -- "${staged_files[@]}"
+fi
+
+make lint-staged
