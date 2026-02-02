@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-export PATH=/go/bin:/usr/local/go/bin:/usr/local/bin:/usr/bin:$PATH
-
 mode="${1:-all}"
 if [[ "$mode" != "all" && "$mode" != "staged" ]]; then
   echo "usage: $0 [all|staged]" >&2

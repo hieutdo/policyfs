@@ -8,8 +8,7 @@ import (
 	"testing"
 )
 
-const ssd1Media = "/mnt/ssd1/media"
-
+// TestMountSmoke verifies basic read/write through the mounted filesystem and that data lands in the backing storage root.
 func TestMountSmoke(t *testing.T) {
 	p := filepath.Join(mountPoint, "smoke", "hello.txt")
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
@@ -29,9 +28,9 @@ func TestMountSmoke(t *testing.T) {
 		t.Fatalf("unexpected content: got %q want %q", got, want)
 	}
 
-	backing := filepath.Join(ssd1Media, "smoke", "hello.txt")
+	backing := filepath.Join(storageRoot, "smoke", "hello.txt")
 	if _, err := os.Stat(backing); err != nil {
-		t.Fatalf("expected backing file on ssd1 to exist: %v", err)
+		t.Fatalf("expected backing file in storage root to exist: %v", err)
 	}
 
 	if err := os.Remove(p); err != nil {

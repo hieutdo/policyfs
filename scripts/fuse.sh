@@ -27,8 +27,8 @@ _umount() {
 _mount() {
   _umount
 
-  /usr/local/go/bin/go build -o "$PFS_BIN" ./cmd/pfs
-  exec "$PFS_BIN" mount --config "$PFS_CFG"
+  go build -o "$PFS_BIN" ./cmd/pfs
+  exec "$PFS_BIN" mount media --config "$PFS_CFG"
 }
 
 cmd="${1:-}"

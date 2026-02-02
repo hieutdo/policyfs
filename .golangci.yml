@@ -1,22 +1,26 @@
-version: 2
+version: '2'
 
 run:
   timeout: 3m
   tests: true
 
-output:
-  sort-results: true
-
 linters:
-  disable-all: true
   enable:
     - errcheck
+    - errorlint
+    - errname
+    - nilerr
+    - wrapcheck
     - govet
     - ineffassign
     - staticcheck
     - unused
+  settings:
+    errcheck:
+      exclude-functions:
+        - 'fmt.Fprintf'
+        - 'fmt.Fprintln'
 
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
-

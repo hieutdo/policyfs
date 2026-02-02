@@ -1,0 +1,124 @@
+package cli
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/hieutdo/policyfs/internal/config"
+	"github.com/rs/zerolog"
+)
+
+const (
+	logFileEnvVar = "PFS_LOG_FILE"
+)
+
+// OpenLogFileError indicates the optional log file output could not be enabled.
+type OpenLogFileError struct {
+	Path  string
+	Cause error
+}
+
+// Error formats the error message for users.
+func (e *OpenLogFileError) Error() string {
+	if e == nil {
+		return "failed to open log file"
+	}
+	if strings.TrimSpace(e.Path) != "" {
+		return fmt.Sprintf("failed to open log file: %s", e.Path)
+	}
+	return "failed to open log file"
+}
+
+// Unwrap returns the underlying failure.
+func (e *OpenLogFileError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
+
+// NewLogger builds a CLI logger from config.
+//
+// Rules:
+// - log.format=json: structured logs to stdout.
+// - log.format=text: human-friendly logs to stderr.
+// - If --log-file or PFS_LOG_FILE is set, structured logs are also duplicated to that file.
+func NewLogger(cfg config.LogConfig, logFileFlag string) (zerolog.Logger, func() error, error) {
+	level := zerolog.InfoLevel
+	switch cfg.Level {
+	case "debug":
+		level = zerolog.DebugLevel
+	case "info", "":
+		// default
+	case "warn":
+		level = zerolog.WarnLevel
+	case "error":
+		level = zerolog.ErrorLevel
+	case "off":
+		level = zerolog.Disabled
+	default:
+		return zerolog.Logger{}, nil, fmt.Errorf("unsupported log level: %q", cfg.Level)
+	}
+
+	if level == zerolog.Disabled {
+		log := zerolog.New(io.Discard).Level(zerolog.Disabled)
+		return log, nil, nil
+	}
+
+	writers := []io.Writer{}
+	var closer func() error
+
+	// Primary stream output.
+	switch cfg.Format {
+	case "text":
+		cw := zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: "2006-01-02 15:04:05"}
+		writers = append(writers, cw)
+	case "json", "":
+		// Default: json
+		writers = append(writers, os.Stdout)
+	default:
+		return zerolog.Logger{}, nil, fmt.Errorf("unsupported log format: %q", cfg.Format)
+	}
+
+	// Optional structured file output.
+	logFilePath := ""
+	if strings.TrimSpace(logFileFlag) != "" {
+		logFilePath = logFileFlag
+	} else if v := os.Getenv(logFileEnvVar); strings.TrimSpace(v) != "" {
+		logFilePath = v
+	}
+	if logFilePath != "" {
+		dir := filepath.Dir(logFilePath)
+		if dir != "." {
+			if _, err := os.Stat(dir); err != nil {
+				if os.IsNotExist(err) {
+					return zerolog.Logger{}, nil, &OpenLogFileError{Path: logFilePath, Cause: fmt.Errorf("log dir missing: %s", dir)}
+				}
+				return zerolog.Logger{}, nil, &OpenLogFileError{Path: logFilePath, Cause: err}
+			}
+		}
+
+		f, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+		if err != nil {
+			return zerolog.Logger{}, nil, &OpenLogFileError{Path: logFilePath, Cause: err}
+		}
+		closer = f.Close
+		writers = append(writers, f)
+	}
+
+	if len(writers) == 0 {
+		return zerolog.Logger{}, nil, errors.New("failed to configure logging: no outputs enabled")
+	}
+
+	w := zerolog.MultiLevelWriter(writers...)
+	log := zerolog.New(w).
+		Level(level).
+		With().
+		Timestamp().
+		Logger()
+	return log, closer, nil
+}

@@ -1,4 +1,14 @@
-.PHONY: dev dev-build dev-down dev-shell build build-local test test-unit test-integration fmt fmt-staged lint lint-staged hooks clean
+.PHONY: dev dev-build dev-down dev-shell build build-local test test-unit test-integration coverage fmt fmt-staged lint lint-staged hooks clean
+
+# Version info from git
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+
+LDFLAGS := -X github.com/hieutdo/policyfs/internal/cli.Version=$(VERSION) \
+           -X github.com/hieutdo/policyfs/internal/cli.Commit=$(COMMIT) \
+           -X github.com/hieutdo/policyfs/internal/cli.BuildDate=$(DATE)
+
 DCD ?= docker compose -f docker-compose.dev.yaml
 DCD_EXEC ?= $(DCD) exec dev
 DCD_EXEC_T ?= $(DCD) exec -T dev
@@ -25,19 +35,19 @@ dev-shell:
 	$(DCD_EXEC) bash
 
 dev-watch:
-	$(DCD_EXEC) bash -lc '/go/bin/air -c /workspace/.air.toml'
+	$(DCD_EXEC) /go/bin/air -c /workspace/.air.toml
 
 dev-dlv:
-	$(DCD_EXEC) bash -lc 'bash /workspace/scripts/dlv.sh code'
+	$(DCD_EXEC) bash /workspace/scripts/dlv.sh code
 
 dev-dlv-test:
-	$(DCD_EXEC) bash -lc 'bash /workspace/scripts/dlv.sh unit'
+	$(DCD_EXEC) bash /workspace/scripts/dlv.sh unit
 
 dev-dlv-test-integration:
-	$(DCD_EXEC) bash -lc 'bash /workspace/scripts/dlv.sh integration'
+	$(DCD_EXEC) bash /workspace/scripts/dlv.sh integration
 
 dev-dlv-stop:
-	$(DCD_EXEC) bash -lc "pkill -f '/go/bin/dlv' || true"
+	$(DCD_EXEC) pkill -f '/go/bin/dlv' || true
 
 test-unit:
 	$(DCD_EXEC) go test -v ./...
@@ -45,23 +55,28 @@ test-unit:
 test-integration:
 	$(DCD_EXEC) go test -v -tags=integration ./tests/integration/...
 
+coverage:
+	$(DCD_EXEC_T) bash /workspace/scripts/coverage.sh
+
 build:
-	$(DCD_EXEC) go build -o bin/pfs ./cmd/pfs
+	$(DCD_EXEC) go build -ldflags "$(LDFLAGS)" -o bin/pfs ./cmd/pfs
+
+build-local:
+	go build -ldflags "$(LDFLAGS)" -o bin/pfs ./cmd/pfs
 
 fmt:
-	$(DCD_EXEC_T) bash -lc 'bash /workspace/scripts/fmt.sh all'
+	$(DCD_EXEC_T) bash /workspace/scripts/fmt.sh all
 
 fmt-staged:
-	$(DCD_EXEC_T) bash -lc 'bash /workspace/scripts/fmt.sh staged'
+	$(DCD_EXEC_T) bash /workspace/scripts/fmt.sh staged
 
 lint:
-	$(DCD_EXEC_T) bash -lc 'bash /workspace/scripts/lint.sh all'
+	$(DCD_EXEC_T) bash /workspace/scripts/lint.sh all
 
 lint-staged:
-	$(DCD_EXEC_T) bash -lc 'bash /workspace/scripts/lint.sh staged'
-
+	$(DCD_EXEC_T) bash /workspace/scripts/lint.sh staged
 
 hooks:
 	@git config core.hooksPath .githooks
 	@chmod +x .githooks/pre-commit
-	@chmod +x scripts/fmt.sh scripts/lint.sh
+	@chmod +x scripts/fmt.sh scripts/lint.sh scripts/coverage.sh

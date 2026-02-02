@@ -1,12 +1,52 @@
-mountpoint: /mnt/pfs/media
+fuse:
+  allow_other: true
 
-storage_paths:
-  - id: ssd1
-    path: /mnt/ssd1/media
-    indexed: false
-    min_free_gb: 0.1
+log:
+  level: debug
+  format: text
 
-  - id: hdd1
-    path: /mnt/hdd1/media
-    indexed: true
-    min_free_gb: 0.2
+mounts:
+  media:
+    mountpoint: /mnt/pfs/media
+    storage_paths:
+      - id: ssd1
+        path: /mnt/ssd1/media
+        min_free_gb: 0.1
+        indexed: false
+      - id: ssd2
+        path: /mnt/ssd2/media
+        min_free_gb: 0.1
+        indexed: false
+      - id: hdd1
+        path: /mnt/hdd1/media
+        min_free_gb: 0.2
+        indexed: true
+      - id: hdd2
+        path: /mnt/hdd2/media
+        min_free_gb: 0.2
+        indexed: true
+      - id: hdd3
+        path: /mnt/hdd3/media
+        min_free_gb: 0.2
+        indexed: true
+    storage_groups:
+      ssds: [ssd1, ssd2]
+      hdds: [hdd1, hdd2, hdd3]
+    routing_rules:
+      - match: 'downloads/**'
+        read_targets: [ssd2]
+        write_targets: [ssd2]
+
+      - match: 'library/music/**'
+        read_targets: [ssd1]
+        write_targets: [ssd1]
+
+      - match: 'library/{movies,tv}/**'
+        read_targets: [ssds, hdds]
+        write_targets: [ssd2]
+        write_policy: first_found
+        path_preserving: true
+
+      - match: '**'
+        read_targets: [ssd2]
+        write_targets: [ssd2]

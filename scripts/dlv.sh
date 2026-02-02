@@ -32,17 +32,17 @@ kill_dlv() {
 build_code() {
   local out="/workspace/bin/pfs"
   /workspace/scripts/fuse.sh umount || true
-  /usr/local/go/bin/go build -gcflags="all=-N -l" -o "$out" ./cmd/pfs
+  go build -gcflags="all=-N -l" -o "$out" ./cmd/pfs
 }
 
 build_unit() {
-  local out="/workspace/bin/pfs.test.unit"
-  /usr/local/go/bin/go test -c -gcflags="all=-N -l" -o "$out" ./internal/...
+  local out="/workspace/bin"
+  go test -c -gcflags="all=-N -l" -o "$out" ./internal/...
 }
 
 build_integration() {
   local out="/workspace/bin/pfs.test.integration"
-  /usr/local/go/bin/go test -tags=integration -c -gcflags="all=-N -l" -o "$out" ./tests/integration/...
+  go test -tags=integration -c -gcflags="all=-N -l" -o "$out" ./tests/integration/...
 }
 
 start_dlv() {
