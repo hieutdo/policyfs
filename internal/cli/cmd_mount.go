@@ -6,7 +6,8 @@ import (
 	"os"
 
 	"github.com/hanwen/go-fuse/v2/fs"
-	"github.com/hanwen/go-fuse/v2/fuse"
+	gofuse "github.com/hanwen/go-fuse/v2/fuse"
+	pfsfuse "github.com/hieutdo/policyfs/internal/fuse"
 	"github.com/spf13/cobra"
 )
 
@@ -59,7 +60,7 @@ This command is typically managed by systemd as a service.`,
 			}
 			cmdLog := cfgLog.With().Str("component", "cli").Str("op", "mount").Logger()
 
-			root, err := fs.NewLoopbackRoot(source)
+			root, err := pfsfuse.NewRoot(source)
 			if err != nil {
 				return &CLIError{Code: ExitFail, Cmd: "mount", Headline: fmt.Sprintf("invalid config: %s", *configPath), Cause: rootCause(err)}
 			}
@@ -70,7 +71,7 @@ This command is typically managed by systemd as a service.`,
 			}
 
 			server, err := fs.Mount(mountCfg.MountPoint, root, &fs.Options{
-				MountOptions: fuse.MountOptions{
+				MountOptions: gofuse.MountOptions{
 					Debug:   debug,
 					Name:    "policyfs",
 					Options: options,

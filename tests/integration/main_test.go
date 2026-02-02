@@ -15,12 +15,12 @@ import (
 )
 
 const (
+	workspace   = "/workspace"
+	pfsSrc      = "/workspace/cmd/pfs"
 	pfsBin      = "/workspace/bin/pfs"
 	pfsCfg      = "/workspace/tmp/pfs-integration.yaml"
-	storageRoot = "/workspace/tmp/pfs-storage"
 	mountPoint  = "/mnt/pfs/media"
-	buildTarget = "./cmd/pfs"
-	workspace   = "/workspace"
+	storageRoot = "/mnt/ssd1/media"
 )
 
 func TestMain(m *testing.M) {
@@ -50,7 +50,7 @@ func run(m *testing.M) int {
 		return 2
 	}
 
-	buildCmd := exec.Command("go", "build", "-o", pfsBin, buildTarget)
+	buildCmd := exec.Command("go", "build", "-o", pfsBin, pfsSrc)
 	buildCmd.Dir = workspace
 	buildCmd.Stdout = os.Stdout
 	buildCmd.Stderr = os.Stderr
