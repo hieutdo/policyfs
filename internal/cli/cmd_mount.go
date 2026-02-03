@@ -60,7 +60,7 @@ This command is typically managed by systemd as a service.`,
 			}
 			cmdLog := cfgLog.With().Str("component", "cli").Str("op", "mount").Logger()
 
-			root, err := pfsfuse.NewRoot(source)
+			root, err := pfsfuse.NewRoot(mountCfg, source)
 			if err != nil {
 				return &CLIError{Code: ExitFail, Cmd: "mount", Headline: fmt.Sprintf("invalid config: %s", *configPath), Cause: rootCause(err)}
 			}

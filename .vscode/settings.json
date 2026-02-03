@@ -2,6 +2,7 @@
   "editor.formatOnSave": true,
   "editor.defaultFormatter": "esbenp.prettier-vscode",
   "go.formatTool": "goimports",
+  "go.buildFlags": ["-tags=integration"],
   "[go]": {
     "editor.defaultFormatter": "golang.go"
   },

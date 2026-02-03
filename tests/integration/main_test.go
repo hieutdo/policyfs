@@ -9,48 +9,71 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
 )
 
 const (
-	workspace   = "/workspace"
-	pfsSrc      = "/workspace/cmd/pfs"
-	pfsBin      = "/workspace/bin/pfs"
-	pfsCfg      = "/workspace/tmp/pfs-integration.yaml"
-	mountPoint  = "/mnt/pfs/media"
-	storageRoot = "/mnt/ssd1/media"
+	workspace    = "/workspace"
+	pfsSrc       = "/workspace/cmd/pfs"
+	pfsBin       = "/workspace/bin/pfs"
+	tmpDir       = "/workspace/tmp/pfs-integration"
+	mountBase    = "/mnt/pfs/pfs-integration"
+	storageBase1 = "/mnt/ssd1/pfs-integration"
+	storageBase2 = "/mnt/ssd2/pfs-integration"
 )
 
+// IntegrationConfig describes the filesystem setup needed for an integration test.
+type IntegrationConfig struct {
+	// Targets controls the default target list for the catch-all rule.
+	Targets []string
+
+	// ReadTargets controls the read target ordering for the catch-all rule.
+	ReadTargets []string
+}
+
+// MountedFS describes a mounted PolicyFS instance used by an integration test.
+type MountedFS struct {
+	ConfigPath   string
+	MountName    string
+	MountPoint   string
+	StorageRoot1 string
+	StorageRoot2 string
+}
+
+// TestMain is the entry point for integration tests.
 func TestMain(m *testing.M) {
 	code := run(m)
 	os.Exit(code)
 }
 
+// run prepares the environment and runs all integration tests.
 func run(m *testing.M) int {
-	if err := ensureUnmounted(2 * time.Second); err != nil {
-		fmt.Fprintln(os.Stderr, "failed to unmount", err)
-		return 2
-	}
-	if err := ensureMountpointDir(); err != nil {
-		fmt.Fprintln(os.Stderr, "failed to ensure mountpoint", err)
-		return 2
-	}
-	if err := os.MkdirAll("/workspace/tmp", 0o755); err != nil {
+	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
 		fmt.Fprintln(os.Stderr, "failed to ensure tmp dir", err)
 		return 2
 	}
-	if err := os.MkdirAll(storageRoot, 0o755); err != nil {
-		fmt.Fprintln(os.Stderr, "failed to ensure storage root", err)
+	if err := os.MkdirAll(mountBase, 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, "failed to ensure mount base dir", err)
 		return 2
 	}
-	if err := writeIntegrationConfig(pfsCfg); err != nil {
-		fmt.Fprintln(os.Stderr, "failed to write integration config", err)
+	if err := os.MkdirAll(storageBase1, 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, "failed to ensure storage base1", err)
+		return 2
+	}
+	if err := os.MkdirAll(storageBase2, 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, "failed to ensure storage root2", err)
 		return 2
 	}
 
-	buildCmd := exec.Command("go", "build", "-o", pfsBin, pfsSrc)
+	buildArgs := []string{"build", "-o", pfsBin}
+	if strings.TrimSpace(os.Getenv("PFS_INTEGRATION_DEBUG_BUILD")) != "" {
+		buildArgs = append(buildArgs, "-gcflags=all=-N -l")
+	}
+	buildArgs = append(buildArgs, pfsSrc)
+	buildCmd := exec.Command("go", buildArgs...)
 	buildCmd.Dir = workspace
 	buildCmd.Stdout = os.Stdout
 	buildCmd.Stderr = os.Stderr
@@ -58,60 +81,165 @@ func run(m *testing.M) int {
 		fmt.Fprintln(os.Stderr, "failed to build pfs", err)
 		return 2
 	}
+	return m.Run()
+}
+
+// withMountedFS mounts a PolicyFS instance for the duration of a test.
+func withMountedFS(t *testing.T, cfg IntegrationConfig, fn func(env *MountedFS)) {
+	t.Helper()
+
+	// Sanitize test name into a path-safe name.
+	name := sanitizeName(t.Name())
+
+	if strings.TrimSpace(os.Getenv("PFS_INTEGRATION_USE_EXISTING_MOUNT")) != "" {
+		baseMountPoint := os.Getenv("PFS_INTEGRATION_MOUNTPOINT")
+		baseStorageRoot1 := os.Getenv("PFS_INTEGRATION_STORAGE_ROOT1")
+		baseStorageRoot2 := os.Getenv("PFS_INTEGRATION_STORAGE_ROOT2")
+		configPath := os.Getenv("PFS_INTEGRATION_CONFIG")
+
+		if strings.TrimSpace(baseMountPoint) == "" {
+			t.Fatalf("missing PFS_INTEGRATION_MOUNTPOINT")
+		}
+		mounted, err := isMountpointMounted(baseMountPoint)
+		if err != nil {
+			t.Fatalf("failed to check mountpoint: %v", err)
+		}
+		if !mounted {
+			t.Fatalf("mountpoint is not mounted: mountpoint=%s", baseMountPoint)
+		}
+
+		if strings.TrimSpace(baseStorageRoot1) == "" {
+			t.Fatalf("missing PFS_INTEGRATION_STORAGE_ROOT1")
+		}
+		if strings.TrimSpace(baseStorageRoot2) == "" {
+			t.Fatalf("missing PFS_INTEGRATION_STORAGE_ROOT2")
+		}
+
+		if err := os.MkdirAll(baseStorageRoot1, 0o755); err != nil {
+			t.Fatalf("failed to ensure storage root1: %v", err)
+		}
+		if err := os.MkdirAll(baseStorageRoot2, 0o755); err != nil {
+			t.Fatalf("failed to ensure storage root2: %v", err)
+		}
+
+		env := &MountedFS{
+			MountName:    "integration",
+			MountPoint:   filepath.Join(baseMountPoint, name),
+			StorageRoot1: filepath.Join(baseStorageRoot1, name),
+			StorageRoot2: filepath.Join(baseStorageRoot2, name),
+			ConfigPath:   configPath,
+		}
+
+		fn(env)
+		return
+	}
+
+	env := &MountedFS{
+		MountName:    "integration",
+		MountPoint:   filepath.Join(mountBase, name),
+		StorageRoot1: filepath.Join(storageBase1, name),
+		StorageRoot2: filepath.Join(storageBase2, name),
+		ConfigPath:   filepath.Join(tmpDir, name+".yaml"),
+	}
+
+	if err := ensureUnmounted(env.MountPoint, 2*time.Second); err != nil {
+		t.Fatalf("failed to ensure unmounted: %v", err)
+	}
+	if err := ensureMountpointDir(env.MountPoint); err != nil {
+		t.Fatalf("failed to ensure mountpoint: %v", err)
+	}
+	if err := os.MkdirAll(env.StorageRoot1, 0o755); err != nil {
+		t.Fatalf("failed to ensure storage root1: %v", err)
+	}
+	if err := os.MkdirAll(env.StorageRoot2, 0o755); err != nil {
+		t.Fatalf("failed to ensure storage root2: %v", err)
+	}
+	if err := writeIntegrationConfig(env.ConfigPath, env.MountPoint, env.StorageRoot1, env.StorageRoot2, cfg); err != nil {
+		t.Fatalf("failed to write integration config: %v", err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	mountCmd := exec.CommandContext(ctx, pfsBin, "--config", pfsCfg, "mount", "media")
-	mountCmd.Env = append(os.Environ(), "PFS_LOG_FILE=/workspace/tmp/pfs.log")
+	mountCmd := exec.CommandContext(ctx, pfsBin, "--config", env.ConfigPath, "mount", env.MountName)
+	mountCmd.Env = append(os.Environ(), "PFS_LOG_FILE="+tmpDir+"/"+name+".log")
 	mountCmd.Stdout = os.Stdout
 	mountCmd.Stderr = os.Stderr
 	if err := mountCmd.Start(); err != nil {
-		fmt.Fprintln(os.Stderr, "failed to start pfs mount:", err)
-		return 2
+		t.Fatalf("failed to start pfs mount: %v", err)
 	}
 
-	if err := waitForMount(5 * time.Second); err != nil {
+	if err := waitForMount(env.MountPoint, 5*time.Second); err != nil {
 		_ = mountCmd.Process.Signal(syscall.SIGTERM)
 		_, _ = mountCmd.Process.Wait()
-		fmt.Fprintln(os.Stderr, err)
-		return 2
+		t.Fatalf("mount did not become ready: %v", err)
 	}
 
-	exitCode := m.Run()
-	_ = mountCmd.Process.Signal(syscall.SIGTERM)
-	_, _ = mountCmd.Process.Wait()
-	if err := ensureUnmounted(2 * time.Second); err != nil {
-		fmt.Fprintln(os.Stderr, "failed to unmount", err)
-		return 2
-	}
+	t.Cleanup(func() {
+		_ = mountCmd.Process.Signal(syscall.SIGTERM)
+		_, _ = mountCmd.Process.Wait()
+		if err := ensureUnmounted(env.MountPoint, 2*time.Second); err != nil {
+			t.Fatalf("failed to unmount: %v", err)
+		}
+	})
 
-	return exitCode
+	fn(env)
 }
 
-// writeIntegrationConfig writes a minimal, known-good config file for integration tests.
-func writeIntegrationConfig(path string) error {
-	cfg := fmt.Sprintf(`
+// sanitizeName converts a test name into a stable path segment.
+func sanitizeName(s string) string {
+	s = strings.ReplaceAll(s, "/", "_")
+	s = strings.ReplaceAll(s, " ", "_")
+	s = strings.ReplaceAll(s, "\\", "_")
+	s = strings.ReplaceAll(s, ":", "_")
+	return s
+}
+
+func quoteList(ss []string) string {
+	quoted := make([]string, 0, len(ss))
+	for _, s := range ss {
+		quoted = append(quoted, fmt.Sprintf("%q", s))
+	}
+	return strings.Join(quoted, ", ")
+}
+
+// writeIntegrationConfig writes a minimal, known-good config file for an integration test.
+func writeIntegrationConfig(path string, mountPoint string, storageRoot1 string, storageRoot2 string, cfg IntegrationConfig) error {
+	targets := cfg.Targets
+	if len(targets) == 0 {
+		targets = []string{"ssd1"}
+	}
+	readTargets := cfg.ReadTargets
+	if len(readTargets) == 0 {
+		readTargets = []string{"ssd2", "ssd1"}
+	}
+
+	cfgYAML := fmt.Sprintf(`
 mounts:
-  media:
+  integration:
     mountpoint: %q
     storage_paths:
       - id: ssd1
         path: %q
         indexed: false
         min_free_gb: 0
+      - id: ssd2
+        path: %q
+        indexed: false
+        min_free_gb: 0
     routing_rules:
       - match: "**"
-        targets: [ssd1]
-`, mountPoint, storageRoot)
+        targets: [%s]
+        read_targets: [%s]
+`, mountPoint, storageRoot1, storageRoot2, quoteList(targets), quoteList(readTargets))
 
-	if err := os.WriteFile(path, []byte(cfg), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(cfgYAML), 0o644); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 	return nil
 }
 
-func ensureMountpointDir() error {
+func ensureMountpointDir(mountPoint string) error {
 	fi, err := os.Lstat(mountPoint)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -134,25 +262,25 @@ func ensureMountpointDir() error {
 	return nil
 }
 
-func ensureUnmounted(timeout time.Duration) error {
-	_ = tryUnmount()
+func ensureUnmounted(mountPoint string, timeout time.Duration) error {
+	_ = tryUnmount(mountPoint)
 
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		mounted, err := isMountpointMounted()
+		mounted, err := isMountpointMounted(mountPoint)
 		if err != nil {
 			return err
 		}
 		if !mounted {
 			return nil
 		}
-		_ = tryUnmount()
+		_ = tryUnmount(mountPoint)
 		time.Sleep(100 * time.Millisecond)
 	}
 	return fmt.Errorf("mountpoint still mounted after %s (mountpoint=%s)", timeout, filepath.Clean(mountPoint))
 }
 
-func tryUnmount() error {
+func tryUnmount(mountPoint string) error {
 	// Best-effort: different environments prefer different tools.
 	_ = exec.Command("umount", mountPoint).Run()
 	_ = exec.Command("umount", "-l", mountPoint).Run()
@@ -160,7 +288,7 @@ func tryUnmount() error {
 	return nil
 }
 
-func isMountpointMounted() (bool, error) {
+func isMountpointMounted(mountPoint string) (bool, error) {
 	if _, err := os.Lstat(mountPoint); err != nil {
 		if os.IsNotExist(err) {
 			return false, nil
@@ -185,7 +313,7 @@ func isMountpointMounted() (bool, error) {
 	return false, fmt.Errorf("failed to check mountpoint: %w", err)
 }
 
-func waitForMount(timeout time.Duration) error {
+func waitForMount(mountPoint string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		cmd := exec.Command("mountpoint", "-q", mountPoint)

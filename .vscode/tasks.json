@@ -40,7 +40,9 @@
       "type": "shell",
       "command": "make",
       "args": ["dev-dlv-test"],
-      "options": { "cwd": "${workspaceFolder}" },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
       "isBackground": true,
       "problemMatcher": [
         {
@@ -72,7 +74,9 @@
       "type": "shell",
       "command": "make",
       "args": ["dev-dlv-test-integration"],
-      "options": { "cwd": "${workspaceFolder}" },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
       "isBackground": true,
       "problemMatcher": [
         {

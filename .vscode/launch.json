@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "debug code",
+      "name": "debug cmd: doctor",
       "type": "go",
       "request": "launch",
       "mode": "exec",
@@ -12,33 +12,45 @@
       "preLaunchTask": "make dev-dlv",
       "substitutePath": [{ "from": "${workspaceFolder:pfs-project}", "to": "/workspace" }],
       "program": "/workspace/bin/pfs",
-      "args": ["mount", "--config", "/workspace/configs/dev.yaml"]
+      "args": ["--config", "/workspace/configs/dev.yaml", "doctor"]
     },
-
     {
-      "name": "debug unit test",
+      "name": "debug cmd: mount",
       "type": "go",
       "request": "launch",
       "mode": "exec",
       "debugAdapter": "dlv-dap",
       "host": "127.0.0.1",
       "port": 40000,
+      "preLaunchTask": "make dev-dlv",
+      "substitutePath": [{ "from": "${workspaceFolder:pfs-project}", "to": "/workspace" }],
+      "program": "/workspace/bin/pfs",
+      "args": ["--config", "/workspace/configs/dev.yaml", "--log-file", "/workspace/tmp/pfs.log", "mount", "media"]
+    },
+    {
+      "name": "debug test: unit : cli",
+      "type": "go",
+      "request": "launch",
+      "mode": "exec",
+      "debugAdapter": "dlv-dap",
+      "host": "127.0.0.1",
+      "port": 40010,
       "preLaunchTask": "make dev-dlv-test",
       "substitutePath": [{ "from": "${workspaceFolder:pfs-project}", "to": "/workspace" }],
-      "program": "/workspace/bin/pfs.test",
+      "program": "/workspace/bin/pfs.unit.cli",
       "args": ["-test.v"]
     },
     {
-      "name": "debug integration test",
+      "name": "debug test: integration",
       "type": "go",
       "request": "launch",
       "mode": "exec",
       "debugAdapter": "dlv-dap",
       "host": "127.0.0.1",
-      "port": 40000,
+      "port": 40020,
       "preLaunchTask": "make dev-dlv-test-integration",
       "substitutePath": [{ "from": "${workspaceFolder:pfs-project}", "to": "/workspace" }],
-      "program": "/workspace/bin/pfs.test.integration",
+      "program": "/workspace/bin/pfs.integration",
       "args": ["-test.v"]
     }
   ]

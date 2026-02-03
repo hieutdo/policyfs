@@ -2,6 +2,7 @@
 set -euo pipefail
 
 PFS_BIN="/workspace/bin/pfs"
+PFS_SRC="/workspace/cmd/pfs"
 PFS_CFG="/workspace/configs/dev.yaml"
 MP="/mnt/pfs/media"
 
@@ -27,7 +28,7 @@ _umount() {
 _mount() {
   _umount
 
-  go build -o "$PFS_BIN" ./cmd/pfs
+  go build -o "$PFS_BIN" "$PFS_SRC"
   exec "$PFS_BIN" mount media --config "$PFS_CFG"
 }
 
