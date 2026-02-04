@@ -8,6 +8,36 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+var (
+	// ErrConfigNil is returned when a config receiver is nil.
+	ErrConfigNil = errors.New("config is nil")
+	// ErrMountNameRequired is returned when a mount name is missing.
+	ErrMountNameRequired = errors.New("mount name is required")
+	// ErrMountsRequired is returned when mounts are not configured.
+	ErrMountsRequired = errors.New("mounts is required")
+	// ErrMountNotFound is returned when a mount name does not exist in the config.
+	ErrMountNotFound = errors.New("mount not found")
+
+	// ErrMountConfigNil is returned when a mount config receiver is nil.
+	ErrMountConfigNil = errors.New("mount config is nil")
+	// ErrStoragePathsEmpty is returned when storage_paths is empty.
+	ErrStoragePathsEmpty = errors.New("storage_paths must not be empty")
+	// ErrStoragePath0Required is returned when the first storage path has an empty path.
+	ErrStoragePath0Required = errors.New("storage_paths[0].path is required")
+)
+
+// KindError preserves a stable message while allowing callers to match a stable Kind via errors.Is.
+type KindError struct {
+	Kind error
+	Msg  string
+}
+
+// Error returns the stable message.
+func (e *KindError) Error() string { return e.Msg }
+
+// Is matches the error kind for errors.Is.
+func (e *KindError) Is(target error) bool { return target == e.Kind }
+
 // RootConfig represents the top-level YAML config file.
 type RootConfig struct {
 	Fuse   FuseConfig             `yaml:"fuse"`
@@ -70,17 +100,17 @@ func Load(path string) (*RootConfig, error) {
 // Mount finds a mount configuration by name.
 func (c *RootConfig) Mount(name string) (*MountConfig, error) {
 	if c == nil {
-		return nil, errors.New("config is nil")
+		return nil, &KindError{Kind: ErrConfigNil, Msg: "config is nil"}
 	}
 	if name == "" {
-		return nil, errors.New("config: mount name is required")
+		return nil, &KindError{Kind: ErrMountNameRequired, Msg: "config: mount name is required"}
 	}
 	if c.Mounts == nil {
-		return nil, errors.New("config: mounts is required")
+		return nil, &KindError{Kind: ErrMountsRequired, Msg: "config: mounts is required"}
 	}
 	m, ok := c.Mounts[name]
 	if !ok {
-		return nil, fmt.Errorf("config: mount %q not found", name)
+		return nil, &KindError{Kind: ErrMountNotFound, Msg: fmt.Sprintf("config: mount %q not found", name)}
 	}
 	return &m, nil
 }
@@ -88,13 +118,13 @@ func (c *RootConfig) Mount(name string) (*MountConfig, error) {
 // FirstStoragePath returns the first configured storage path (used as a loopback source).
 func (m *MountConfig) FirstStoragePath() (string, error) {
 	if m == nil {
-		return "", errors.New("mount config is nil")
+		return "", &KindError{Kind: ErrMountConfigNil, Msg: "mount config is nil"}
 	}
 	if len(m.StoragePaths) == 0 {
-		return "", errors.New("config: storage_paths must not be empty")
+		return "", &KindError{Kind: ErrStoragePathsEmpty, Msg: "config: storage_paths must not be empty"}
 	}
 	if m.StoragePaths[0].Path == "" {
-		return "", errors.New("config: storage_paths[0].path is required")
+		return "", &KindError{Kind: ErrStoragePath0Required, Msg: "config: storage_paths[0].path is required"}
 	}
 	return m.StoragePaths[0].Path, nil
 }

@@ -13,35 +13,18 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/hieutdo/policyfs/internal/config"
+	"gopkg.in/yaml.v3"
 )
 
 const (
-	workspace    = "/workspace"
-	pfsSrc       = "/workspace/cmd/pfs"
-	pfsBin       = "/workspace/bin/pfs"
-	tmpDir       = "/workspace/tmp/pfs-integration"
-	mountBase    = "/mnt/pfs/pfs-integration"
-	storageBase1 = "/mnt/ssd1/pfs-integration"
-	storageBase2 = "/mnt/ssd2/pfs-integration"
+	workspace = "/workspace"
+	pfsSrc    = "/workspace/cmd/pfs"
+	pfsBin    = "/workspace/bin/pfs"
+	tmpDir    = "/workspace/tmp/pfs-integration"
+	mountBase = "/mnt/pfs/pfs-integration"
 )
-
-// IntegrationConfig describes the filesystem setup needed for an integration test.
-type IntegrationConfig struct {
-	// Targets controls the default target list for the catch-all rule.
-	Targets []string
-
-	// ReadTargets controls the read target ordering for the catch-all rule.
-	ReadTargets []string
-}
-
-// MountedFS describes a mounted PolicyFS instance used by an integration test.
-type MountedFS struct {
-	ConfigPath   string
-	MountName    string
-	MountPoint   string
-	StorageRoot1 string
-	StorageRoot2 string
-}
 
 // TestMain is the entry point for integration tests.
 func TestMain(m *testing.M) {
@@ -57,14 +40,6 @@ func run(m *testing.M) int {
 	}
 	if err := os.MkdirAll(mountBase, 0o755); err != nil {
 		fmt.Fprintln(os.Stderr, "failed to ensure mount base dir", err)
-		return 2
-	}
-	if err := os.MkdirAll(storageBase1, 0o755); err != nil {
-		fmt.Fprintln(os.Stderr, "failed to ensure storage base1", err)
-		return 2
-	}
-	if err := os.MkdirAll(storageBase2, 0o755); err != nil {
-		fmt.Fprintln(os.Stderr, "failed to ensure storage root2", err)
 		return 2
 	}
 
@@ -92,14 +67,33 @@ func withMountedFS(t *testing.T, cfg IntegrationConfig, fn func(env *MountedFS))
 	name := sanitizeName(t.Name())
 
 	if strings.TrimSpace(os.Getenv("PFS_INTEGRATION_USE_EXISTING_MOUNT")) != "" {
-		baseMountPoint := os.Getenv("PFS_INTEGRATION_MOUNTPOINT")
-		baseStorageRoot1 := os.Getenv("PFS_INTEGRATION_STORAGE_ROOT1")
-		baseStorageRoot2 := os.Getenv("PFS_INTEGRATION_STORAGE_ROOT2")
-		configPath := os.Getenv("PFS_INTEGRATION_CONFIG")
-
-		if strings.TrimSpace(baseMountPoint) == "" {
-			t.Fatalf("missing PFS_INTEGRATION_MOUNTPOINT")
+		configPath := strings.TrimSpace(os.Getenv("PFS_INTEGRATION_CONFIG"))
+		if configPath == "" {
+			t.Fatalf("missing PFS_INTEGRATION_CONFIG")
 		}
+
+		mountName := strings.TrimSpace(os.Getenv("PFS_INTEGRATION_MOUNT_NAME"))
+		if mountName == "" {
+			mountName = "integration"
+		}
+
+		rootCfg, err := config.Load(configPath)
+		if err != nil {
+			t.Fatalf("failed to load config: %v", err)
+		}
+		mountCfg, err := rootCfg.Mount(mountName)
+		if err != nil {
+			t.Fatalf("failed to resolve mount: %v", err)
+		}
+
+		baseMountPoint := strings.TrimSpace(os.Getenv("PFS_INTEGRATION_MOUNTPOINT"))
+		if baseMountPoint == "" {
+			baseMountPoint = mountCfg.MountPoint
+		}
+		if strings.TrimSpace(baseMountPoint) == "" {
+			t.Fatalf("missing mountpoint (PFS_INTEGRATION_MOUNTPOINT or config mountpoint)")
+		}
+
 		mounted, err := isMountpointMounted(baseMountPoint)
 		if err != nil {
 			t.Fatalf("failed to check mountpoint: %v", err)
@@ -108,38 +102,32 @@ func withMountedFS(t *testing.T, cfg IntegrationConfig, fn func(env *MountedFS))
 			t.Fatalf("mountpoint is not mounted: mountpoint=%s", baseMountPoint)
 		}
 
-		if strings.TrimSpace(baseStorageRoot1) == "" {
-			t.Fatalf("missing PFS_INTEGRATION_STORAGE_ROOT1")
-		}
-		if strings.TrimSpace(baseStorageRoot2) == "" {
-			t.Fatalf("missing PFS_INTEGRATION_STORAGE_ROOT2")
-		}
-
-		if err := os.MkdirAll(baseStorageRoot1, 0o755); err != nil {
-			t.Fatalf("failed to ensure storage root1: %v", err)
-		}
-		if err := os.MkdirAll(baseStorageRoot2, 0o755); err != nil {
-			t.Fatalf("failed to ensure storage root2: %v", err)
+		storageRoots, err := existingMountStorageRoots(cfg, mountCfg, name)
+		if err != nil {
+			t.Fatalf("failed to resolve storages: %v", err)
 		}
 
 		env := &MountedFS{
-			MountName:    "integration",
-			MountPoint:   filepath.Join(baseMountPoint, name),
-			StorageRoot1: filepath.Join(baseStorageRoot1, name),
-			StorageRoot2: filepath.Join(baseStorageRoot2, name),
 			ConfigPath:   configPath,
+			MountName:    mountName,
+			MountPoint:   filepath.Join(baseMountPoint, name),
+			StorageRoots: storageRoots,
 		}
-
 		fn(env)
 		return
+	}
+
+	storages := effectiveStorages(cfg)
+	storageRoots, err := localStorageRoots(storages, name)
+	if err != nil {
+		t.Fatalf("failed to create storage roots: %v", err)
 	}
 
 	env := &MountedFS{
 		MountName:    "integration",
 		MountPoint:   filepath.Join(mountBase, name),
-		StorageRoot1: filepath.Join(storageBase1, name),
-		StorageRoot2: filepath.Join(storageBase2, name),
 		ConfigPath:   filepath.Join(tmpDir, name+".yaml"),
+		StorageRoots: storageRoots,
 	}
 
 	if err := ensureUnmounted(env.MountPoint, 2*time.Second); err != nil {
@@ -148,13 +136,7 @@ func withMountedFS(t *testing.T, cfg IntegrationConfig, fn func(env *MountedFS))
 	if err := ensureMountpointDir(env.MountPoint); err != nil {
 		t.Fatalf("failed to ensure mountpoint: %v", err)
 	}
-	if err := os.MkdirAll(env.StorageRoot1, 0o755); err != nil {
-		t.Fatalf("failed to ensure storage root1: %v", err)
-	}
-	if err := os.MkdirAll(env.StorageRoot2, 0o755); err != nil {
-		t.Fatalf("failed to ensure storage root2: %v", err)
-	}
-	if err := writeIntegrationConfig(env.ConfigPath, env.MountPoint, env.StorageRoot1, env.StorageRoot2, cfg); err != nil {
+	if err := writeIntegrationConfig(env.ConfigPath, env.MountName, env.MountPoint, storages, env.StorageRoots, cfg); err != nil {
 		t.Fatalf("failed to write integration config: %v", err)
 	}
 
@@ -195,45 +177,165 @@ func sanitizeName(s string) string {
 	return s
 }
 
-func quoteList(ss []string) string {
-	quoted := make([]string, 0, len(ss))
-	for _, s := range ss {
-		quoted = append(quoted, fmt.Sprintf("%q", s))
+// effectiveStorages returns the storage list for a test, with sane defaults.
+func effectiveStorages(cfg IntegrationConfig) []IntegrationStorage {
+	if len(cfg.Storages) > 0 {
+		out := make([]IntegrationStorage, 0, len(cfg.Storages))
+		for _, s := range cfg.Storages {
+			if strings.TrimSpace(s.ID) == "" {
+				continue
+			}
+			out = append(out, s)
+		}
+		return out
 	}
-	return strings.Join(quoted, ", ")
+	return []IntegrationStorage{
+		{ID: "ssd1", BasePath: "/mnt/ssd1/pfs-integration"},
+		{ID: "ssd2", BasePath: "/mnt/ssd2/pfs-integration"},
+	}
+}
+
+// localStorageRoots creates per-test storage root directories.
+func localStorageRoots(storages []IntegrationStorage, testName string) (map[string]string, error) {
+	roots := map[string]string{}
+	for _, s := range storages {
+		id := strings.TrimSpace(s.ID)
+		if id == "" {
+			continue
+		}
+		base := strings.TrimSpace(s.BasePath)
+		if base == "" {
+			return nil, fmt.Errorf("missing base path for storage %q", id)
+		}
+		if err := os.MkdirAll(base, 0o755); err != nil {
+			return nil, fmt.Errorf("failed to ensure storage base: %w", err)
+		}
+		root := filepath.Join(base, testName)
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			return nil, fmt.Errorf("failed to ensure storage root: %w", err)
+		}
+		roots[id] = root
+	}
+	if len(roots) == 0 {
+		return nil, errors.New("no storages configured")
+	}
+	return roots, nil
+}
+
+// existingMountStorageRoots returns per-test storage roots based on an existing mount config.
+func existingMountStorageRoots(cfg IntegrationConfig, mountCfg *config.MountConfig, testName string) (map[string]string, error) {
+	if mountCfg == nil {
+		return nil, errors.New("mount config is nil")
+	}
+
+	requested := effectiveStorages(cfg)
+	requestedIDs := map[string]struct{}{}
+	for _, s := range requested {
+		if strings.TrimSpace(s.ID) == "" {
+			continue
+		}
+		requestedIDs[s.ID] = struct{}{}
+	}
+
+	roots := map[string]string{}
+	for _, sp := range mountCfg.StoragePaths {
+		id := strings.TrimSpace(sp.ID)
+		if id == "" {
+			continue
+		}
+		if _, ok := requestedIDs[id]; !ok {
+			continue
+		}
+		base := strings.TrimSpace(sp.Path)
+		if base == "" {
+			return nil, fmt.Errorf("storage %q has empty path", id)
+		}
+		root := filepath.Join(base, testName)
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			return nil, fmt.Errorf("failed to ensure storage root: %w", err)
+		}
+		roots[id] = root
+	}
+	if len(roots) == 0 {
+		return nil, errors.New("no storages resolved from config")
+	}
+	for id := range requestedIDs {
+		if _, ok := roots[id]; !ok {
+			return nil, fmt.Errorf("config missing requested storage id %q", id)
+		}
+	}
+	return roots, nil
 }
 
 // writeIntegrationConfig writes a minimal, known-good config file for an integration test.
-func writeIntegrationConfig(path string, mountPoint string, storageRoot1 string, storageRoot2 string, cfg IntegrationConfig) error {
+func writeIntegrationConfig(path string, mountName string, mountPoint string, storages []IntegrationStorage, storageRoots map[string]string, cfg IntegrationConfig) error {
+	if strings.TrimSpace(mountName) == "" {
+		return errors.New("mount name is required")
+	}
+	if strings.TrimSpace(mountPoint) == "" {
+		return errors.New("mountpoint is required")
+	}
+
+	storagePaths := make([]config.StoragePath, 0, len(storages))
+	for _, s := range storages {
+		id := strings.TrimSpace(s.ID)
+		if id == "" {
+			continue
+		}
+		root := ""
+		if storageRoots != nil {
+			root = strings.TrimSpace(storageRoots[id])
+		}
+		if root == "" {
+			return fmt.Errorf("missing storage root for %q", id)
+		}
+		storagePaths = append(storagePaths, config.StoragePath{ID: id, Path: root, Indexed: s.Indexed, MinFreeGB: s.MinFreeGB})
+	}
+	if len(storagePaths) == 0 {
+		return errors.New("no storage paths configured")
+	}
+
 	targets := cfg.Targets
 	if len(targets) == 0 {
-		targets = []string{"ssd1"}
+		if _, ok := storageRoots["ssd1"]; ok {
+			targets = []string{"ssd1"}
+		} else {
+			targets = []string{storagePaths[0].ID}
+		}
 	}
 	readTargets := cfg.ReadTargets
 	if len(readTargets) == 0 {
-		readTargets = []string{"ssd2", "ssd1"}
+		if _, ok1 := storageRoots["ssd1"]; ok1 {
+			if _, ok2 := storageRoots["ssd2"]; ok2 {
+				readTargets = []string{"ssd2", "ssd1"}
+			}
+		}
+		if len(readTargets) == 0 {
+			readTargets = append([]string{}, targets...)
+		}
 	}
 
-	cfgYAML := fmt.Sprintf(`
-mounts:
-  integration:
-    mountpoint: %q
-    storage_paths:
-      - id: ssd1
-        path: %q
-        indexed: false
-        min_free_gb: 0
-      - id: ssd2
-        path: %q
-        indexed: false
-        min_free_gb: 0
-    routing_rules:
-      - match: "**"
-        targets: [%s]
-        read_targets: [%s]
-`, mountPoint, storageRoot1, storageRoot2, quoteList(targets), quoteList(readTargets))
+	rules := cfg.RoutingRules
+	if len(rules) == 0 {
+		rules = []config.RoutingRule{{Match: "**", Targets: targets, ReadTargets: readTargets}}
+	}
 
-	if err := os.WriteFile(path, []byte(cfgYAML), 0o644); err != nil {
+	rootCfg := config.RootConfig{
+		Mounts: map[string]config.MountConfig{
+			mountName: {
+				MountPoint:    mountPoint,
+				StoragePaths:  storagePaths,
+				StorageGroups: cfg.StorageGroups,
+				RoutingRules:  rules,
+			},
+		},
+	}
+
+	b, err := yaml.Marshal(&rootCfg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+	if err := os.WriteFile(path, b, 0o644); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 	return nil

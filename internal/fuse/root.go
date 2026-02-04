@@ -14,6 +14,20 @@ import (
 	"github.com/hieutdo/policyfs/internal/router"
 )
 
+// toErrno maps domain errors to stable errno values per spec.
+func toErrno(err error) syscall.Errno {
+	if err == nil {
+		return 0
+	}
+	if errors.Is(err, router.ErrNoRuleMatched) {
+		return syscall.EROFS
+	}
+	if errors.Is(err, router.ErrNoTargetsResolved) {
+		return syscall.EROFS
+	}
+	return fs.ToErrno(err)
+}
+
 // Node is a PolicyFS inode implementation (including the root inode).
 type Node struct {
 	*fs.LoopbackNode
@@ -111,7 +125,7 @@ func openFirst(ctx context.Context, rt *router.Router, virtualPath string, flags
 		targets, err = rt.ResolveReadTargets(virtualPath)
 	}
 	if err != nil {
-		return nil, 0, fs.ToErrno(err)
+		return nil, 0, toErrno(err)
 	}
 
 	for _, t := range targets {
@@ -143,7 +157,7 @@ func lookupChild(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoo
 
 	targets, err := rt.ResolveReadTargets(childPath)
 	if err != nil {
-		return nil, fs.ToErrno(err)
+		return nil, toErrno(err)
 	}
 
 	st := syscall.Stat_t{}
@@ -179,7 +193,7 @@ func getattrPath(ctx context.Context, ino *fs.Inode, rt *router.Router, out *gof
 	virtualPath := ino.Path(ino.Root())
 	targets, err := rt.ResolveReadTargets(virtualPath)
 	if err != nil {
-		return fs.ToErrno(err)
+		return toErrno(err)
 	}
 
 	st := syscall.Stat_t{}
@@ -217,9 +231,9 @@ func listDirEntries(ctx context.Context, ino *fs.Inode, rt *router.Router) ([]go
 	}
 
 	virtualPath := ino.Path(ino.Root())
-	targets, err := rt.ResolveReadTargets(virtualPath)
+	targets, err := rt.ResolveListTargets(virtualPath)
 	if err != nil {
-		return nil, fs.ToErrno(err)
+		return nil, toErrno(err)
 	}
 
 	seen := map[string]struct{}{}

@@ -29,7 +29,7 @@ func TestMountSmoke(t *testing.T) {
 			t.Fatalf("unexpected content: got %q want %q", got, want)
 		}
 
-		backing := filepath.Join(env.StorageRoot1, "smoke", "hello.txt")
+		backing := filepath.Join(env.StorageRoot("ssd1"), "smoke", "hello.txt")
 		if _, err := os.Stat(backing); err != nil {
 			t.Fatalf("expected backing file in storage root to exist: %v", err)
 		}

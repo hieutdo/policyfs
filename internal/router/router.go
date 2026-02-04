@@ -3,11 +3,31 @@ package router
 import (
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/hieutdo/policyfs/internal/config"
 )
+
+var (
+	// ErrRouterNil is returned when a router receiver is nil.
+	ErrRouterNil = errors.New("router is nil")
+	// ErrNoRuleMatched is returned when no routing rule matches a virtual path.
+	ErrNoRuleMatched = errors.New("no routing rule matched")
+	// ErrNoTargetsResolved is returned when no targets can be resolved after expansion/deduping.
+	ErrNoTargetsResolved = errors.New("no targets resolved")
+)
+
+// KindError preserves a stable message while allowing callers to match a stable Kind via errors.Is.
+type KindError struct {
+	Kind error
+	Msg  string
+}
+
+// Error returns the stable message.
+func (e *KindError) Error() string { return e.Msg }
+
+// Is matches the error kind for errors.Is.
+func (e *KindError) Is(target error) bool { return target == e.Kind }
 
 // Target is a resolved storage target for a virtual path.
 type Target struct {
@@ -26,9 +46,9 @@ type Router struct {
 // compiledRule is an internal compiled routing rule.
 type compiledRule struct {
 	rule  config.RoutingRule
-	re    *regexp.Regexp
 	read  []string
 	write []string
+	segs  [][]string
 }
 
 // New builds a Router from a mount config.
@@ -64,7 +84,12 @@ func New(m *config.MountConfig) (*Router, error) {
 		if strings.TrimSpace(rr.Match) == "" {
 			return nil, fmt.Errorf("config: routing_rules[%d].match is required", i)
 		}
-		re, err := compileGlob(rr.Match)
+
+		expanded, err := expandBraces(rr.Match)
+		if err != nil {
+			return nil, fmt.Errorf("failed to expand routing rule pattern: %w", err)
+		}
+		segs, err := parseGlobExpanded(expanded)
 		if err != nil {
 			return nil, fmt.Errorf("failed to compile routing rule pattern: %w", err)
 		}
@@ -78,7 +103,7 @@ func New(m *config.MountConfig) (*Router, error) {
 			write = rr.Targets
 		}
 
-		r.rules = append(r.rules, compiledRule{rule: rr, re: re, read: read, write: write})
+		r.rules = append(r.rules, compiledRule{rule: rr, read: read, write: write, segs: segs})
 	}
 	return r, nil
 }
@@ -87,7 +112,7 @@ func New(m *config.MountConfig) (*Router, error) {
 func (r *Router) ResolveReadTargets(virtualPath string) ([]Target, error) {
 	cr, ok := r.matchRule(virtualPath)
 	if !ok {
-		return nil, errors.New("no routing rule matched")
+		return nil, &KindError{Kind: ErrNoRuleMatched, Msg: fmt.Sprintf("no routing rule matched for path: %s", virtualPath)}
 	}
 	ids, err := r.expandTargets(cr.read)
 	if err != nil {
@@ -100,7 +125,7 @@ func (r *Router) ResolveReadTargets(virtualPath string) ([]Target, error) {
 func (r *Router) ResolveWriteTargets(virtualPath string) ([]Target, error) {
 	cr, ok := r.matchRule(virtualPath)
 	if !ok {
-		return nil, errors.New("no routing rule matched")
+		return nil, &KindError{Kind: ErrNoRuleMatched, Msg: fmt.Sprintf("no routing rule matched for path: %s", virtualPath)}
 	}
 	ids, err := r.expandTargets(cr.write)
 	if err != nil {
@@ -111,13 +136,46 @@ func (r *Router) ResolveWriteTargets(virtualPath string) ([]Target, error) {
 
 // matchRule returns the first routing rule that matches a path.
 func (r *Router) matchRule(virtualPath string) (compiledRule, bool) {
-	p := strings.TrimPrefix(virtualPath, "/")
+	p := normalizePath(virtualPath)
+	pathSegs := splitSegments(p)
 	for _, cr := range r.rules {
-		if cr.re.MatchString(p) {
+		if globMatchAny(cr.segs, pathSegs) {
 			return cr, true
 		}
 	}
 	return compiledRule{}, false
+}
+
+// ResolveListTargets returns the union of storage targets for directory listings.
+//
+// Unlike read/write routing (first match wins), directory listings must consider
+// all rules that could match descendants under the given directory.
+func (r *Router) ResolveListTargets(virtualDirPath string) ([]Target, error) {
+	if r == nil {
+		return nil, &KindError{Kind: ErrRouterNil, Msg: "router is nil"}
+	}
+
+	dir := normalizePath(virtualDirPath)
+	dirSegs := splitSegments(dir)
+
+	union := []string{}
+	matchedAny := false
+	for _, cr := range r.rules {
+		if !ruleCanMatchDescendant(cr.segs, dirSegs) {
+			continue
+		}
+		matchedAny = true
+		union = append(union, cr.read...)
+	}
+	if !matchedAny {
+		return nil, &KindError{Kind: ErrNoRuleMatched, Msg: fmt.Sprintf("no routing rule matched for path: %s", virtualDirPath)}
+	}
+
+	ids, err := r.expandTargets(union)
+	if err != nil {
+		return nil, err
+	}
+	return r.targetsFromIDs(ids)
 }
 
 // expandTargets expands storage groups into storage IDs and dedupes while preserving order.
@@ -157,7 +215,7 @@ func (r *Router) expandTargets(ids []string) ([]string, error) {
 		return nil, fmt.Errorf("unknown target id %q", id)
 	}
 	if len(out) == 0 {
-		return nil, errors.New("no targets resolved")
+		return nil, &KindError{Kind: ErrNoTargetsResolved, Msg: "no targets resolved"}
 	}
 	return out, nil
 }
@@ -175,42 +233,268 @@ func (r *Router) targetsFromIDs(ids []string) ([]Target, error) {
 	return out, nil
 }
 
-// compileGlob compiles PolicyFS glob patterns.
-//
-// Supported tokens:
-// - `**` matches any chars, including '/'
-// - `*` matches any chars except '/'
-// - `?` matches exactly one char except '/'
-func compileGlob(pattern string) (*regexp.Regexp, error) {
-	p := strings.TrimPrefix(pattern, "/")
-	var b strings.Builder
-	b.WriteString("^")
+// parseGlobExpanded parses brace-expanded patterns into segment lists.
+func parseGlobExpanded(expanded []string) ([][]string, error) {
+	if len(expanded) == 0 {
+		return nil, errors.New("empty glob expansion")
+	}
 
-	for i := 0; i < len(p); i++ {
-		c := p[i]
-		switch c {
-		case '*':
-			if i+1 < len(p) && p[i+1] == '*' {
-				b.WriteString(".*")
-				i++
-				continue
-			}
-			b.WriteString("[^/]*")
-		case '?':
-			b.WriteString("[^/]")
-		case '.', '+', '(', ')', '|', '^', '$', '{', '}', '[', ']', '\\':
-			b.WriteByte('\\')
-			b.WriteByte(c)
-		default:
-			b.WriteByte(c)
+	segs := make([][]string, 0, len(expanded))
+	for _, p := range expanded {
+		p = normalizeGlobPattern(p)
+		segs = append(segs, splitSegments(p))
+	}
+	return segs, nil
+}
+
+// expandBraces expands simple {a,b,c} brace syntax.
+func expandBraces(pattern string) ([]string, error) {
+	const maxExpansions = 64
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" {
+		return nil, errors.New("pattern is empty")
+	}
+
+	open := strings.IndexByte(pattern, '{')
+	if open == -1 {
+		return []string{pattern}, nil
+	}
+	close := strings.IndexByte(pattern[open+1:], '}')
+	if close == -1 {
+		return []string{pattern}, nil
+	}
+	close = open + 1 + close
+
+	inner := pattern[open+1 : close]
+	parts := strings.Split(inner, ",")
+	if len(parts) == 0 {
+		return []string{pattern}, nil
+	}
+
+	out := []string{}
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		candidate := pattern[:open] + part + pattern[close+1:]
+		exp, err := expandBraces(candidate)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, exp...)
+		if len(out) > maxExpansions {
+			return nil, fmt.Errorf("pattern expansion too large")
 		}
 	}
+	return out, nil
+}
 
-	b.WriteString("$")
-	c := b.String()
-	re, err := regexp.Compile(c)
-	if err != nil {
-		return nil, fmt.Errorf("failed to compile glob: %w", err)
+// normalizeGlobPattern normalizes patterns per routing spec.
+func normalizeGlobPattern(p string) string {
+	p = strings.TrimSpace(p)
+	p = strings.TrimPrefix(p, "/")
+	p = strings.TrimSuffix(p, "/")
+	return collapseSlashes(p)
+}
+
+// normalizePath normalizes virtual paths per routing spec.
+func normalizePath(p string) string {
+	p = strings.TrimSpace(p)
+	p = strings.TrimPrefix(p, "/")
+	p = strings.TrimSuffix(p, "/")
+	return collapseSlashes(p)
+}
+
+// collapseSlashes collapses repeated slashes into a single slash.
+func collapseSlashes(s string) string {
+	for strings.Contains(s, "//") {
+		s = strings.ReplaceAll(s, "//", "/")
 	}
-	return re, nil
+	return s
+}
+
+// splitSegments splits a normalized path into segments.
+func splitSegments(p string) []string {
+	p = strings.TrimPrefix(p, "/")
+	p = strings.TrimSuffix(p, "/")
+	if strings.TrimSpace(p) == "" {
+		return nil
+	}
+	return strings.Split(p, "/")
+}
+
+// ruleCanMatchDescendant reports whether any expanded pattern can match a path under dirSegs.
+func ruleCanMatchDescendant(expandedSegs [][]string, dirSegs []string) bool {
+	for _, segs := range expandedSegs {
+		if globCanMatchDescendant(segs, dirSegs) {
+			return true
+		}
+	}
+	return false
+}
+
+// globCanMatchDescendant checks whether a pattern can match at least one descendant path.
+func globCanMatchDescendant(patternSegs []string, dirSegs []string) bool {
+	states := map[int]struct{}{0: {}}
+	states = globEpsilonClose(patternSegs, states)
+	for _, ds := range dirSegs {
+		next := map[int]struct{}{}
+		for i := range states {
+			if i >= len(patternSegs) {
+				continue
+			}
+			ps := patternSegs[i]
+			if ps == "**" {
+				next[i] = struct{}{}
+				continue
+			}
+			if matchSegment(ps, ds) {
+				next[i+1] = struct{}{}
+			}
+		}
+		states = globEpsilonClose(patternSegs, next)
+		if len(states) == 0 {
+			return false
+		}
+	}
+	return len(states) > 0
+}
+
+// globEpsilonClose expands states that can advance without consuming a segment (only `**`).
+func globEpsilonClose(patternSegs []string, in map[int]struct{}) map[int]struct{} {
+	out := map[int]struct{}{}
+	for k := range in {
+		out[k] = struct{}{}
+	}
+	changed := true
+	for changed {
+		changed = false
+		for i := range out {
+			if i < len(patternSegs) && patternSegs[i] == "**" {
+				if _, ok := out[i+1]; !ok {
+					out[i+1] = struct{}{}
+					changed = true
+				}
+			}
+		}
+	}
+	return out
+}
+
+// matchSegment matches a single path segment (no '/') against a glob segment.
+func matchSegment(pattern string, s string) bool {
+	pi := 0
+	si := 0
+	star := -1
+	starMatch := 0
+
+	for si < len(s) {
+		if pi < len(pattern) {
+			switch pattern[pi] {
+			case '*':
+				star = pi
+				pi++
+				starMatch = si
+				continue
+			case '?':
+				pi++
+				si++
+				continue
+			case '[':
+				ok, n := matchCharClass(pattern[pi:], s[si])
+				if ok {
+					pi += n
+					si++
+					continue
+				}
+			}
+
+			if pattern[pi] == s[si] {
+				pi++
+				si++
+				continue
+			}
+		}
+
+		if star != -1 {
+			pi = star + 1
+			starMatch++
+			si = starMatch
+			continue
+		}
+		return false
+	}
+
+	for pi < len(pattern) && pattern[pi] == '*' {
+		pi++
+	}
+	return pi == len(pattern)
+}
+
+// matchCharClass matches a simple character class at the start of a pattern.
+func matchCharClass(pattern string, b byte) (bool, int) {
+	if len(pattern) == 0 || pattern[0] != '[' {
+		return false, 0
+	}
+	end := strings.IndexByte(pattern, ']')
+	if end == -1 {
+		return false, 0
+	}
+
+	inner := pattern[1:end]
+	neg := false
+	if strings.HasPrefix(inner, "!") {
+		neg = true
+		inner = inner[1:]
+	}
+
+	match := false
+	for i := 0; i < len(inner); i++ {
+		if inner[i] == b {
+			match = true
+			break
+		}
+	}
+	if neg {
+		match = !match
+	}
+	return match, end + 1
+}
+
+// globMatchAny matches a path against any brace-expanded segment list.
+func globMatchAny(expandedSegs [][]string, pathSegs []string) bool {
+	for _, segs := range expandedSegs {
+		if globMatchSegments(segs, pathSegs) {
+			return true
+		}
+	}
+	return false
+}
+
+// globMatchSegments matches a full path against a glob segment list.
+func globMatchSegments(patternSegs []string, pathSegs []string) bool {
+	states := map[int]struct{}{0: {}}
+	states = globEpsilonClose(patternSegs, states)
+
+	for _, s := range pathSegs {
+		next := map[int]struct{}{}
+		for i := range states {
+			if i >= len(patternSegs) {
+				continue
+			}
+			ps := patternSegs[i]
+			if ps == "**" {
+				next[i] = struct{}{}
+				continue
+			}
+			if matchSegment(ps, s) {
+				next[i+1] = struct{}{}
+			}
+		}
+		states = globEpsilonClose(patternSegs, next)
+		if len(states) == 0 {
+			return false
+		}
+	}
+	states = globEpsilonClose(patternSegs, states)
+	_, ok := states[len(patternSegs)]
+	return ok
 }

@@ -7,17 +7,15 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/hieutdo/policyfs/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
 // TestFUSE_ReadFile_smoke verifies basic reads are served correctly through PolicyFS.
 func TestFUSE_ReadFile_smoke(t *testing.T) {
 	withMountedFS(t, IntegrationConfig{}, func(env *MountedFS) {
-		p := filepath.Join(env.StorageRoot1, "fuse-ops", "read", "hello.txt")
-		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
-
 		want := []byte("hello from fuse read test")
-		require.NoError(t, os.WriteFile(p, want, 0o644))
+		env.MustCreateFile(t, want, "ssd1", "fuse-ops", "read", "hello.txt")
 
 		got, err := os.ReadFile(filepath.Join(env.MountPoint, "fuse-ops", "read", "hello.txt"))
 		require.NoError(t, err)
@@ -25,12 +23,37 @@ func TestFUSE_ReadFile_smoke(t *testing.T) {
 	})
 }
 
+// TestFUSE_Readdir_MatchesAllRules verifies READDIR unions targets from all rules that can match descendants.
+func TestFUSE_Readdir_MatchesAllRules(t *testing.T) {
+	withMountedFS(t, IntegrationConfig{
+		RoutingRules: []config.RoutingRule{
+			{Match: "library/movies/**", WriteTargets: []string{"ssd1"}, ReadTargets: []string{"ssd1"}},
+			{Match: "library/music/**", WriteTargets: []string{"ssd2"}, ReadTargets: []string{"ssd2"}},
+			{Match: "**", WriteTargets: []string{"ssd2"}, ReadTargets: []string{"ssd2"}},
+		},
+	}, func(env *MountedFS) {
+		env.MustCreateFile(t, []byte("a"), "ssd1", "library", "movies", "a.txt")
+		env.MustCreateFile(t, []byte("b"), "ssd2", "library", "music", "b.txt")
+
+		entries, err := os.ReadDir(filepath.Join(env.MountPoint, "library"))
+		require.NoError(t, err)
+
+		names := map[string]struct{}{}
+		for _, e := range entries {
+			names[e.Name()] = struct{}{}
+		}
+		_, okMovies := names["movies"]
+		require.True(t, okMovies)
+		_, okMusic := names["music"]
+		require.True(t, okMusic)
+	})
+}
+
 // TestFUSE_Readdir_smoke verifies directory listings work through PolicyFS.
 func TestFUSE_Readdir_smoke(t *testing.T) {
 	withMountedFS(t, IntegrationConfig{}, func(env *MountedFS) {
-		p := filepath.Join(env.StorageRoot1, "fuse-ops", "readdir")
-		require.NoError(t, os.MkdirAll(filepath.Join(p, "a"), 0o755))
-		require.NoError(t, os.WriteFile(filepath.Join(p, "b.txt"), []byte("x"), 0o644))
+		env.MustCreateDir(t, "ssd1", "fuse-ops", "readdir", "a")
+		env.MustCreateFile(t, []byte("x"), "ssd1", "fuse-ops", "readdir", "b.txt")
 
 		entries, err := os.ReadDir(filepath.Join(env.MountPoint, "fuse-ops", "readdir"))
 		require.NoError(t, err)
@@ -51,20 +74,15 @@ func TestFUSE_Readdir_smoke(t *testing.T) {
 func TestFUSE_Read_PrefersFirstReadTarget(t *testing.T) {
 	withMountedFS(t, IntegrationConfig{}, func(env *MountedFS) {
 		path := filepath.Join("fuse-m2", "read-pref", "hello.txt")
+		env.MustCreateDir(t, "ssd1", "fuse-m2", "read-pref")
+		env.MustCreateDir(t, "ssd2", "fuse-m2", "read-pref")
 
-		p1 := filepath.Join(env.StorageRoot1, path)
-		require.NoError(t, os.MkdirAll(filepath.Dir(p1), 0o755))
-		p2 := filepath.Join(env.StorageRoot2, path)
-		require.NoError(t, os.MkdirAll(filepath.Dir(p2), 0o755))
-
-		fromSSD1 := []byte("from ssd1")
-		fromSSD2 := []byte("from ssd2")
-		require.NoError(t, os.WriteFile(p1, fromSSD1, 0o644))
-		require.NoError(t, os.WriteFile(p2, fromSSD2, 0o644))
+		env.MustCreateFile(t, []byte("from ssd1"), "ssd1", "fuse-m2", "read-pref", "hello.txt")
+		env.MustCreateFile(t, []byte("from ssd2"), "ssd2", "fuse-m2", "read-pref", "hello.txt")
 
 		got, err := os.ReadFile(filepath.Join(env.MountPoint, path))
 		require.NoError(t, err)
-		require.Equal(t, fromSSD2, got)
+		require.Equal(t, []byte("from ssd2"), got)
 	})
 }
 
@@ -73,14 +91,12 @@ func TestFUSE_Readdir_MergesAndDedupes(t *testing.T) {
 	withMountedFS(t, IntegrationConfig{}, func(env *MountedFS) {
 		path := filepath.Join("fuse-m2", "readdir")
 
-		ssd2Dir := filepath.Join(env.StorageRoot2, path)
-		require.NoError(t, os.MkdirAll(ssd2Dir, 0o755))
-		require.NoError(t, os.WriteFile(filepath.Join(ssd2Dir, "a.txt"), []byte("a"), 0o644))
-		require.NoError(t, os.WriteFile(filepath.Join(ssd2Dir, "dup"), []byte("file"), 0o644))
+		env.MustCreateDir(t, "ssd2", "fuse-m2", "readdir")
+		env.MustCreateFile(t, []byte("a"), "ssd2", "fuse-m2", "readdir", "a.txt")
+		env.MustCreateFile(t, []byte("file"), "ssd2", "fuse-m2", "readdir", "dup")
 
-		ssd1Dir := filepath.Join(env.StorageRoot1, path)
-		require.NoError(t, os.MkdirAll(filepath.Join(ssd1Dir, "dup"), 0o755))
-		require.NoError(t, os.WriteFile(filepath.Join(ssd1Dir, "b.txt"), []byte("b"), 0o644))
+		env.MustCreateDir(t, "ssd1", "fuse-m2", "readdir", "dup")
+		env.MustCreateFile(t, []byte("b"), "ssd1", "fuse-m2", "readdir", "b.txt")
 
 		entries, err := os.ReadDir(filepath.Join(env.MountPoint, path))
 		require.NoError(t, err)
