@@ -62,18 +62,34 @@ func (m *MountedFS) StorageRoot(id string) string {
 	return m.StorageRoots[id]
 }
 
-func (m *MountedFS) CreateDir(rootId string, path ...string) error {
-	storageRoot := m.StorageRoot(rootId)
-	storagePath := filepath.Join(append([]string{storageRoot}, path...)...)
+// MountPath returns an absolute path under the mounted PolicyFS view.
+func (m *MountedFS) MountPath(rel string) string {
+	if m == nil {
+		panic("mounted fs is nil")
+	}
+	return filepath.Join(m.MountPoint, filepath.FromSlash(rel))
+}
+
+// StoragePath returns an absolute path under a specific storage root.
+func (m *MountedFS) StoragePath(storageID string, rel string) string {
+	if m == nil {
+		panic("mounted fs is nil")
+	}
+	return filepath.Join(m.StorageRoot(storageID), filepath.FromSlash(rel))
+}
+
+// CreateDirInStoragePath creates a directory tree under a storage root.
+func (m *MountedFS) CreateDirInStoragePath(rootId string, rel string) error {
+	storagePath := m.StoragePath(rootId, rel)
 	if err := os.MkdirAll(storagePath, 0o755); err != nil {
 		return fmt.Errorf("failed to create storage path %s: %w", storagePath, err)
 	}
 	return nil
 }
 
-func (m *MountedFS) CreateFile(content []byte, rootId string, path ...string) error {
-	storageRoot := m.StorageRoot(rootId)
-	filePath := filepath.Join(append([]string{storageRoot}, path...)...)
+// CreateFileInStoragePath creates a file under a storage root, creating parent directories if needed.
+func (m *MountedFS) CreateFileInStoragePath(content []byte, rootId string, rel string) error {
+	filePath := m.StoragePath(rootId, rel)
 	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
 		return fmt.Errorf("failed to create directory for file %s: %w", filePath, err)
 	}
@@ -83,14 +99,132 @@ func (m *MountedFS) CreateFile(content []byte, rootId string, path ...string) er
 	return nil
 }
 
-// MustCreateDir creates a directory on a storage root or fails the test.
-func (m *MountedFS) MustCreateDir(t testing.TB, rootId string, path ...string) {
+// MustCreateDirInStoragePath creates a directory on a storage root or fails the test.
+func (m *MountedFS) MustCreateDirInStoragePath(t testing.TB, rootId string, rel string) {
 	t.Helper()
-	require.NoError(t, m.CreateDir(rootId, path...))
+	require.NoError(t, m.CreateDirInStoragePath(rootId, rel))
 }
 
-// MustCreateFile creates a file on a storage root or fails the test.
-func (m *MountedFS) MustCreateFile(t testing.TB, content []byte, rootId string, path ...string) {
+// MustCreateFileInStoragePath creates a file on a storage root or fails the test.
+func (m *MountedFS) MustCreateFileInStoragePath(t testing.TB, content []byte, rootId string, rel string) {
 	t.Helper()
-	require.NoError(t, m.CreateFile(content, rootId, path...))
+	require.NoError(t, m.CreateFileInStoragePath(content, rootId, rel))
+}
+
+// MkdirInMountPoint creates a directory tree through the mounted view.
+func (m *MountedFS) MkdirInMountPoint(rel string, perm os.FileMode) error {
+	p := m.MountPath(rel)
+	if err := os.MkdirAll(p, perm); err != nil {
+		return fmt.Errorf("failed to create mount directory %s: %w", p, err)
+	}
+	return nil
+}
+
+// MustMkdirInMountPoint is MkdirInMountPoint with test failure on error.
+func (m *MountedFS) MustMkdirInMountPoint(t testing.TB, rel string) {
+	t.Helper()
+	require.NoError(t, m.MkdirInMountPoint(rel, 0o755))
+}
+
+// WriteFileInMountPoint writes a file through the mounted view, creating parent directories if needed.
+func (m *MountedFS) WriteFileInMountPoint(rel string, content []byte, perm os.FileMode) error {
+	full := m.MountPath(rel)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		return fmt.Errorf("failed to create mount directory for file %s: %w", full, err)
+	}
+	if err := os.WriteFile(full, content, perm); err != nil {
+		return fmt.Errorf("failed to write mount file %s: %w", full, err)
+	}
+	return nil
+}
+
+// MustWriteFileInMountPoint is WriteFileInMountPoint with default perms and test failure on error.
+func (m *MountedFS) MustWriteFileInMountPoint(t testing.TB, rel string, content []byte) {
+	t.Helper()
+	require.NoError(t, m.WriteFileInMountPoint(rel, content, 0o644))
+}
+
+// ReadFileInMountPoint reads a file through the mounted view.
+func (m *MountedFS) ReadFileInMountPoint(rel string) ([]byte, error) {
+	p := m.MountPath(rel)
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read mount file %s: %w", p, err)
+	}
+	return b, nil
+}
+
+// MustReadFileInMountPoint is ReadFileInMountPoint with test failure on error.
+func (m *MountedFS) MustReadFileInMountPoint(t testing.TB, rel string) []byte {
+	t.Helper()
+	b, err := m.ReadFileInMountPoint(rel)
+	require.NoError(t, err)
+	return b
+}
+
+// ReadFileAtStorage reads a file directly from a storage root.
+func (m *MountedFS) ReadFileAtStorage(storageID string, rel string) ([]byte, error) {
+	p := m.StoragePath(storageID, rel)
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read storage file %s: %w", p, err)
+	}
+	return b, nil
+}
+
+// MustReadFileInStoragePath is ReadFileAtStorage with test failure on error.
+func (m *MountedFS) MustReadFileInStoragePath(t testing.TB, storageID string, rel string) []byte {
+	t.Helper()
+	b, err := m.ReadFileAtStorage(storageID, rel)
+	require.NoError(t, err)
+	return b
+}
+
+// ReadDirInMountPoint reads a directory listing through the mounted view.
+func (m *MountedFS) ReadDirInMountPoint(rel string) ([]os.DirEntry, error) {
+	p := m.MountPath(rel)
+	entries, err := os.ReadDir(p)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read mount directory %s: %w", p, err)
+	}
+	return entries, nil
+}
+
+// MustReadDirInMountPoint is ReadDirInMountPoint with test failure on error.
+func (m *MountedFS) MustReadDirInMountPoint(t testing.TB, rel string) []os.DirEntry {
+	t.Helper()
+	entries, err := m.ReadDirInMountPoint(rel)
+	require.NoError(t, err)
+	return entries
+}
+
+// RemoveFileInMountPoint removes a path through the mounted view.
+func (m *MountedFS) RemoveFileInMountPoint(rel string) error {
+	p := m.MountPath(rel)
+	if err := os.Remove(p); err != nil {
+		return fmt.Errorf("failed to remove mount path %s: %w", p, err)
+	}
+	return nil
+}
+
+// MustRemoveFileInMountPoint is RemoveFileInMountPoint with test failure on error.
+func (m *MountedFS) MustRemoveFileInMountPoint(t testing.TB, rel string) {
+	t.Helper()
+	require.NoError(t, m.RemoveFileInMountPoint(rel))
+}
+
+// RenameFileInMountPoint renames a path through the mounted view.
+func (m *MountedFS) RenameFileInMountPoint(oldRel string, newRel string) error {
+	oldPath := m.MountPath(oldRel)
+	newPath := m.MountPath(newRel)
+	if err := os.Rename(oldPath, newPath); err != nil {
+		return fmt.Errorf("failed to rename mount path %s to %s: %w", oldPath, newPath, err)
+	}
+	return nil
+}
+
+// MustRenameFileInMountPoint is RenameFileInMountPoint with test failure on error.
+func (m *MountedFS) MustRenameFileInMountPoint(t testing.TB, oldRel string, newRel string) {
+	t.Helper()
+	require.NoError(t, m.RenameFileInMountPoint(oldRel, newRel))
 }

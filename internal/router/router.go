@@ -3,7 +3,10 @@ package router
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/hieutdo/policyfs/internal/config"
 )
@@ -15,6 +18,8 @@ var (
 	ErrNoRuleMatched = errors.New("no routing rule matched")
 	// ErrNoTargetsResolved is returned when no targets can be resolved after expansion/deduping.
 	ErrNoTargetsResolved = errors.New("no targets resolved")
+	// ErrNoWriteSpace is returned when no write target satisfies min_free_gb constraints.
+	ErrNoWriteSpace = errors.New("no write target has enough free space")
 )
 
 // KindError preserves a stable message while allowing callers to match a stable Kind via errors.Is.
@@ -132,6 +137,102 @@ func (r *Router) ResolveWriteTargets(virtualPath string) ([]Target, error) {
 		return nil, err
 	}
 	return r.targetsFromIDs(ids)
+}
+
+// SelectWriteTarget selects a single write target for a virtual path.
+//
+// This applies mount routing rule attributes: path_preserving, min_free_gb, and write_policy.
+func (r *Router) SelectWriteTarget(virtualPath string) (Target, error) {
+	if r == nil {
+		return Target{}, &KindError{Kind: ErrRouterNil, Msg: "router is nil"}
+	}
+
+	cr, ok := r.matchRule(virtualPath)
+	if !ok {
+		return Target{}, &KindError{Kind: ErrNoRuleMatched, Msg: fmt.Sprintf("no routing rule matched for path: %s", virtualPath)}
+	}
+
+	ids, err := r.expandTargets(cr.write)
+	if err != nil {
+		return Target{}, err
+	}
+	candidates, err := r.targetsFromIDs(ids)
+	if err != nil {
+		return Target{}, err
+	}
+
+	parent := parentVirtualDir(virtualPath)
+	if cr.rule.PathPreserving {
+		preferred := []Target{}
+		for _, t := range candidates {
+			if strings.TrimSpace(parent) == "" {
+				preferred = append(preferred, t)
+				continue
+			}
+			pp := filepath.Join(t.Root, parent)
+			fi, err := os.Stat(pp)
+			if err != nil {
+				continue
+			}
+			if fi.IsDir() {
+				preferred = append(preferred, t)
+			}
+		}
+		if len(preferred) > 0 {
+			candidates = preferred
+		}
+	}
+
+	policy := strings.TrimSpace(cr.rule.WritePolicy)
+	if policy == "" {
+		return Target{}, fmt.Errorf("write_policy is required")
+	}
+
+	filtered := []Target{}
+	filteredScores := []float64{}
+
+	for _, t := range candidates {
+		freeGB, err := freeSpaceGB(t.Root)
+		if err != nil {
+			return Target{}, fmt.Errorf("failed to statfs write target: %w", err)
+		}
+
+		sp, ok := r.storageByID[t.ID]
+		if !ok {
+			return Target{}, fmt.Errorf("unknown storage id %q", t.ID)
+		}
+		if sp.MinFreeGB > 0 && freeGB < sp.MinFreeGB {
+			continue
+		}
+		filtered = append(filtered, t)
+		filteredScores = append(filteredScores, freeGB)
+	}
+	if len(filtered) == 0 {
+		return Target{}, &KindError{Kind: ErrNoWriteSpace, Msg: fmt.Sprintf("no write target has enough free space for path: %s", virtualPath)}
+	}
+
+	switch policy {
+	case "first_found":
+		return filtered[0], nil
+	case "most_free":
+		best := 0
+		for i := 1; i < len(filtered); i++ {
+			if filteredScores[i] > filteredScores[best] {
+				best = i
+			}
+		}
+		return filtered[best], nil
+	case "least_free":
+		best := 0
+		for i := 1; i < len(filtered); i++ {
+			if filteredScores[i] < filteredScores[best] {
+				best = i
+			}
+		}
+		return filtered[best], nil
+	default:
+		return Target{}, fmt.Errorf("invalid write_policy %q", policy)
+	}
 }
 
 // matchRule returns the first routing rule that matches a path.
@@ -319,6 +420,26 @@ func splitSegments(p string) []string {
 		return nil
 	}
 	return strings.Split(p, "/")
+}
+
+// parentVirtualDir returns the parent directory of a virtual path.
+func parentVirtualDir(virtualPath string) string {
+	p := normalizePath(virtualPath)
+	parent := filepath.Dir(p)
+	if parent == "." {
+		return ""
+	}
+	return parent
+}
+
+// freeSpaceGB returns free disk space for a filesystem path in GiB.
+func freeSpaceGB(path string) (float64, error) {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(path, &st); err != nil {
+		return 0, fmt.Errorf("failed to statfs %q: %w", path, err)
+	}
+	free := float64(st.Bavail) * float64(st.Bsize)
+	return free / (1024.0 * 1024.0 * 1024.0), nil
 }
 
 // ruleCanMatchDescendant reports whether any expanded pattern can match a path under dirSegs.

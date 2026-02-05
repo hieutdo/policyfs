@@ -4,8 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
+)
+
+const (
+	DefaultWritePolicy = "first_found"
 )
 
 var (
@@ -94,7 +99,28 @@ func Load(path string) (*RootConfig, error) {
 		return nil, fmt.Errorf("parse config %q: %w", path, err)
 	}
 
+	cfg.applyDefaults()
+
 	return &cfg, nil
+}
+
+func (c *RootConfig) applyDefaults() {
+	if c == nil {
+		return
+	}
+	if c.Mounts == nil {
+		return
+	}
+
+	for mountName, m := range c.Mounts {
+		for i := range m.RoutingRules {
+			wp := strings.TrimSpace(m.RoutingRules[i].WritePolicy)
+			if wp == "" {
+				m.RoutingRules[i].WritePolicy = DefaultWritePolicy
+			}
+		}
+		c.Mounts[mountName] = m
+	}
 }
 
 // Mount finds a mount configuration by name.

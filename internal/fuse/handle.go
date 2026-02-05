@@ -15,6 +15,8 @@ import (
 type FileHandle struct {
 	virtualPath  string
 	physicalPath string
+	storageID    string
+	indexed      bool
 	fd           int
 	flags        uint32
 }
@@ -37,10 +39,27 @@ func (h *FileHandle) Write(ctx context.Context, data []byte, off int64) (uint32,
 	return uint32(n), 0
 }
 
+// Fsync flushes writes to stable storage.
+func (h *FileHandle) Fsync(ctx context.Context, flags uint32) syscall.Errno {
+	if err := syscall.Fsync(h.fd); err != nil {
+		return fs.ToErrno(err)
+	}
+	_ = ctx
+	_ = flags
+	return 0
+}
+
 // Release closes the underlying file descriptor.
 func (h *FileHandle) Release(ctx context.Context) syscall.Errno {
+	if h.flags&gofuse.O_ANYWRITE != 0 {
+		if err := syscall.Fsync(h.fd); err != nil {
+			_ = syscall.Close(h.fd)
+			return fs.ToErrno(err)
+		}
+	}
 	if err := syscall.Close(h.fd); err != nil {
 		return fs.ToErrno(err)
 	}
+	_ = ctx
 	return 0
 }
