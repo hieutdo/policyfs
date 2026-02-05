@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
@@ -98,5 +99,133 @@ func TestFUSE_Readdir_MergesAndDedupes(t *testing.T) {
 		info, err := dup.Info()
 		require.NoError(t, err)
 		require.False(t, info.IsDir())
+	})
+}
+
+// =============================================================================
+// Readdir Edge Cases
+// =============================================================================
+
+// TestFUSE_Readdir_EmptyDirectory verifies empty directories return no entries.
+func TestFUSE_Readdir_EmptyDirectory(t *testing.T) {
+	withMountedFS(t, IntegrationConfig{}, func(env *MountedFS) {
+		// Setup: create an empty directory.
+		rel := "readdir-edge/empty"
+		env.MustMkdirInMountPoint(t, rel)
+
+		// Action: list the empty directory.
+		entries := env.MustReadDirInMountPoint(t, rel)
+
+		// Verify: no entries (FUSE typically doesn't include . and ..).
+		require.Empty(t, entries)
+	})
+}
+
+// TestFUSE_Readdir_LargeDirectory verifies directories with many entries work.
+func TestFUSE_Readdir_LargeDirectory(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping large directory test in short mode")
+	}
+
+	withMountedFS(t, IntegrationConfig{}, func(env *MountedFS) {
+		// Setup: create a directory with many files.
+		const numFiles = 200
+		rel := "readdir-edge/large"
+		env.MustMkdirInMountPoint(t, rel)
+
+		for i := 0; i < numFiles; i++ {
+			fileName := rel + "/" + fmt.Sprintf("file%04d.txt", i)
+			env.MustWriteFileInMountPoint(t, fileName, []byte("x"))
+		}
+
+		// Action: list the large directory.
+		entries := env.MustReadDirInMountPoint(t, rel)
+
+		// Verify: all files are present.
+		require.Len(t, entries, numFiles)
+	})
+}
+
+// TestFUSE_Readdir_HiddenFiles verifies dot-prefixed (hidden) files appear in listings.
+func TestFUSE_Readdir_HiddenFiles(t *testing.T) {
+	withMountedFS(t, IntegrationConfig{}, func(env *MountedFS) {
+		// Setup: create hidden and non-hidden files.
+		rel := "readdir-edge/hidden"
+		env.MustWriteFileInMountPoint(t, rel+"/visible.txt", []byte("x"))
+		env.MustWriteFileInMountPoint(t, rel+"/.hidden", []byte("x"))
+		env.MustMkdirInMountPoint(t, rel+"/.hiddendir")
+
+		// Action: list the directory.
+		entries := env.MustReadDirInMountPoint(t, rel)
+
+		// Verify: all entries appear including hidden ones.
+		names := make(map[string]struct{})
+		for _, e := range entries {
+			names[e.Name()] = struct{}{}
+		}
+
+		require.Contains(t, names, "visible.txt")
+		require.Contains(t, names, ".hidden")
+		require.Contains(t, names, ".hiddendir")
+	})
+}
+
+// TestFUSE_Readdir_SymlinksInListing verifies symlinks appear correctly in directory listings.
+func TestFUSE_Readdir_SymlinksInListing(t *testing.T) {
+	withMountedFS(t, IntegrationConfig{}, func(env *MountedFS) {
+		// Setup: create a file and a symlink to it.
+		rel := "readdir-edge/symlinks"
+		env.MustWriteFileInMountPoint(t, rel+"/target.txt", []byte("content"))
+		env.MustSymlinkInMountPoint(t, "target.txt", rel+"/link.txt")
+
+		// Action: list the directory.
+		entries := env.MustReadDirInMountPoint(t, rel)
+
+		// Verify: both entries appear.
+		entryMap := make(map[string]os.DirEntry)
+		for _, e := range entries {
+			entryMap[e.Name()] = e
+		}
+
+		require.Contains(t, entryMap, "target.txt")
+		require.Contains(t, entryMap, "link.txt")
+
+		// Verify: don't rely on readdir d_type; confirm via Lstat through the mount.
+		linkInfo := env.MustLstatInMountPoint(t, rel+"/link.txt")
+		require.True(t, linkInfo.Mode()&os.ModeSymlink != 0)
+	})
+}
+
+// TestFUSE_Readdir_MixedTypes verifies directories with mixed entry types work.
+func TestFUSE_Readdir_MixedTypes(t *testing.T) {
+	withMountedFS(t, IntegrationConfig{}, func(env *MountedFS) {
+		// Setup: create various entry types.
+		rel := "readdir-edge/mixed"
+		env.MustWriteFileInMountPoint(t, rel+"/file.txt", []byte("file content"))
+		env.MustMkdirInMountPoint(t, rel+"/subdir")
+		env.MustSymlinkInMountPoint(t, "file.txt", rel+"/link.txt")
+
+		// Action: list the directory.
+		entries := env.MustReadDirInMountPoint(t, rel)
+
+		// Verify: all entries appear with correct types.
+		entryMap := make(map[string]os.DirEntry)
+		for _, e := range entries {
+			entryMap[e.Name()] = e
+		}
+
+		require.Len(t, entryMap, 3)
+
+		// File: confirm type via Lstat to avoid depending on readdir d_type.
+		fileInfo := env.MustLstatInMountPoint(t, rel+"/file.txt")
+		require.True(t, fileInfo.Mode().IsRegular())
+
+		// Directory
+		dirInfo := env.MustLstatInMountPoint(t, rel+"/subdir")
+		require.True(t, dirInfo.IsDir())
+
+		// Symlink
+		linkInfo := env.MustLstatInMountPoint(t, rel+"/link.txt")
+		require.True(t, linkInfo.Mode()&os.ModeSymlink != 0)
 	})
 }

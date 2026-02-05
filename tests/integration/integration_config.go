@@ -256,3 +256,71 @@ func (m *MountedFS) MustRenameFileInMountPoint(t testing.TB, oldRel string, newR
 	t.Helper()
 	require.NoError(t, m.RenameFileInMountPoint(oldRel, newRel))
 }
+
+// SymlinkInMountPoint creates a symbolic link through the mounted view.
+func (m *MountedFS) SymlinkInMountPoint(target string, linkRel string) error {
+	linkPath := m.MountPath(linkRel)
+	if err := os.MkdirAll(filepath.Dir(linkPath), 0o755); err != nil {
+		return fmt.Errorf("failed to create parent directory for symlink %s: %w", linkPath, err)
+	}
+	if err := os.Symlink(target, linkPath); err != nil {
+		return fmt.Errorf("failed to create symlink %s -> %s: %w", linkPath, target, err)
+	}
+	return nil
+}
+
+// MustSymlinkInMountPoint is SymlinkInMountPoint with test failure on error.
+func (m *MountedFS) MustSymlinkInMountPoint(t testing.TB, target string, linkRel string) {
+	t.Helper()
+	require.NoError(t, m.SymlinkInMountPoint(target, linkRel))
+}
+
+// ReadlinkInMountPoint reads a symbolic link target through the mounted view.
+func (m *MountedFS) ReadlinkInMountPoint(rel string) (string, error) {
+	p := m.MountPath(rel)
+	target, err := os.Readlink(p)
+	if err != nil {
+		return "", fmt.Errorf("failed to read symlink %s: %w", p, err)
+	}
+	return target, nil
+}
+
+// MustReadlinkInMountPoint is ReadlinkInMountPoint with test failure on error.
+func (m *MountedFS) MustReadlinkInMountPoint(t testing.TB, rel string) string {
+	t.Helper()
+	target, err := m.ReadlinkInMountPoint(rel)
+	require.NoError(t, err)
+	return target
+}
+
+// LstatInMountPoint returns file info for a path without following symlinks.
+func (m *MountedFS) LstatInMountPoint(rel string) (os.FileInfo, error) {
+	p := m.MountPath(rel)
+	fi, err := os.Lstat(p)
+	if err != nil {
+		return nil, fmt.Errorf("failed to lstat %s: %w", p, err)
+	}
+	return fi, nil
+}
+
+// MustLstatInMountPoint is LstatInMountPoint with test failure on error.
+func (m *MountedFS) MustLstatInMountPoint(t testing.TB, rel string) os.FileInfo {
+	t.Helper()
+	fi, err := m.LstatInMountPoint(rel)
+	require.NoError(t, err)
+	return fi
+}
+
+// FileExistsInMountPoint checks if a path exists through the mounted view.
+func (m *MountedFS) FileExistsInMountPoint(rel string) bool {
+	p := m.MountPath(rel)
+	_, err := os.Lstat(p)
+	return err == nil
+}
+
+// FileExistsInStoragePath checks if a path exists on a storage root.
+func (m *MountedFS) FileExistsInStoragePath(storageID string, rel string) bool {
+	p := m.StoragePath(storageID, rel)
+	_, err := os.Lstat(p)
+	return err == nil
+}
