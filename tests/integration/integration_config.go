@@ -5,7 +5,9 @@ package integration
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/hieutdo/policyfs/internal/config"
@@ -17,6 +19,9 @@ type IntegrationConfig struct {
 	// Storages controls which storage_paths are generated for this test.
 	// If empty, the harness defaults to 2 storages: ssd1 + ssd2.
 	Storages []IntegrationStorage
+
+	// AllowOther controls whether the mount enables FUSE allow_other.
+	AllowOther bool
 
 	// StorageGroups configures mount.storage_groups.
 	StorageGroups map[string][]string
@@ -76,6 +81,29 @@ func (m *MountedFS) StoragePath(storageID string, rel string) string {
 		panic("mounted fs is nil")
 	}
 	return filepath.Join(m.StorageRoot(storageID), filepath.FromSlash(rel))
+}
+
+// MustStatT returns a syscall.Stat_t for a path or fails the test.
+func (m *MountedFS) MustStatT(t testing.TB, path string) *syscall.Stat_t {
+	t.Helper()
+	fi, err := os.Lstat(path)
+	require.NoError(t, err)
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	require.True(t, ok)
+	require.NotNil(t, st)
+	return st
+}
+
+// RunAsUser runs a shell command as another user.
+func (m *MountedFS) RunAsUser(t testing.TB, user string, cmd string) error {
+	t.Helper()
+	c := exec.Command("su", "-s", "/bin/sh", user, "-c", cmd)
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+	if err := c.Run(); err != nil {
+		return fmt.Errorf("failed to run command as user %s: %w", user, err)
+	}
+	return nil
 }
 
 // CreateDirInStoragePath creates a directory tree under a storage root.

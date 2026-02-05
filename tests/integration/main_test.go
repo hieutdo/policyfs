@@ -113,6 +113,18 @@ func withMountedFS(t *testing.T, cfg IntegrationConfig, fn func(env *MountedFS))
 			MountPoint:   filepath.Join(baseMountPoint, name),
 			StorageRoots: storageRoots,
 		}
+
+		t.Cleanup(func() {
+			if t.Failed() {
+				return
+			}
+			if strings.TrimSpace(os.Getenv("PFS_INTEGRATION_KEEP_ARTIFACTS")) != "" {
+				return
+			}
+			for _, root := range env.StorageRoots {
+				_ = os.RemoveAll(root)
+			}
+		})
 		fn(env)
 		return
 	}
@@ -163,6 +175,22 @@ func withMountedFS(t *testing.T, cfg IntegrationConfig, fn func(env *MountedFS))
 		if err := ensureUnmounted(env.MountPoint, 2*time.Second); err != nil {
 			t.Fatalf("failed to unmount: %v", err)
 		}
+
+		if t.Failed() {
+			return
+		}
+		// Opt-out: keep artifacts even on success, for debugging and manual inspection.
+		if strings.TrimSpace(os.Getenv("PFS_INTEGRATION_KEEP_ARTIFACTS")) != "" {
+			return
+		}
+
+		// Best-effort cleanup: keep artifacts on failure to make debugging easier.
+		for _, root := range env.StorageRoots {
+			_ = os.RemoveAll(root)
+		}
+		_ = os.RemoveAll(env.MountPoint)
+		_ = os.Remove(env.ConfigPath)
+		_ = os.Remove(filepath.Join(tmpDir, name+".log"))
 	})
 
 	fn(env)
@@ -321,6 +349,7 @@ func writeIntegrationConfig(path string, mountName string, mountPoint string, st
 	}
 
 	rootCfg := config.RootConfig{
+		Fuse: config.FuseConfig{AllowOther: cfg.AllowOther},
 		Mounts: map[string]config.MountConfig{
 			mountName: {
 				MountPoint:    mountPoint,

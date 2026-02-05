@@ -17,7 +17,7 @@ list_files() {
 
 files=()
 while IFS= read -r f; do
-  [[ -n "$f" ]] && files+=("$f")
+  [[ -n "$f" && -f "$f" ]] && files+=("$f")
 done < <(list_files)
 
 go_files=()

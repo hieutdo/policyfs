@@ -17,7 +17,7 @@ fi
 
 staged_go_files=()
 while IFS= read -r f; do
-  [[ -n "$f" ]] && staged_go_files+=("$f")
+  [[ -n "$f" && -f "$f" ]] && staged_go_files+=("$f")
 done < <(git diff --name-only --cached --diff-filter=ACMR -- '*.go')
 
 if ((${#staged_go_files[@]} == 0)); then
