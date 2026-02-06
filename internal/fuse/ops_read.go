@@ -100,6 +100,15 @@ func listDirEntries(ctx context.Context, ino *fs.Inode, rt *router.Router) ([]go
 	}
 
 	virtualPath := ino.Path(ino.Root())
+	return listDirEntriesForVirtualPath(ctx, virtualPath, rt)
+}
+
+// listDirEntriesForVirtualPath returns merged directory entries across read targets (union + dedupe).
+func listDirEntriesForVirtualPath(ctx context.Context, virtualPath string, rt *router.Router) ([]gofuse.DirEntry, syscall.Errno) {
+	if rt == nil {
+		return nil, fs.ToErrno(errors.New("router is nil"))
+	}
+
 	targets, err := rt.ResolveListTargets(virtualPath)
 	if err != nil {
 		return nil, toErrno(err)

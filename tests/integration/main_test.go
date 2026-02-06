@@ -44,6 +44,9 @@ func run(m *testing.M) int {
 	}
 
 	buildArgs := []string{"build", "-o", pfsBin}
+	if strings.TrimSpace(os.Getenv("PFS_INTEGRATION_COVER")) != "" {
+		buildArgs = append(buildArgs, "-tags=cover", "-cover", "-covermode=atomic", "-coverpkg=./cmd/...,./internal/...")
+	}
 	if strings.TrimSpace(os.Getenv("PFS_INTEGRATION_DEBUG_BUILD")) != "" {
 		buildArgs = append(buildArgs, "-gcflags=all=-N -l")
 	}
@@ -152,8 +155,9 @@ func withMountedFS(t *testing.T, cfg IntegrationConfig, fn func(env *MountedFS))
 		t.Fatalf("failed to write integration config: %v", err)
 	}
 
+	// NOTE: Don't defer cancel here. exec.CommandContext kills the process on cancel (SIGKILL),
+	// which prevents graceful shutdown and coverage flush.
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	mountCmd := exec.CommandContext(ctx, pfsBin, "--config", env.ConfigPath, "mount", env.MountName)
 	mountCmd.Env = append(os.Environ(), "PFS_LOG_FILE="+tmpDir+"/"+name+".log")
@@ -166,12 +170,25 @@ func withMountedFS(t *testing.T, cfg IntegrationConfig, fn func(env *MountedFS))
 	if err := waitForMount(env.MountPoint, 5*time.Second); err != nil {
 		_ = mountCmd.Process.Signal(syscall.SIGTERM)
 		_, _ = mountCmd.Process.Wait()
+		cancel()
 		t.Fatalf("mount did not become ready: %v", err)
 	}
 
 	t.Cleanup(func() {
 		_ = mountCmd.Process.Signal(syscall.SIGTERM)
-		_, _ = mountCmd.Process.Wait()
+		done := make(chan struct{})
+		go func() {
+			_, _ = mountCmd.Process.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			cancel()
+			_ = mountCmd.Process.Kill()
+			<-done
+		}
+		cancel()
 		if err := ensureUnmounted(env.MountPoint, 2*time.Second); err != nil {
 			t.Fatalf("failed to unmount: %v", err)
 		}

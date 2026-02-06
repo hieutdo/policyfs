@@ -4,6 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
+	"sync"
+	"syscall"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
@@ -85,7 +88,27 @@ This command is typically managed by systemd as a service.`,
 			}
 
 			cmdLog.Info().Str("mount", mountName).Str("mountpoint", mountCfg.MountPoint).Msg("mount ready")
+
+			sigCh := make(chan os.Signal, 2)
+			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+			defer signal.Stop(sigCh)
+
+			var unmountOnce sync.Once
+			go func() {
+				<-sigCh
+				cmdLog.Info().Str("mount", mountName).Str("mountpoint", mountCfg.MountPoint).Msg("unmount requested")
+				unmountOnce.Do(func() {
+					_ = server.Unmount()
+				})
+
+				<-sigCh
+				cmdLog.Info().Str("mount", mountName).Str("mountpoint", mountCfg.MountPoint).Msg("force exit requested")
+				flushCoverageIfEnabled(mountName, mountCfg.MountPoint)
+				os.Exit(1)
+			}()
+
 			server.Wait()
+			flushCoverageIfEnabled(mountName, mountCfg.MountPoint)
 			return nil
 		},
 	}

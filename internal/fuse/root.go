@@ -38,7 +38,11 @@ func NewRoot(m *config.MountConfig, primaryRootPath string) (fs.InodeEmbedder, e
 		return op, nil
 	}
 
-	return &Node{LoopbackNode: lb, rt: rt}, nil
+	n := &Node{LoopbackNode: lb, rt: rt}
+	if lb.RootData != nil {
+		lb.RootData.RootNode = n
+	}
+	return n, nil
 }
 
 // WrapChild wraps descendant nodes.
