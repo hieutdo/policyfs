@@ -11,6 +11,7 @@ import (
 	"github.com/hanwen/go-fuse/v2/fs"
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
 	pfsfuse "github.com/hieutdo/policyfs/internal/fuse"
+	"github.com/hieutdo/policyfs/internal/indexdb"
 	"github.com/spf13/cobra"
 )
 
@@ -63,7 +64,21 @@ This command is typically managed by systemd as a service.`,
 			}
 			cmdLog := cfgLog.With().Str("component", "cli").Str("op", "mount").Logger()
 
-			root, err := pfsfuse.NewRoot(mountCfg, source)
+			var idxDB *indexdb.DB
+			for _, sp := range mountCfg.StoragePaths {
+				if sp.Indexed {
+					idxDB, err = indexdb.Open(mountName)
+					if err != nil {
+						return &CLIError{Code: ExitFail, Cmd: "mount", Headline: "failed to open index db", Cause: rootCause(err)}
+					}
+					break
+				}
+			}
+			if idxDB != nil {
+				defer func() { _ = idxDB.Close() }()
+			}
+
+			root, err := pfsfuse.NewRoot(mountCfg, source, idxDB)
 			if err != nil {
 				return &CLIError{Code: ExitFail, Cmd: "mount", Headline: fmt.Sprintf("invalid config: %s", *configPath), Cause: rootCause(err)}
 			}

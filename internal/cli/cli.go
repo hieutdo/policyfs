@@ -85,6 +85,7 @@ Optional indexing reduces disk wake-ups during metadata reads.`,
 	cmd.PersistentFlags().StringVarP(&configPath, "config", "c", "/etc/pfs/pfs.yaml", "path to config file")
 
 	cmd.AddCommand(newMountCmd(&configPath))
+	cmd.AddCommand(newIndexCmd(&configPath))
 	cmd.AddCommand(newDoctorCmd(&configPath))
 	cmd.AddCommand(newVersionCmd())
 

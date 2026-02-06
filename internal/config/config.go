@@ -67,6 +67,12 @@ type MountConfig struct {
 	StoragePaths  []StoragePath       `yaml:"storage_paths"`
 	StorageGroups map[string][]string `yaml:"storage_groups"`
 	RoutingRules  []RoutingRule       `yaml:"routing_rules"`
+	Indexer       IndexerConfig       `yaml:"indexer"`
+}
+
+// IndexerConfig controls the indexer behavior for indexed storage paths.
+type IndexerConfig struct {
+	Ignore []string `yaml:"ignore"`
 }
 
 // RoutingRule routes virtual paths to storage targets.

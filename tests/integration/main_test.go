@@ -127,6 +127,12 @@ func withMountedFS(t *testing.T, cfg IntegrationConfig, fn func(env *MountedFS))
 			for _, root := range env.StorageRoots {
 				_ = os.RemoveAll(root)
 			}
+			if strings.TrimSpace(env.RuntimeDir) != "" {
+				_ = os.RemoveAll(env.RuntimeDir)
+			}
+			if strings.TrimSpace(env.StateDir) != "" {
+				_ = os.RemoveAll(env.StateDir)
+			}
 		})
 		fn(env)
 		return
@@ -138,10 +144,21 @@ func withMountedFS(t *testing.T, cfg IntegrationConfig, fn func(env *MountedFS))
 		t.Fatalf("failed to create storage roots: %v", err)
 	}
 
+	runtimeDir := filepath.Join(tmpDir, name+"-run")
+	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+		t.Fatalf("failed to ensure runtime dir: %v", err)
+	}
+	stateDir := filepath.Join(tmpDir, name+"-state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatalf("failed to ensure state dir: %v", err)
+	}
+
 	env := &MountedFS{
 		MountName:    "integration",
 		MountPoint:   filepath.Join(mountBase, name),
 		ConfigPath:   filepath.Join(tmpDir, name+".yaml"),
+		RuntimeDir:   runtimeDir,
+		StateDir:     stateDir,
 		StorageRoots: storageRoots,
 	}
 
@@ -160,7 +177,12 @@ func withMountedFS(t *testing.T, cfg IntegrationConfig, fn func(env *MountedFS))
 	ctx, cancel := context.WithCancel(context.Background())
 
 	mountCmd := exec.CommandContext(ctx, pfsBin, "--config", env.ConfigPath, "mount", env.MountName)
-	mountCmd.Env = append(os.Environ(), "PFS_LOG_FILE="+tmpDir+"/"+name+".log")
+	mountCmd.Env = append(
+		os.Environ(),
+		"PFS_LOG_FILE="+tmpDir+"/"+name+".log",
+		"PFS_RUNTIME_DIR="+env.RuntimeDir,
+		"PFS_STATE_DIR="+env.StateDir,
+	)
 	mountCmd.Stdout = os.Stdout
 	mountCmd.Stderr = os.Stderr
 	if err := mountCmd.Start(); err != nil {
@@ -207,6 +229,8 @@ func withMountedFS(t *testing.T, cfg IntegrationConfig, fn func(env *MountedFS))
 		}
 		_ = os.RemoveAll(env.MountPoint)
 		_ = os.Remove(env.ConfigPath)
+		_ = os.RemoveAll(env.RuntimeDir)
+		_ = os.RemoveAll(env.StateDir)
 		_ = os.Remove(filepath.Join(tmpDir, name+".log"))
 	})
 

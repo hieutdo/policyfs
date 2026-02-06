@@ -8,6 +8,7 @@ import (
 	"github.com/hanwen/go-fuse/v2/fs"
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/hieutdo/policyfs/internal/config"
+	"github.com/hieutdo/policyfs/internal/indexdb"
 	"github.com/hieutdo/policyfs/internal/router"
 )
 
@@ -15,13 +16,14 @@ import (
 type Node struct {
 	*fs.LoopbackNode
 	rt *router.Router
+	db *indexdb.DB
 }
 
 // NewRoot creates the PolicyFS root node for mounting.
 //
 // Currently this is a thin wrapper around go-fuse's loopback root to keep behavior
 // identical while we incrementally add PolicyFS operations.
-func NewRoot(m *config.MountConfig, primaryRootPath string) (fs.InodeEmbedder, error) {
+func NewRoot(m *config.MountConfig, primaryRootPath string, db *indexdb.DB) (fs.InodeEmbedder, error) {
 	rt, err := router.New(m)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create router: %w", err)
@@ -38,7 +40,7 @@ func NewRoot(m *config.MountConfig, primaryRootPath string) (fs.InodeEmbedder, e
 		return op, nil
 	}
 
-	n := &Node{LoopbackNode: lb, rt: rt}
+	n := &Node{LoopbackNode: lb, rt: rt, db: db}
 	if lb.RootData != nil {
 		lb.RootData.RootNode = n
 	}
@@ -51,27 +53,27 @@ func (n *Node) WrapChild(ctx context.Context, ops fs.InodeEmbedder) fs.InodeEmbe
 	if !ok {
 		return ops
 	}
-	return &Node{LoopbackNode: lb, rt: n.rt}
+	return &Node{LoopbackNode: lb, rt: n.rt, db: n.db}
 }
 
 // Lookup resolves a child entry using the router's read target order.
 func (n *Node) Lookup(ctx context.Context, name string, out *gofuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	return lookupChild(ctx, n.EmbeddedInode(), n.RootData, n.rt, name, out)
+	return lookupChild(ctx, n.EmbeddedInode(), n.RootData, n.rt, n.db, name, out)
 }
 
 // Getattr reads attributes using the router's read target order.
 func (n *Node) Getattr(ctx context.Context, f fs.FileHandle, out *gofuse.AttrOut) syscall.Errno {
-	return getattrPath(ctx, n.EmbeddedInode(), n.rt, out)
+	return getattrPath(ctx, n.EmbeddedInode(), n.rt, n.db, out)
 }
 
 // Readdir returns a union of directory entries across read targets, deduped by name.
 func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
-	return readdirPath(ctx, n.EmbeddedInode(), n.rt)
+	return readdirPath(ctx, n.EmbeddedInode(), n.rt, n.db)
 }
 
 // OpendirHandle returns a directory handle that merges entries across read targets.
 func (n *Node) OpendirHandle(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
-	entries, errno := listDirEntries(ctx, n.EmbeddedInode(), n.rt)
+	entries, errno := listDirEntries(ctx, n.EmbeddedInode(), n.rt, n.db)
 	if errno != 0 {
 		return nil, 0, errno
 	}

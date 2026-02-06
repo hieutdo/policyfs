@@ -50,6 +50,8 @@ type MountedFS struct {
 	ConfigPath   string
 	MountName    string
 	MountPoint   string
+	RuntimeDir   string
+	StateDir     string
 	StorageRoots map[string]string
 }
 
