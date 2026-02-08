@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hieutdo/policyfs/internal/config"
+	"github.com/hieutdo/policyfs/internal/errkind"
 	"github.com/rs/zerolog"
 )
 
@@ -63,13 +64,13 @@ type dirAgg struct {
 // Run indexes all indexed storage paths for a mount.
 func Run(ctx context.Context, mountName string, mountCfg *config.MountConfig, db *sql.DB, log zerolog.Logger) (Result, error) {
 	if mountName == "" {
-		return Result{}, config.ErrMountNameRequired
+		return Result{}, &errkind.RequiredError{What: "mount name"}
 	}
 	if mountCfg == nil {
-		return Result{}, config.ErrMountConfigNil
+		return Result{}, &errkind.NilError{What: "mount config"}
 	}
 	if db == nil {
-		return Result{}, config.ErrDBNil
+		return Result{}, &errkind.NilError{What: "db"}
 	}
 
 	indexed := []config.StoragePath{}
@@ -102,13 +103,13 @@ func Run(ctx context.Context, mountName string, mountCfg *config.MountConfig, db
 // indexOne indexes a single storage path into the files table.
 func indexOne(ctx context.Context, db *sql.DB, sp config.StoragePath, mountCfg *config.MountConfig, log zerolog.Logger) (StorageResult, error) {
 	if mountCfg == nil {
-		return StorageResult{}, config.ErrMountConfigNil
+		return StorageResult{}, &errkind.NilError{What: "mount config"}
 	}
 	if strings.TrimSpace(sp.ID) == "" {
-		return StorageResult{}, &config.KindError{Kind: config.ErrStoragePathIDRequired, Msg: "storage id is required"}
+		return StorageResult{}, &errkind.RequiredError{What: "storage id"}
 	}
 	if strings.TrimSpace(sp.Path) == "" {
-		return StorageResult{}, config.ErrStoragePathPathRequired
+		return StorageResult{}, &errkind.RequiredError{What: "storage path"}
 	}
 
 	start := time.Now()

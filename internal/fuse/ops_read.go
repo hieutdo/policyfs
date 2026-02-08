@@ -10,6 +10,7 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/hieutdo/policyfs/internal/errkind"
 	"github.com/hieutdo/policyfs/internal/indexdb"
 	"github.com/hieutdo/policyfs/internal/router"
 )
@@ -17,10 +18,10 @@ import (
 // lookupChild looks up a child by name using router read targets.
 func lookupChild(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoot, rt *router.Router, db *indexdb.DB, name string, out *gofuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	if parent == nil {
-		return nil, fs.ToErrno(errors.New("parent inode is nil"))
+		return nil, fs.ToErrno(&errkind.NilError{What: "parent inode"})
 	}
 	if rt == nil {
-		return nil, fs.ToErrno(errors.New("router is nil"))
+		return nil, fs.ToErrno(&errkind.NilError{What: "router"})
 	}
 
 	parentPath := parent.Path(parent.Root())
@@ -98,10 +99,10 @@ func lookupChild(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoo
 // getattrPath gets attributes for a virtual path by searching read targets.
 func getattrPath(ctx context.Context, ino *fs.Inode, rt *router.Router, db *indexdb.DB, out *gofuse.AttrOut) syscall.Errno {
 	if ino == nil {
-		return fs.ToErrno(errors.New("inode is nil"))
+		return fs.ToErrno(&errkind.NilError{What: "inode"})
 	}
 	if rt == nil {
-		return fs.ToErrno(errors.New("router is nil"))
+		return fs.ToErrno(&errkind.NilError{What: "router"})
 	}
 
 	virtualPath := ino.Path(ino.Root())
@@ -174,10 +175,10 @@ func readdirPath(ctx context.Context, ino *fs.Inode, rt *router.Router, db *inde
 // listDirEntries returns merged directory entries across read targets (union + dedupe).
 func listDirEntries(ctx context.Context, ino *fs.Inode, rt *router.Router, db *indexdb.DB) ([]gofuse.DirEntry, syscall.Errno) {
 	if ino == nil {
-		return nil, fs.ToErrno(errors.New("inode is nil"))
+		return nil, fs.ToErrno(&errkind.NilError{What: "inode"})
 	}
 	if rt == nil {
-		return nil, fs.ToErrno(errors.New("router is nil"))
+		return nil, fs.ToErrno(&errkind.NilError{What: "router"})
 	}
 
 	virtualPath := ino.Path(ino.Root())
@@ -187,7 +188,7 @@ func listDirEntries(ctx context.Context, ino *fs.Inode, rt *router.Router, db *i
 // listDirEntriesForVirtualPath returns merged directory entries across read targets (union + dedupe).
 func listDirEntriesForVirtualPath(ctx context.Context, virtualPath string, rt *router.Router, db *indexdb.DB) ([]gofuse.DirEntry, syscall.Errno) {
 	if rt == nil {
-		return nil, fs.ToErrno(errors.New("router is nil"))
+		return nil, fs.ToErrno(&errkind.NilError{What: "router"})
 	}
 
 	targets, err := rt.ResolveListTargets(virtualPath)

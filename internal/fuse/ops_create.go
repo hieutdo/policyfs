@@ -2,22 +2,22 @@ package fuse
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"syscall"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/hieutdo/policyfs/internal/errkind"
 )
 
 // Create creates a new file on a selected write target.
 func (n *Node) Create(ctx context.Context, name string, flags uint32, mode uint32, out *gofuse.EntryOut) (*fs.Inode, fs.FileHandle, uint32, syscall.Errno) {
 	if n == nil {
-		return nil, nil, 0, fs.ToErrno(errors.New("node is nil"))
+		return nil, nil, 0, fs.ToErrno(&errkind.NilError{What: "node"})
 	}
 	if n.rt == nil {
-		return nil, nil, 0, fs.ToErrno(errors.New("router is nil"))
+		return nil, nil, 0, fs.ToErrno(&errkind.NilError{What: "router"})
 	}
 
 	parentVirtualPath := n.Path(n.Root())
@@ -67,10 +67,10 @@ func (n *Node) Create(ctx context.Context, name string, flags uint32, mode uint3
 // Mkdir creates a new directory on a selected write target.
 func (n *Node) Mkdir(ctx context.Context, name string, mode uint32, out *gofuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	if n == nil {
-		return nil, fs.ToErrno(errors.New("node is nil"))
+		return nil, fs.ToErrno(&errkind.NilError{What: "node"})
 	}
 	if n.rt == nil {
-		return nil, fs.ToErrno(errors.New("router is nil"))
+		return nil, fs.ToErrno(&errkind.NilError{What: "router"})
 	}
 
 	parentVirtualPath := n.Path(n.Root())

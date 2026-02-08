@@ -8,13 +8,14 @@ import (
 	"syscall"
 
 	"github.com/hanwen/go-fuse/v2/fs"
+	"github.com/hieutdo/policyfs/internal/errkind"
 	"github.com/hieutdo/policyfs/internal/router"
 )
 
 // openFirst opens a file by searching targets in the router-defined order.
 func openFirst(ctx context.Context, rt *router.Router, virtualPath string, flags int, write bool) (fs.FileHandle, uint32, syscall.Errno) {
 	if rt == nil {
-		return nil, 0, fs.ToErrno(errors.New("router is nil"))
+		return nil, 0, fs.ToErrno(&errkind.NilError{What: "router"})
 	}
 
 	var targets []router.Target

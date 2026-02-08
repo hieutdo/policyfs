@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/hieutdo/policyfs/internal/errkind"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -16,18 +18,6 @@ const (
 	DefaultRuntimeDir     = "/run/pfs"
 	DefaultWritePolicy    = "first_found"
 )
-
-// KindError preserves a stable message while allowing callers to match a stable Kind via errors.Is.
-type KindError struct {
-	Kind error
-	Msg  string
-}
-
-// Error returns the stable message.
-func (e *KindError) Error() string { return e.Msg }
-
-// Is matches the error kind for errors.Is.
-func (e *KindError) Is(target error) bool { return target == e.Kind }
 
 // ConfigFilePath returns the effective default config file path (PFS_CONFIG_FILE override).
 func ConfigFilePath() string {
@@ -169,17 +159,17 @@ func (c *RootConfig) applyDefaults() {
 // Mount finds a mount configuration by name.
 func (c *RootConfig) Mount(name string) (*MountConfig, error) {
 	if c == nil {
-		return nil, &KindError{Kind: ErrConfigNil, Msg: "config is nil"}
+		return nil, &errkind.NilError{What: "config"}
 	}
 	if name == "" {
-		return nil, &KindError{Kind: ErrMountNameRequired, Msg: "config: mount name is required"}
+		return nil, &errkind.RequiredError{Msg: "config: mount name is required"}
 	}
 	if c.Mounts == nil {
-		return nil, &KindError{Kind: ErrMountsRequired, Msg: "config: mounts is required"}
+		return nil, &errkind.RequiredError{Msg: "config: mounts is required"}
 	}
 	m, ok := c.Mounts[name]
 	if !ok {
-		return nil, &KindError{Kind: ErrMountNotFound, Msg: fmt.Sprintf("config: mount %q not found", name)}
+		return nil, &errkind.NotFoundError{Msg: fmt.Sprintf("config: mount %q not found", name)}
 	}
 	return &m, nil
 }
@@ -187,13 +177,13 @@ func (c *RootConfig) Mount(name string) (*MountConfig, error) {
 // FirstStoragePath returns the first configured storage path (used as a loopback source).
 func (m *MountConfig) FirstStoragePath() (string, error) {
 	if m == nil {
-		return "", &KindError{Kind: ErrMountConfigNil, Msg: "mount config is nil"}
+		return "", &errkind.NilError{What: "mount config"}
 	}
 	if len(m.StoragePaths) == 0 {
-		return "", &KindError{Kind: ErrStoragePathsEmpty, Msg: "config: storage_paths must not be empty"}
+		return "", &errkind.InvalidError{Msg: "config: storage_paths must not be empty"}
 	}
 	if m.StoragePaths[0].Path == "" {
-		return "", &KindError{Kind: ErrStoragePath0Required, Msg: "config: storage_paths[0].path is required"}
+		return "", &errkind.RequiredError{Msg: "config: storage_paths[0].path is required"}
 	}
 	return m.StoragePaths[0].Path, nil
 }

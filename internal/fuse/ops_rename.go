@@ -2,11 +2,11 @@ package fuse
 
 import (
 	"context"
-	"errors"
 	"path/filepath"
 	"syscall"
 
 	"github.com/hanwen/go-fuse/v2/fs"
+	"github.com/hieutdo/policyfs/internal/errkind"
 )
 
 // Rename renames a child within the same underlying target.
@@ -14,10 +14,10 @@ import (
 // Cross-target renames return EXDEV.
 func (n *Node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedder, newName string, flags uint32) syscall.Errno {
 	if n == nil {
-		return fs.ToErrno(errors.New("node is nil"))
+		return fs.ToErrno(&errkind.NilError{What: "node"})
 	}
 	if n.rt == nil {
-		return fs.ToErrno(errors.New("router is nil"))
+		return fs.ToErrno(&errkind.NilError{What: "router"})
 	}
 	if flags != 0 {
 		// go-fuse uses flags for RENAME_EXCHANGE/RENAME_NOREPLACE; we don't support those yet.

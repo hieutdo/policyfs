@@ -2,21 +2,21 @@ package fuse
 
 import (
 	"context"
-	"errors"
 	"syscall"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/hieutdo/policyfs/internal/errkind"
 	"golang.org/x/sys/unix"
 )
 
 // Setattr applies attribute changes to the underlying storage.
 func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrIn, out *gofuse.AttrOut) syscall.Errno {
 	if n == nil {
-		return fs.ToErrno(errors.New("node is nil"))
+		return fs.ToErrno(&errkind.NilError{What: "node"})
 	}
 	if n.rt == nil {
-		return fs.ToErrno(errors.New("router is nil"))
+		return fs.ToErrno(&errkind.NilError{What: "router"})
 	}
 
 	caller, callerOK := gofuse.FromContext(ctx)

@@ -10,6 +10,7 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/hieutdo/policyfs/internal/errkind"
 	pfsfuse "github.com/hieutdo/policyfs/internal/fuse"
 	"github.com/hieutdo/policyfs/internal/indexdb"
 	"github.com/hieutdo/policyfs/internal/lock"
@@ -53,7 +54,7 @@ This command is typically managed by systemd as a service.`,
 
 			dlk, err := lock.AcquireMountLock(mountName, "daemon.lock")
 			if err != nil {
-				if errors.Is(err, lock.ErrLockBusy) {
+				if errors.Is(err, errkind.ErrBusy) {
 					return &CLIError{Code: ExitBusy, Cmd: "mount", Headline: "daemon already running", Cause: err}
 				}
 				return &CLIError{Code: ExitFail, Cmd: "mount", Headline: "unexpected error", Cause: rootCause(err)}

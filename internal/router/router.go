@@ -1,7 +1,6 @@
 package router
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,30 +8,17 @@ import (
 	"syscall"
 
 	"github.com/hieutdo/policyfs/internal/config"
+	"github.com/hieutdo/policyfs/internal/errkind"
 )
 
 var (
-	// ErrRouterNil is returned when a router receiver is nil.
-	ErrRouterNil = errors.New("router is nil")
 	// ErrNoRuleMatched is returned when no routing rule matches a virtual path.
-	ErrNoRuleMatched = errors.New("no routing rule matched")
+	ErrNoRuleMatched = errkind.SentinelError("no routing rule matched")
 	// ErrNoTargetsResolved is returned when no targets can be resolved after expansion/deduping.
-	ErrNoTargetsResolved = errors.New("no targets resolved")
+	ErrNoTargetsResolved = errkind.SentinelError("no targets resolved")
 	// ErrNoWriteSpace is returned when no write target satisfies min_free_gb constraints.
-	ErrNoWriteSpace = errors.New("no write target has enough free space")
+	ErrNoWriteSpace = errkind.SentinelError("no write target has enough free space")
 )
-
-// KindError preserves a stable message while allowing callers to match a stable Kind via errors.Is.
-type KindError struct {
-	Kind error
-	Msg  string
-}
-
-// Error returns the stable message.
-func (e *KindError) Error() string { return e.Msg }
-
-// Is matches the error kind for errors.Is.
-func (e *KindError) Is(target error) bool { return target == e.Kind }
 
 // Target is a resolved storage target for a virtual path.
 type Target struct {
@@ -59,22 +45,22 @@ type compiledRule struct {
 // New builds a Router from a mount config.
 func New(m *config.MountConfig) (*Router, error) {
 	if m == nil {
-		return nil, &KindError{Kind: config.ErrMountConfigNil, Msg: "mount config is nil"}
+		return nil, &errkind.NilError{What: "mount config"}
 	}
 	if len(m.StoragePaths) == 0 {
-		return nil, &KindError{Kind: config.ErrStoragePathsEmpty, Msg: "config: storage_paths must not be empty"}
+		return nil, &errkind.RequiredError{Msg: "config: storage_paths must not be empty"}
 	}
 	if len(m.RoutingRules) == 0 {
-		return nil, &KindError{Kind: config.ErrRoutingRulesEmpty, Msg: "config: routing_rules must not be empty"}
+		return nil, &errkind.RequiredError{Msg: "config: routing_rules must not be empty"}
 	}
 
 	storageByID := make(map[string]config.StoragePath, len(m.StoragePaths))
 	for _, sp := range m.StoragePaths {
 		if strings.TrimSpace(sp.ID) == "" {
-			return nil, &KindError{Kind: config.ErrStoragePathIDRequired, Msg: "config: storage_paths.id is required"}
+			return nil, &errkind.RequiredError{Msg: "config: storage_paths.id is required"}
 		}
 		if strings.TrimSpace(sp.Path) == "" {
-			return nil, &KindError{Kind: config.ErrStoragePathPathRequired, Msg: fmt.Sprintf("config: storage_paths %q: path is required", sp.ID)}
+			return nil, &errkind.RequiredError{Msg: fmt.Sprintf("config: storage_paths %q: path is required", sp.ID)}
 		}
 		storageByID[sp.ID] = sp
 	}
@@ -87,7 +73,7 @@ func New(m *config.MountConfig) (*Router, error) {
 	r := &Router{storageByID: storageByID, storageGroups: storageGroups}
 	for i, rr := range m.RoutingRules {
 		if strings.TrimSpace(rr.Match) == "" {
-			return nil, fmt.Errorf("config: routing_rules[%d].match is required", i)
+			return nil, &errkind.RequiredError{Msg: fmt.Sprintf("config: routing_rules[%d].match is required", i)}
 		}
 
 		expanded, err := expandBraces(rr.Match)
@@ -115,9 +101,13 @@ func New(m *config.MountConfig) (*Router, error) {
 
 // ResolveReadTargets returns storage targets for reads for the given virtual path.
 func (r *Router) ResolveReadTargets(virtualPath string) ([]Target, error) {
+	if r == nil {
+		return nil, &errkind.NilError{What: "router"}
+	}
+
 	cr, ok := r.matchRule(virtualPath)
 	if !ok {
-		return nil, &KindError{Kind: ErrNoRuleMatched, Msg: fmt.Sprintf("no routing rule matched for path: %s", virtualPath)}
+		return nil, &errkind.KindError{Kind: ErrNoRuleMatched, Msg: fmt.Sprintf("no routing rule matched for path: %s", virtualPath)}
 	}
 	ids, err := r.expandTargets(cr.read)
 	if err != nil {
@@ -128,9 +118,13 @@ func (r *Router) ResolveReadTargets(virtualPath string) ([]Target, error) {
 
 // ResolveWriteTargets returns storage targets for writes for the given virtual path.
 func (r *Router) ResolveWriteTargets(virtualPath string) ([]Target, error) {
+	if r == nil {
+		return nil, &errkind.NilError{What: "router"}
+	}
+
 	cr, ok := r.matchRule(virtualPath)
 	if !ok {
-		return nil, &KindError{Kind: ErrNoRuleMatched, Msg: fmt.Sprintf("no routing rule matched for path: %s", virtualPath)}
+		return nil, &errkind.KindError{Kind: ErrNoRuleMatched, Msg: fmt.Sprintf("no routing rule matched for path: %s", virtualPath)}
 	}
 	ids, err := r.expandTargets(cr.write)
 	if err != nil {
@@ -144,12 +138,12 @@ func (r *Router) ResolveWriteTargets(virtualPath string) ([]Target, error) {
 // This applies mount routing rule attributes: path_preserving, min_free_gb, and write_policy.
 func (r *Router) SelectWriteTarget(virtualPath string) (Target, error) {
 	if r == nil {
-		return Target{}, &KindError{Kind: ErrRouterNil, Msg: "router is nil"}
+		return Target{}, &errkind.NilError{What: "router"}
 	}
 
 	cr, ok := r.matchRule(virtualPath)
 	if !ok {
-		return Target{}, &KindError{Kind: ErrNoRuleMatched, Msg: fmt.Sprintf("no routing rule matched for path: %s", virtualPath)}
+		return Target{}, &errkind.KindError{Kind: ErrNoRuleMatched, Msg: fmt.Sprintf("no routing rule matched for path: %s", virtualPath)}
 	}
 
 	ids, err := r.expandTargets(cr.write)
@@ -185,7 +179,7 @@ func (r *Router) SelectWriteTarget(virtualPath string) (Target, error) {
 
 	policy := strings.TrimSpace(cr.rule.WritePolicy)
 	if policy == "" {
-		return Target{}, fmt.Errorf("write_policy is required")
+		return Target{}, &errkind.RequiredError{What: "write_policy", Msg: "write_policy is required"}
 	}
 
 	filtered := []Target{}
@@ -199,7 +193,7 @@ func (r *Router) SelectWriteTarget(virtualPath string) (Target, error) {
 
 		sp, ok := r.storageByID[t.ID]
 		if !ok {
-			return Target{}, fmt.Errorf("unknown storage id %q", t.ID)
+			return Target{}, &errkind.InvalidError{Msg: fmt.Sprintf("unknown storage id %q", t.ID)}
 		}
 		if sp.MinFreeGB > 0 && freeGB < sp.MinFreeGB {
 			continue
@@ -208,7 +202,7 @@ func (r *Router) SelectWriteTarget(virtualPath string) (Target, error) {
 		filteredScores = append(filteredScores, freeGB)
 	}
 	if len(filtered) == 0 {
-		return Target{}, &KindError{Kind: ErrNoWriteSpace, Msg: fmt.Sprintf("no write target has enough free space for path: %s", virtualPath)}
+		return Target{}, &errkind.KindError{Kind: ErrNoWriteSpace, Msg: fmt.Sprintf("no write target has enough free space for path: %s", virtualPath)}
 	}
 
 	switch policy {
@@ -231,7 +225,7 @@ func (r *Router) SelectWriteTarget(virtualPath string) (Target, error) {
 		}
 		return filtered[best], nil
 	default:
-		return Target{}, fmt.Errorf("invalid write_policy %q", policy)
+		return Target{}, &errkind.InvalidError{Msg: fmt.Sprintf("invalid write_policy %q", policy)}
 	}
 }
 
@@ -253,7 +247,7 @@ func (r *Router) matchRule(virtualPath string) (compiledRule, bool) {
 // all rules that could match descendants under the given directory.
 func (r *Router) ResolveListTargets(virtualDirPath string) ([]Target, error) {
 	if r == nil {
-		return nil, &KindError{Kind: ErrRouterNil, Msg: "router is nil"}
+		return nil, &errkind.NilError{What: "router"}
 	}
 
 	dir := normalizePath(virtualDirPath)
@@ -269,7 +263,7 @@ func (r *Router) ResolveListTargets(virtualDirPath string) ([]Target, error) {
 		union = append(union, cr.read...)
 	}
 	if !matchedAny {
-		return nil, &KindError{Kind: ErrNoRuleMatched, Msg: fmt.Sprintf("no routing rule matched for path: %s", virtualDirPath)}
+		return nil, &errkind.KindError{Kind: ErrNoRuleMatched, Msg: fmt.Sprintf("no routing rule matched for path: %s", virtualDirPath)}
 	}
 
 	ids, err := r.expandTargets(union)
@@ -303,7 +297,7 @@ func (r *Router) expandTargets(ids []string) ([]string, error) {
 					continue
 				}
 				if _, ok := r.storageByID[m]; !ok {
-					return nil, fmt.Errorf("config: storage_groups %q references unknown storage id %q", id, m)
+					return nil, &errkind.InvalidError{Msg: fmt.Sprintf("config: storage_groups %q references unknown storage id %q", id, m)}
 				}
 				if _, dup := seen[m]; dup {
 					continue
@@ -313,10 +307,10 @@ func (r *Router) expandTargets(ids []string) ([]string, error) {
 			}
 			continue
 		}
-		return nil, fmt.Errorf("unknown target id %q", id)
+		return nil, &errkind.InvalidError{Msg: fmt.Sprintf("unknown target id %q", id)}
 	}
 	if len(out) == 0 {
-		return nil, &KindError{Kind: ErrNoTargetsResolved, Msg: "no targets resolved"}
+		return nil, &errkind.KindError{Kind: ErrNoTargetsResolved, Msg: "no targets resolved"}
 	}
 	return out, nil
 }
@@ -327,7 +321,7 @@ func (r *Router) targetsFromIDs(ids []string) ([]Target, error) {
 	for _, id := range ids {
 		sp, ok := r.storageByID[id]
 		if !ok {
-			return nil, fmt.Errorf("unknown storage id %q", id)
+			return nil, &errkind.InvalidError{Msg: fmt.Sprintf("unknown storage id %q", id)}
 		}
 		out = append(out, Target{ID: sp.ID, Root: sp.Path, Indexed: sp.Indexed})
 	}
@@ -337,7 +331,7 @@ func (r *Router) targetsFromIDs(ids []string) ([]Target, error) {
 // parseGlobExpanded parses brace-expanded patterns into segment lists.
 func parseGlobExpanded(expanded []string) ([][]string, error) {
 	if len(expanded) == 0 {
-		return nil, errors.New("empty glob expansion")
+		return nil, &errkind.InvalidError{Msg: "empty expanded patterns"}
 	}
 
 	segs := make([][]string, 0, len(expanded))
@@ -353,7 +347,7 @@ func expandBraces(pattern string) ([]string, error) {
 	const maxExpansions = 64
 	pattern = strings.TrimSpace(pattern)
 	if pattern == "" {
-		return nil, errors.New("pattern is empty")
+		return nil, &errkind.InvalidError{Msg: "empty pattern"}
 	}
 
 	open := strings.IndexByte(pattern, '{')
@@ -382,7 +376,7 @@ func expandBraces(pattern string) ([]string, error) {
 		}
 		out = append(out, exp...)
 		if len(out) > maxExpansions {
-			return nil, fmt.Errorf("pattern expansion too large")
+			return nil, &errkind.InvalidError{Msg: "pattern expansion too large"}
 		}
 	}
 	return out, nil

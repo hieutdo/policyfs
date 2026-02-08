@@ -5,6 +5,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/hieutdo/policyfs/internal/errkind"
 	"github.com/hieutdo/policyfs/internal/router"
 	"github.com/stretchr/testify/require"
 )
@@ -17,19 +18,19 @@ func Test_toErrno(t *testing.T) {
 	})
 
 	t.Run("should map ErrNoRuleMatched to EROFS", func(t *testing.T) {
-		err := &router.KindError{Kind: router.ErrNoRuleMatched, Msg: "no rule"}
+		err := &errkind.KindError{Kind: router.ErrNoRuleMatched, Msg: "no rule"}
 		require.Equal(t, syscall.EROFS, toErrno(err))
 		require.True(t, errors.Is(err, router.ErrNoRuleMatched))
 	})
 
 	t.Run("should map ErrNoTargetsResolved to EROFS", func(t *testing.T) {
-		err := &router.KindError{Kind: router.ErrNoTargetsResolved, Msg: "no targets"}
+		err := &errkind.KindError{Kind: router.ErrNoTargetsResolved, Msg: "no targets"}
 		require.Equal(t, syscall.EROFS, toErrno(err))
 		require.True(t, errors.Is(err, router.ErrNoTargetsResolved))
 	})
 
 	t.Run("should map ErrNoWriteSpace to ENOSPC", func(t *testing.T) {
-		err := &router.KindError{Kind: router.ErrNoWriteSpace, Msg: "no space"}
+		err := &errkind.KindError{Kind: router.ErrNoWriteSpace, Msg: "no space"}
 		require.Equal(t, syscall.ENOSPC, toErrno(err))
 		require.True(t, errors.Is(err, router.ErrNoWriteSpace))
 	})

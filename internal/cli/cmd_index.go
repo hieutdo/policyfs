@@ -8,6 +8,7 @@ import (
 	"os"
 	"sort"
 
+	"github.com/hieutdo/policyfs/internal/errkind"
 	"github.com/hieutdo/policyfs/internal/indexdb"
 	"github.com/hieutdo/policyfs/internal/indexer"
 	"github.com/hieutdo/policyfs/internal/lock"
@@ -75,7 +76,7 @@ This enables metadata operations (lookup/readdir/getattr) to avoid touching disk
 
 			lk, err := lock.AcquireMountLock(mountName, "job.lock")
 			if err != nil {
-				if errors.Is(err, lock.ErrLockBusy) {
+				if errors.Is(err, errkind.ErrBusy) {
 					if jsonOut {
 						cfg := *configPath
 						scope := &JSONScope{Mount: &mountName, Config: &cfg}
@@ -97,7 +98,7 @@ This enables metadata operations (lookup/readdir/getattr) to avoid touching disk
 			if rebuild {
 				dlk, err := lock.AcquireMountLock(mountName, "daemon.lock")
 				if err != nil {
-					if errors.Is(err, lock.ErrLockBusy) {
+					if errors.Is(err, errkind.ErrBusy) {
 						return &CLIError{Code: ExitFail, Cmd: "index", Headline: "cannot reset while daemon is running", Cause: err, Hint: "stop 'pfs mount' and try again"}
 					}
 					return &CLIError{Code: ExitFail, Cmd: "index", Headline: "unexpected error", Cause: rootCause(err)}

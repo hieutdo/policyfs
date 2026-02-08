@@ -2,20 +2,20 @@ package fuse
 
 import (
 	"context"
-	"errors"
 	"path/filepath"
 	"syscall"
 
 	"github.com/hanwen/go-fuse/v2/fs"
+	"github.com/hieutdo/policyfs/internal/errkind"
 )
 
 // Unlink removes a child file on the first existing read target.
 func (n *Node) Unlink(ctx context.Context, name string) syscall.Errno {
 	if n == nil {
-		return fs.ToErrno(errors.New("node is nil"))
+		return fs.ToErrno(&errkind.NilError{What: "node"})
 	}
 	if n.rt == nil {
-		return fs.ToErrno(errors.New("router is nil"))
+		return fs.ToErrno(&errkind.NilError{What: "router"})
 	}
 
 	parentVirtualPath := n.Path(n.Root())
@@ -38,10 +38,10 @@ func (n *Node) Unlink(ctx context.Context, name string) syscall.Errno {
 // Rmdir removes a child directory on the first existing read target.
 func (n *Node) Rmdir(ctx context.Context, name string) syscall.Errno {
 	if n == nil {
-		return fs.ToErrno(errors.New("node is nil"))
+		return fs.ToErrno(&errkind.NilError{What: "node"})
 	}
 	if n.rt == nil {
-		return fs.ToErrno(errors.New("router is nil"))
+		return fs.ToErrno(&errkind.NilError{What: "router"})
 	}
 
 	parentVirtualPath := n.Path(n.Root())

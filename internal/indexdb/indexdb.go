@@ -16,6 +16,7 @@ import (
 	"github.com/pressly/goose/v3"
 
 	"github.com/hieutdo/policyfs/internal/config"
+	"github.com/hieutdo/policyfs/internal/errkind"
 	"github.com/hieutdo/policyfs/migrations"
 )
 
@@ -25,10 +26,8 @@ const (
 )
 
 var (
-	// ErrIndexDBNil is returned when a DB handle is nil.
-	ErrIndexDBNil = errors.New("index db is nil")
 	// ErrIndexDBSchemaIncompatible is returned when the index db schema is incompatible.
-	ErrIndexDBSchemaIncompatible = errors.New("index db schema is incompatible")
+	ErrIndexDBSchemaIncompatible = errkind.SentinelError("index db schema is incompatible")
 )
 
 // DB provides access to the per-mount index database.
@@ -41,7 +40,7 @@ type DB struct {
 // Reset deletes the per-mount index database so the next Open creates a fresh one.
 func Reset(mountName string) error {
 	if mountName == "" {
-		return config.ErrMountNameRequired
+		return &errkind.RequiredError{What: "mount name"}
 	}
 
 	dbPath := filepath.Join(config.MountStateDir(mountName), "index.db")
@@ -61,7 +60,7 @@ func Reset(mountName string) error {
 // Open opens (or creates) the per-mount SQLite database and applies migrations.
 func Open(mountName string) (*DB, error) {
 	if mountName == "" {
-		return nil, config.ErrMountNameRequired
+		return nil, &errkind.RequiredError{What: "mount name"}
 	}
 
 	mountDir := config.MountStateDir(mountName)
@@ -136,7 +135,7 @@ func Open(mountName string) (*DB, error) {
 // backupIncompatibleDB moves the current index db aside so the next open recreates it.
 func backupIncompatibleDB(dbPath string) error {
 	if strings.TrimSpace(dbPath) == "" {
-		return ErrIndexDBNil
+		return &errkind.NilError{What: "index db path"}
 	}
 
 	backupPath := fmt.Sprintf("%s.incompatible.%d", dbPath, time.Now().Unix())
@@ -214,7 +213,7 @@ func (d *DB) SQL() *sql.DB {
 // Ping validates DB connectivity.
 func (d *DB) Ping(ctx context.Context) error {
 	if d == nil || d.sqlDB == nil {
-		return ErrIndexDBNil
+		return &errkind.NilError{What: "index db"}
 	}
 	err := d.sqlDB.PingContext(ctx)
 	if err != nil {
@@ -226,7 +225,7 @@ func (d *DB) Ping(ctx context.Context) error {
 // applyPragmas configures SQLite connection settings required by spec.
 func applyPragmas(db *sql.DB) error {
 	if db == nil {
-		return ErrIndexDBNil
+		return &errkind.NilError{What: "index db"}
 	}
 
 	stmts := []string{
@@ -246,7 +245,7 @@ func applyPragmas(db *sql.DB) error {
 // applyMigrations applies embedded goose migrations to the index database.
 func applyMigrations(db *sql.DB) error {
 	if db == nil {
-		return ErrIndexDBNil
+		return &errkind.NilError{What: "index db"}
 	}
 
 	if err := configureGoose(); err != nil {

@@ -2,12 +2,12 @@ package fuse
 
 import (
 	"context"
-	"errors"
 	"path/filepath"
 	"syscall"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/hieutdo/policyfs/internal/errkind"
 )
 
 // Link creates a hardlink to an existing inode.
@@ -15,13 +15,13 @@ import (
 // Cross-target hardlinks are not supported and must return EXDEV.
 func (n *Node) Link(ctx context.Context, target fs.InodeEmbedder, name string, out *gofuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	if n == nil {
-		return nil, fs.ToErrno(errors.New("node is nil"))
+		return nil, fs.ToErrno(&errkind.NilError{What: "node"})
 	}
 	if n.rt == nil {
-		return nil, fs.ToErrno(errors.New("router is nil"))
+		return nil, fs.ToErrno(&errkind.NilError{What: "router"})
 	}
 	if target == nil {
-		return nil, fs.ToErrno(errors.New("target is nil"))
+		return nil, fs.ToErrno(&errkind.NilError{What: "target"})
 	}
 
 	if tn, ok := target.(*Node); ok {
@@ -32,7 +32,7 @@ func (n *Node) Link(ctx context.Context, target fs.InodeEmbedder, name string, o
 
 	tino := target.EmbeddedInode()
 	if tino == nil {
-		return nil, fs.ToErrno(errors.New("target inode is nil"))
+		return nil, fs.ToErrno(&errkind.NilError{What: "target inode"})
 	}
 
 	parentVirtualPath := n.Path(n.Root())

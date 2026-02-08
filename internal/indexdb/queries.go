@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"syscall"
+
+	"github.com/hieutdo/policyfs/internal/errkind"
 )
 
 // File describes one indexed filesystem entry.
@@ -30,7 +32,7 @@ type DirEntry struct {
 // GetEffectiveFile returns a row merged with any file_meta overrides.
 func (d *DB) GetEffectiveFile(ctx context.Context, storageID string, path string) (File, bool, error) {
 	if d == nil || d.sqlDB == nil {
-		return File{}, false, ErrIndexDBNil
+		return File{}, false, &errkind.NilError{What: "index db"}
 	}
 	storageID = strings.TrimSpace(storageID)
 	path = strings.TrimSpace(path)
@@ -82,7 +84,7 @@ WHERE f.storage_id = ?
 // DirExists reports whether a directory exists in index DB.
 func (d *DB) DirExists(ctx context.Context, storageID string, path string) (bool, error) {
 	if d == nil || d.sqlDB == nil {
-		return false, ErrIndexDBNil
+		return false, &errkind.NilError{What: "index db"}
 	}
 	storageID = strings.TrimSpace(storageID)
 	path = strings.TrimSpace(path)
@@ -107,7 +109,7 @@ func (d *DB) DirExists(ctx context.Context, storageID string, path string) (bool
 // ListDirEntries lists immediate children under a directory path, including subdirectories.
 func (d *DB) ListDirEntries(ctx context.Context, storageID string, dirPath string) ([]DirEntry, bool, error) {
 	if d == nil || d.sqlDB == nil {
-		return nil, false, ErrIndexDBNil
+		return nil, false, &errkind.NilError{What: "index db"}
 	}
 	storageID = strings.TrimSpace(storageID)
 	dirPath = strings.TrimSpace(dirPath)
