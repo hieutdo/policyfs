@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/hieutdo/policyfs/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -62,6 +63,7 @@ func Execute(args []string) int {
 // newRootCmd constructs the root cobra command for pfs.
 func newRootCmd() *cobra.Command {
 	var configPath string
+	defaultConfigPath := config.ConfigFilePath()
 
 	cmd := &cobra.Command{
 		Use:   "pfs",
@@ -82,7 +84,7 @@ Optional indexing reduces disk wake-ups during metadata reads.`,
 		return &CLIError{Code: ExitUsage, Cmd: cmdName, Headline: "invalid arguments", Cause: err, Hint: hint}
 	})
 
-	cmd.PersistentFlags().StringVarP(&configPath, "config", "c", "/etc/pfs/pfs.yaml", "path to config file")
+	cmd.PersistentFlags().StringVarP(&configPath, "config", "c", defaultConfigPath, "path to config file")
 
 	cmd.AddCommand(newMountCmd(&configPath))
 	cmd.AddCommand(newIndexCmd(&configPath))

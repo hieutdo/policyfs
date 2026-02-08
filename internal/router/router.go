@@ -59,22 +59,22 @@ type compiledRule struct {
 // New builds a Router from a mount config.
 func New(m *config.MountConfig) (*Router, error) {
 	if m == nil {
-		return nil, errors.New("mount config is nil")
+		return nil, &KindError{Kind: config.ErrMountConfigNil, Msg: "mount config is nil"}
 	}
 	if len(m.StoragePaths) == 0 {
-		return nil, errors.New("config: storage_paths must not be empty")
+		return nil, &KindError{Kind: config.ErrStoragePathsEmpty, Msg: "config: storage_paths must not be empty"}
 	}
 	if len(m.RoutingRules) == 0 {
-		return nil, errors.New("config: routing_rules must not be empty")
+		return nil, &KindError{Kind: config.ErrRoutingRulesEmpty, Msg: "config: routing_rules must not be empty"}
 	}
 
 	storageByID := make(map[string]config.StoragePath, len(m.StoragePaths))
 	for _, sp := range m.StoragePaths {
 		if strings.TrimSpace(sp.ID) == "" {
-			return nil, errors.New("config: storage_paths.id is required")
+			return nil, &KindError{Kind: config.ErrStoragePathIDRequired, Msg: "config: storage_paths.id is required"}
 		}
 		if strings.TrimSpace(sp.Path) == "" {
-			return nil, fmt.Errorf("config: storage_paths %q: path is required", sp.ID)
+			return nil, &KindError{Kind: config.ErrStoragePathPathRequired, Msg: fmt.Sprintf("config: storage_paths %q: path is required", sp.ID)}
 		}
 		storageByID[sp.ID] = sp
 	}

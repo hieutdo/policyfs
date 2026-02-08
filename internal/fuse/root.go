@@ -99,3 +99,23 @@ func (n *Node) Release(ctx context.Context, f fs.FileHandle) syscall.Errno {
 	}
 	return 0
 }
+
+// Getxattr reports no supported xattrs to avoid ls ACL probing showing '?'.
+func (n *Node) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, syscall.Errno) {
+	return 0, fs.ENOATTR
+}
+
+// Listxattr returns an empty list to indicate no supported xattrs.
+func (n *Node) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errno) {
+	return 0, 0
+}
+
+// Setxattr rejects all xattrs on the virtual mount.
+func (n *Node) Setxattr(ctx context.Context, attr string, data []byte, flags uint32) syscall.Errno {
+	return fs.ENOATTR
+}
+
+// Removexattr rejects all xattrs on the virtual mount.
+func (n *Node) Removexattr(ctx context.Context, attr string) syscall.Errno {
+	return fs.ENOATTR
+}

@@ -6,6 +6,19 @@ if [[ ! -d /workspace/cmd || ! -f /workspace/go.mod ]]; then
   exit 2
 fi
 
+if [[ -n "${PFS_STATE_DIR:-}" ]]; then
+  mkdir -p "${PFS_STATE_DIR}"
+fi
+
+if [[ -n "${PFS_RUNTIME_DIR:-}" ]]; then
+  mkdir -p "${PFS_RUNTIME_DIR}"
+fi
+
+if [[ -n "${PFS_LOG_FILE:-}" ]]; then
+  mkdir -p "$(dirname "${PFS_LOG_FILE}")"
+  touch "${PFS_LOG_FILE}" || true
+fi
+
 _term() {
   /workspace/scripts/virtual_disks.sh down || true
   kill -TERM "$child_pid" 2>/dev/null || true

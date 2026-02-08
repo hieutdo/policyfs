@@ -12,6 +12,7 @@ import (
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
 	pfsfuse "github.com/hieutdo/policyfs/internal/fuse"
 	"github.com/hieutdo/policyfs/internal/indexdb"
+	"github.com/hieutdo/policyfs/internal/lock"
 	"github.com/spf13/cobra"
 )
 
@@ -49,6 +50,15 @@ This command is typically managed by systemd as a service.`,
 				}
 				return &CLIError{Code: ExitFail, Cmd: "mount", Headline: fmt.Sprintf("invalid config: %s", *configPath), Cause: rootCause(err)}
 			}
+
+			dlk, err := lock.AcquireMountLock(mountName, "daemon.lock")
+			if err != nil {
+				if errors.Is(err, lock.ErrLockBusy) {
+					return &CLIError{Code: ExitBusy, Cmd: "mount", Headline: "daemon already running", Cause: err}
+				}
+				return &CLIError{Code: ExitFail, Cmd: "mount", Headline: "unexpected error", Cause: rootCause(err)}
+			}
+			defer func() { _ = dlk.Close() }()
 
 			// Configure logging and create command logger.
 			cfgLog, closer, err := NewLogger(rootCfg.Log, logFile)

@@ -15,16 +15,16 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/pressly/goose/v3"
 
+	"github.com/hieutdo/policyfs/internal/config"
 	"github.com/hieutdo/policyfs/migrations"
 )
 
 const (
-	busyTimeoutMS = 5000
+	busyTimeoutMS            = 5000
+	gooseIncompatibleVersion = 2
 )
 
 var (
-	// ErrMountNameRequired is returned when mount name is empty.
-	ErrMountNameRequired = errors.New("mount name is required")
 	// ErrIndexDBNil is returned when a DB handle is nil.
 	ErrIndexDBNil = errors.New("index db is nil")
 	// ErrIndexDBSchemaIncompatible is returned when the index db schema is incompatible.
@@ -38,22 +38,33 @@ type DB struct {
 	sqlDB     *sql.DB
 }
 
-// mountStateDir computes the mount-scoped persistent state directory.
-func mountStateDir(mountName string) string {
-	base := strings.TrimSpace(os.Getenv("PFS_STATE_DIR"))
-	if base == "" {
-		base = "/var/lib/pfs"
+// Reset deletes the per-mount index database so the next Open creates a fresh one.
+func Reset(mountName string) error {
+	if mountName == "" {
+		return config.ErrMountNameRequired
 	}
-	return filepath.Join(base, mountName)
+
+	dbPath := filepath.Join(config.MountStateDir(mountName), "index.db")
+
+	paths := []string{dbPath, dbPath + "-wal", dbPath + "-shm"}
+	for _, p := range paths {
+		if err := os.Remove(p); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return fmt.Errorf("failed to delete index db: %w", err)
+		}
+	}
+	return nil
 }
 
 // Open opens (or creates) the per-mount SQLite database and applies migrations.
 func Open(mountName string) (*DB, error) {
 	if mountName == "" {
-		return nil, ErrMountNameRequired
+		return nil, config.ErrMountNameRequired
 	}
 
-	mountDir := mountStateDir(mountName)
+	mountDir := config.MountStateDir(mountName)
 	if err := os.MkdirAll(mountDir, 0o755); err != nil {
 		return nil, fmt.Errorf("failed to ensure mount db dir: %w", err)
 	}
@@ -83,6 +94,22 @@ func Open(mountName string) (*DB, error) {
 		if err := applyPragmas(conn); err != nil {
 			_ = conn.Close()
 			return nil, err
+		}
+		if err := configureGoose(); err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
+		ver, err := goose.EnsureDBVersion(conn)
+		if err != nil {
+			_ = conn.Close()
+			return nil, fmt.Errorf("failed to read index db version: %w", err)
+		}
+		if ver == gooseIncompatibleVersion {
+			_ = conn.Close()
+			if err := backupIncompatibleDB(dbPath); err != nil {
+				return nil, err
+			}
+			continue
 		}
 		if err := applyMigrations(conn); err != nil {
 			_ = conn.Close()
@@ -222,14 +249,22 @@ func applyMigrations(db *sql.DB) error {
 		return ErrIndexDBNil
 	}
 
+	if err := configureGoose(); err != nil {
+		return err
+	}
+	if err := goose.Up(db, "."); err != nil {
+		return fmt.Errorf("failed to migrate index db: %w", err)
+	}
+	return nil
+}
+
+// configureGoose configures goose for PolicyFS's embedded index migrations.
+func configureGoose() error {
 	// Silence goose's default stdout/stderr noise.
 	goose.SetLogger(log.New(io.Discard, "", 0))
 	goose.SetBaseFS(migrations.FS)
 	if err := goose.SetDialect("sqlite3"); err != nil {
 		return fmt.Errorf("failed to set goose dialect: %w", err)
-	}
-	if err := goose.Up(db, "."); err != nil {
-		return fmt.Errorf("failed to migrate index db: %w", err)
 	}
 	return nil
 }

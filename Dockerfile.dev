@@ -32,17 +32,15 @@ RUN curl -sSfL https://golangci-lint.run/install.sh | sh -s -- -b $(go env GOPAT
 
 RUN echo "user_allow_other" >> /etc/fuse.conf
 
-RUN mkdir -p /mnt/ssd1 /mnt/ssd2 /mnt/hdd1 /mnt/hdd2 /mnt/hdd3 \
-    && mkdir -p /mnt/pfs/media \
-    && mkdir -p /etc/pfs/mounts \
-    && mkdir -p /var/lib/pfs-disks \
-    && mkdir -p /var/lib/pfs \
-    && mkdir -p /var/log/pfs \
-    && mkdir -p /run/pfs \
-    && touch /var/log/pfs/pfs.log
+RUN echo "alias l='ls -al'" >> /root/.bashrc
+
+RUN mkdir -p /var/lib/pfs-disks /mnt/ssd1 /mnt/ssd2 /mnt/hdd1 /mnt/hdd2 /mnt/hdd3 /mnt/pfs/media
 
 ENV PATH="/workspace/bin:/workspace/scripts:/go/bin:/usr/local/go/bin:/usr/local/bin:/usr/bin:${PATH}" \
-    PFS_LOG_FILE="/var/log/pfs/pfs.log"
+    PFS_CONFIG_FILE="/workspace/configs/dev.yaml" \
+    PFS_LOG_FILE="/workspace/tmp/pfs/pfs.log" \
+    PFS_STATE_DIR="/workspace/tmp/pfs" \
+    PFS_RUNTIME_DIR="/workspace/tmp/pfs" 
 
 ENTRYPOINT ["/workspace/scripts/entrypoint.sh"]
 

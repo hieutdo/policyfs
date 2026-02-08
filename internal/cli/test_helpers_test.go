@@ -13,6 +13,34 @@ import (
 func runCLI(t *testing.T, args []string) (int, string, string) {
 	t.Helper()
 
+	if _, ok := os.LookupEnv("PFS_RUNTIME_DIR"); !ok {
+		old, hadOld := os.LookupEnv("PFS_RUNTIME_DIR")
+		p := filepath.Join(t.TempDir(), "runtime")
+		require.NoError(t, os.MkdirAll(p, 0o755))
+		require.NoError(t, os.Setenv("PFS_RUNTIME_DIR", p))
+		t.Cleanup(func() {
+			if hadOld {
+				_ = os.Setenv("PFS_RUNTIME_DIR", old)
+				return
+			}
+			_ = os.Unsetenv("PFS_RUNTIME_DIR")
+		})
+	}
+
+	if _, ok := os.LookupEnv("PFS_STATE_DIR"); !ok {
+		old, hadOld := os.LookupEnv("PFS_STATE_DIR")
+		p := filepath.Join(t.TempDir(), "state")
+		require.NoError(t, os.MkdirAll(p, 0o755))
+		require.NoError(t, os.Setenv("PFS_STATE_DIR", p))
+		t.Cleanup(func() {
+			if hadOld {
+				_ = os.Setenv("PFS_STATE_DIR", old)
+				return
+			}
+			_ = os.Unsetenv("PFS_STATE_DIR")
+		})
+	}
+
 	oldStdout := os.Stdout
 	oldStderr := os.Stderr
 	defer func() {

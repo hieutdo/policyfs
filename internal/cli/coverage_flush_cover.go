@@ -16,9 +16,9 @@ func flushCoverageIfEnabled(mountName string, mountPoint string) {
 	}
 
 	if err := coverage.WriteMetaDir(dir); err != nil {
-		fmt.Fprintln(os.Stderr, fmt.Sprintf("failed to write coverage meta for mount '%s' at %s: %v", mountName, mountPoint, err))
+		fmt.Fprintf(os.Stderr, "failed to write coverage meta for mount '%s' at %s: %v\n", mountName, mountPoint, err)
 	}
 	if err := coverage.WriteCountersDir(dir); err != nil {
-		fmt.Fprintln(os.Stderr, fmt.Sprintf("failed to write coverage counters for mount '%s' at %s: %v", mountName, mountPoint, err))
+		fmt.Fprintf(os.Stderr, "failed to write coverage counters for mount '%s' at %s: %v\n", mountName, mountPoint, err)
 	}
 }

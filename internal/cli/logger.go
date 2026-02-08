@@ -48,6 +48,18 @@ func (e *OpenLogFileError) Unwrap() error {
 // - log.format=text: human-friendly logs to stderr.
 // - If --log-file or PFS_LOG_FILE is set, structured logs are also duplicated to that file.
 func NewLogger(cfg config.LogConfig, logFileFlag string) (zerolog.Logger, func() error, error) {
+	return newLogger(cfg, logFileFlag, os.Stdout, os.Stderr)
+}
+
+// NewJobLogger builds a logger for oneshot maintenance jobs.
+//
+// It always writes logs to stderr so stdout can be reserved for command output.
+func NewJobLogger(cfg config.LogConfig, logFileFlag string) (zerolog.Logger, func() error, error) {
+	return newLogger(cfg, logFileFlag, os.Stderr, os.Stderr)
+}
+
+// newLogger is the shared logger builder used by NewLogger and NewJobLogger.
+func newLogger(cfg config.LogConfig, logFileFlag string, jsonOut io.Writer, textOut io.Writer) (zerolog.Logger, func() error, error) {
 	level := zerolog.InfoLevel
 	switch cfg.Level {
 	case "debug":
@@ -75,11 +87,11 @@ func NewLogger(cfg config.LogConfig, logFileFlag string) (zerolog.Logger, func()
 	// Primary stream output.
 	switch cfg.Format {
 	case "text":
-		cw := zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: "2006-01-02 15:04:05"}
+		cw := zerolog.ConsoleWriter{Out: textOut, TimeFormat: "2006-01-02 15:04:05"}
 		writers = append(writers, cw)
 	case "json", "":
 		// Default: json
-		writers = append(writers, os.Stdout)
+		writers = append(writers, jsonOut)
 	default:
 		return zerolog.Logger{}, nil, fmt.Errorf("unsupported log format: %q", cfg.Format)
 	}

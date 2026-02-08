@@ -1,34 +1,20 @@
 package config
 
 import (
-	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
 const (
-	DefaultWritePolicy = "first_found"
-)
-
-var (
-	// ErrConfigNil is returned when a config receiver is nil.
-	ErrConfigNil = errors.New("config is nil")
-	// ErrMountNameRequired is returned when a mount name is missing.
-	ErrMountNameRequired = errors.New("mount name is required")
-	// ErrMountsRequired is returned when mounts are not configured.
-	ErrMountsRequired = errors.New("mounts is required")
-	// ErrMountNotFound is returned when a mount name does not exist in the config.
-	ErrMountNotFound = errors.New("mount not found")
-
-	// ErrMountConfigNil is returned when a mount config receiver is nil.
-	ErrMountConfigNil = errors.New("mount config is nil")
-	// ErrStoragePathsEmpty is returned when storage_paths is empty.
-	ErrStoragePathsEmpty = errors.New("storage_paths must not be empty")
-	// ErrStoragePath0Required is returned when the first storage path has an empty path.
-	ErrStoragePath0Required = errors.New("storage_paths[0].path is required")
+	DefaultConfigFilePath = "/etc/pfs/pfs.yaml"
+	DefaultLogFilePath    = "/var/log/pfs/pfs.log"
+	DefaultStateDir       = "/var/lib/pfs"
+	DefaultRuntimeDir     = "/run/pfs"
+	DefaultWritePolicy    = "first_found"
 )
 
 // KindError preserves a stable message while allowing callers to match a stable Kind via errors.Is.
@@ -42,6 +28,57 @@ func (e *KindError) Error() string { return e.Msg }
 
 // Is matches the error kind for errors.Is.
 func (e *KindError) Is(target error) bool { return target == e.Kind }
+
+// ConfigFilePath returns the effective default config file path (PFS_CONFIG_FILE override).
+func ConfigFilePath() string {
+	p := strings.TrimSpace(os.Getenv("PFS_CONFIG_FILE"))
+	if p == "" {
+		return DefaultConfigFilePath
+	}
+	return p
+}
+
+// LogFilePath returns the effective default log file path (PFS_LOG_FILE override).
+func LogFilePath() string {
+	p := strings.TrimSpace(os.Getenv("PFS_LOG_FILE"))
+	if p == "" {
+		return DefaultLogFilePath
+	}
+	return p
+}
+
+// StateDir returns the persistent state directory (PFS_STATE_DIR override).
+func StateDir() string {
+	base := strings.TrimSpace(os.Getenv("PFS_STATE_DIR"))
+	if base == "" {
+		return DefaultStateDir
+	}
+	return base
+}
+
+// RuntimeDir returns the runtime directory (PFS_RUNTIME_DIR override).
+func RuntimeDir() string {
+	base := strings.TrimSpace(os.Getenv("PFS_RUNTIME_DIR"))
+	if base == "" {
+		return DefaultRuntimeDir
+	}
+	return base
+}
+
+// MountStateDir returns the mount-scoped persistent state directory.
+func MountStateDir(mountName string) string {
+	return filepath.Join(StateDir(), mountName)
+}
+
+// MountRuntimeDir returns the mount-scoped runtime directory.
+func MountRuntimeDir(mountName string) string {
+	return filepath.Join(RuntimeDir(), mountName)
+}
+
+// MountLockDir returns the mount-scoped runtime locks directory.
+func MountLockDir(mountName string) string {
+	return filepath.Join(MountRuntimeDir(mountName), "locks")
+}
 
 // RootConfig represents the top-level YAML config file.
 type RootConfig struct {

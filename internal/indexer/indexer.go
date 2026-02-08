@@ -3,7 +3,6 @@ package indexer
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"io/fs"
 	"path"
@@ -64,13 +63,13 @@ type dirAgg struct {
 // Run indexes all indexed storage paths for a mount.
 func Run(ctx context.Context, mountName string, mountCfg *config.MountConfig, db *sql.DB, log zerolog.Logger) (Result, error) {
 	if mountName == "" {
-		return Result{}, errors.New("mount name is required")
+		return Result{}, config.ErrMountNameRequired
 	}
 	if mountCfg == nil {
-		return Result{}, errors.New("mount config is nil")
+		return Result{}, config.ErrMountConfigNil
 	}
 	if db == nil {
-		return Result{}, errors.New("db is nil")
+		return Result{}, config.ErrDBNil
 	}
 
 	indexed := []config.StoragePath{}
@@ -103,13 +102,13 @@ func Run(ctx context.Context, mountName string, mountCfg *config.MountConfig, db
 // indexOne indexes a single storage path into the files table.
 func indexOne(ctx context.Context, db *sql.DB, sp config.StoragePath, mountCfg *config.MountConfig, log zerolog.Logger) (StorageResult, error) {
 	if mountCfg == nil {
-		return StorageResult{}, errors.New("mount config is nil")
+		return StorageResult{}, config.ErrMountConfigNil
 	}
 	if strings.TrimSpace(sp.ID) == "" {
-		return StorageResult{}, errors.New("storage id is required")
+		return StorageResult{}, &config.KindError{Kind: config.ErrStoragePathIDRequired, Msg: "storage id is required"}
 	}
 	if strings.TrimSpace(sp.Path) == "" {
-		return StorageResult{}, errors.New("storage path is required")
+		return StorageResult{}, config.ErrStoragePathPathRequired
 	}
 
 	start := time.Now()
@@ -144,6 +143,7 @@ func indexOne(ctx context.Context, db *sql.DB, sp config.StoragePath, mountCfg *
 	var filesIndexed int64
 	var bytesIndexed int64
 	warnings := int64(0)
+	debugEntries := log.GetLevel() <= zerolog.DebugLevel
 
 	ignore := mountCfg.Indexer.Ignore
 
@@ -176,6 +176,9 @@ func indexOne(ctx context.Context, db *sql.DB, sp config.StoragePath, mountCfg *
 		}
 		rel = strings.TrimPrefix(rel, "/")
 		rel = strings.TrimSuffix(rel, "/")
+		if debugEntries {
+			log.Debug().Str("storage_id", sp.ID).Str("path", rel).Msg("index entry")
+		}
 
 		info, err := d.Info()
 		if err != nil {

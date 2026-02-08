@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"syscall"
+
+	"github.com/hieutdo/policyfs/internal/config"
 )
 
 var (
@@ -22,20 +23,16 @@ type FileLock struct {
 
 // mountLockDir computes the mount-scoped runtime lock directory.
 func mountLockDir(mountName string) string {
-	base := strings.TrimSpace(os.Getenv("PFS_RUNTIME_DIR"))
-	if base == "" {
-		base = "/run/pfs"
-	}
-	return filepath.Join(base, mountName, "locks")
+	return config.MountLockDir(mountName)
 }
 
 // AcquireMountLock acquires one of the v1 locks for a mount (daemon.lock or job.lock).
 func AcquireMountLock(mountName string, lockFile string) (*FileLock, error) {
 	if mountName == "" {
-		return nil, errors.New("mount name is required")
+		return nil, config.ErrMountNameRequired
 	}
 	if lockFile == "" {
-		return nil, errors.New("lock file is required")
+		return nil, config.ErrLockFileRequired
 	}
 
 	lockDir := mountLockDir(mountName)

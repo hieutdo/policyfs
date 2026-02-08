@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"sort"
 
 	"github.com/hieutdo/policyfs/internal/indexdb"
 	"github.com/hieutdo/policyfs/internal/indexer"
@@ -27,6 +29,7 @@ func newIndexCmd(configPath *string) *cobra.Command {
 	var jsonOut bool
 	var logFile string
 	var storageID string
+	var rebuild bool
 
 	cmd := &cobra.Command{
 		Use:   "index <mount>",
@@ -36,6 +39,7 @@ func newIndexCmd(configPath *string) *cobra.Command {
 This enables metadata operations (lookup/readdir/getattr) to avoid touching disks for indexed paths.`,
 		Example: `  pfs index media
   pfs index media --json
+  pfs index media --rebuild
   pfs index media --storage hdd1`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
@@ -57,7 +61,7 @@ This enables metadata operations (lookup/readdir/getattr) to avoid touching disk
 				return &CLIError{Code: ExitFail, Cmd: "index", Headline: fmt.Sprintf("invalid config: %s", *configPath), Cause: rootCause(err)}
 			}
 
-			cfgLog, closer, err := NewLogger(rootCfg.Log, logFile)
+			jobLog, closer, err := NewJobLogger(rootCfg.Log, logFile)
 			if err != nil {
 				var eolf *OpenLogFileError
 				if errors.As(err, &eolf) {
@@ -68,8 +72,6 @@ This enables metadata operations (lookup/readdir/getattr) to avoid touching disk
 			if closer != nil {
 				defer func() { _ = closer() }()
 			}
-
-			jobLog := cfgLog.With().Str("component", "indexer").Str("op", "index").Str("mount", mountName).Logger()
 
 			lk, err := lock.AcquireMountLock(mountName, "job.lock")
 			if err != nil {
@@ -91,6 +93,21 @@ This enables metadata operations (lookup/readdir/getattr) to avoid touching disk
 				return &CLIError{Code: ExitFail, Cmd: "index", Headline: "unexpected error", Cause: rootCause(err)}
 			}
 			defer func() { _ = lk.Close() }()
+
+			if rebuild {
+				dlk, err := lock.AcquireMountLock(mountName, "daemon.lock")
+				if err != nil {
+					if errors.Is(err, lock.ErrLockBusy) {
+						return &CLIError{Code: ExitFail, Cmd: "index", Headline: "cannot reset while daemon is running", Cause: err, Hint: "stop 'pfs mount' and try again"}
+					}
+					return &CLIError{Code: ExitFail, Cmd: "index", Headline: "unexpected error", Cause: rootCause(err)}
+				}
+				if err := indexdb.Reset(mountName); err != nil {
+					_ = dlk.Close()
+					return &CLIError{Code: ExitFail, Cmd: "index", Headline: "failed to reset index db", Cause: rootCause(err)}
+				}
+				_ = dlk.Close()
+			}
 
 			idxDB, err := indexdb.Open(mountName)
 			if err != nil {
@@ -133,10 +150,7 @@ This enables metadata operations (lookup/readdir/getattr) to avoid touching disk
 				return nil
 			}
 
-			fmt.Fprintln(cmd.OutOrStdout(), "OK")
-			for _, sp := range res.StoragePaths {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s: files=%d bytes=%d stale_removed=%d dur_ms=%d warnings=%d errors=%d\n", sp.ID, sp.FilesIndexed, sp.BytesIndexed, sp.StaleRemoved, sp.DurationMS, sp.Warnings, sp.Errors)
-			}
+			printIndexSummary(cmd.OutOrStdout(), res)
 			return nil
 		},
 	}
@@ -144,6 +158,36 @@ This enables metadata operations (lookup/readdir/getattr) to avoid touching disk
 	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "output as JSON")
 	cmd.Flags().StringVar(&logFile, "log-file", "", "path to log file (overrides PFS_LOG_FILE)")
 	cmd.Flags().StringVar(&storageID, "storage", "", "index a specific storage id")
+	cmd.Flags().BoolVar(&rebuild, "rebuild", false, "delete index db before indexing")
+	cmd.Flags().BoolVar(&rebuild, "reset", false, "alias for --rebuild")
 
 	return cmd
+}
+
+// printIndexSummary prints a deterministic, human-readable summary of an index run.
+func printIndexSummary(w io.Writer, res indexer.Result) {
+	if w == nil {
+		return
+	}
+
+	fmt.Fprintln(w, "OK")
+	fmt.Fprintf(w, "mount: %s\n", res.Mount)
+
+	paths := append([]indexer.StorageResult{}, res.StoragePaths...)
+	sort.Slice(paths, func(i, j int) bool { return paths[i].ID < paths[j].ID })
+
+	for _, sp := range paths {
+		fmt.Fprintf(
+			w,
+			"%s: files=%d bytes=%d stale_removed=%d dur_ms=%d warnings=%d errors=%d\n",
+			sp.ID,
+			sp.FilesIndexed,
+			sp.BytesIndexed,
+			sp.StaleRemoved,
+			sp.DurationMS,
+			sp.Warnings,
+			sp.Errors,
+		)
+	}
+	fmt.Fprintf(w, "total: files=%d bytes=%d dur_ms=%d\n", res.TotalFiles, res.TotalBytes, res.TotalDurationMS)
 }
