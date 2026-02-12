@@ -1,13 +1,16 @@
 package cli
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"sort"
+	"strings"
+	"time"
 
+	"github.com/dustin/go-humanize"
+	"github.com/hieutdo/policyfs/internal/config"
 	"github.com/hieutdo/policyfs/internal/errkind"
 	"github.com/hieutdo/policyfs/internal/indexdb"
 	"github.com/hieutdo/policyfs/internal/indexer"
@@ -15,20 +18,189 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// JSONIndexOutput is the JSON output for `pfs index <mount> --json`.
-type JSONIndexOutput struct {
-	Command  string          `json:"command"`
-	OK       bool            `json:"ok"`
-	Scope    *JSONScope      `json:"scope,omitempty"`
-	Result   *indexer.Result `json:"result,omitempty"`
-	Warnings []JSONIssue     `json:"warnings"`
-	Errors   []JSONIssue     `json:"errors"`
+// indexResponder centralizes error/success output for `pfs index`.
+type indexResponder struct {
+	cmd        *cobra.Command
+	configPath string
+}
+
+// newIndexResponder builds an index responder for the current command invocation.
+func newIndexResponder(cmd *cobra.Command, configPath string) *indexResponder {
+	return &indexResponder{
+		cmd:        cmd,
+		configPath: configPath,
+	}
+}
+
+// fail returns a formatted CLIError (stderr).
+func (r *indexResponder) fail(code int, headline string, cause error, hint string) error {
+	return &CLIError{Code: code, Cmd: "index", Headline: headline, Cause: rootCause(cause), Hint: hint}
+}
+
+// handleLoadAndResolveMountError formats config/mount resolution errors consistently.
+func (r *indexResponder) handleLoadAndResolveMountError(err error) error {
+	if r == nil {
+		return &CLIError{Code: ExitFail, Cmd: "index", Headline: "unexpected error", Cause: rootCause(err)}
+	}
+	if isUsageError(err) {
+		return r.fail(ExitUsage, "invalid arguments", err, "run 'pfs index --help'")
+	}
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrPermission) {
+		return newConfigLoadCLIError("index", r.configPath, err)
+	}
+	return r.fail(ExitFail, fmt.Sprintf("invalid config: %s", r.configPath), err, "")
+}
+
+// handleAcquireJobLockError formats job.lock acquisition errors.
+func (r *indexResponder) handleAcquireJobLockError(err error) error {
+	if r == nil {
+		return &CLIError{Code: ExitFail, Cmd: "index", Headline: "unexpected error", Cause: rootCause(err)}
+	}
+	if errors.Is(err, errkind.ErrBusy) {
+		return r.fail(ExitBusy, "job already running", err, "")
+	}
+	return r.fail(ExitFail, "unexpected error", err, "")
+}
+
+// resetIndexDB handles --rebuild behavior (including daemon.lock).
+func (r *indexResponder) resetIndexDB(mountName string) error {
+	dlk, err := lock.AcquireMountLock(mountName, config.DefaultDaemonLockFile)
+	if err != nil {
+		if errors.Is(err, errkind.ErrBusy) {
+			return r.fail(ExitFail, "cannot reset while daemon is running", err, "stop 'pfs mount' and try again")
+		}
+		return r.fail(ExitFail, "unexpected error", err, "")
+	}
+	defer func() { _ = dlk.Close() }()
+
+	if err := indexdb.Reset(mountName); err != nil {
+		return r.fail(ExitFail, "failed to reset index db", err, "")
+	}
+	return nil
+}
+
+// openIndexDB opens the per-mount index db or returns a formatted error.
+func (r *indexResponder) openIndexDB(mountName string) (*indexdb.DB, error) {
+	idxDB, err := indexdb.Open(mountName)
+	if err != nil {
+		return nil, r.fail(ExitFail, "failed to open index db", err, "")
+	}
+	return idxDB, nil
+}
+
+// filterMountCfgByStorageID narrows the mount config to a single storage id.
+func (r *indexResponder) filterMountCfgByStorageID(mountCfg *config.MountConfig, storageID string) (*config.MountConfig, error) {
+	if strings.TrimSpace(storageID) == "" {
+		return mountCfg, nil
+	}
+
+	found := false
+	out := *mountCfg
+	out.StoragePaths = nil
+	for _, sp := range mountCfg.StoragePaths {
+		if sp.ID == storageID {
+			found = true
+			if !sp.Indexed {
+				return nil, r.fail(ExitUsage, "invalid arguments", fmt.Errorf("storage %q is not indexed", storageID), "run 'pfs index --help'")
+			}
+			out.StoragePaths = append(out.StoragePaths, sp)
+		}
+	}
+	if !found {
+		return nil, r.fail(ExitUsage, "invalid arguments", fmt.Errorf("unknown storage id: %s", storageID), "run 'pfs index --help'")
+	}
+	return &out, nil
+}
+
+// newWarnHook builds the indexer warning hook.
+func (r *indexResponder) newWarnHook(warningsHuman *[]string) func(storageID, rel string, err error) {
+	return func(storageID, rel string, err error) {
+		rel = strings.TrimSpace(rel)
+		msg := simplifyError(err)
+		if rel != "" {
+			msg = fmt.Sprintf("%s: %s", rel, msg)
+		}
+		msg = fmt.Sprintf("%s: %s", storageID, msg)
+		if warningsHuman != nil {
+			*warningsHuman = append(*warningsHuman, msg)
+		}
+	}
+}
+
+// writeSuccess writes the success output.
+func (r *indexResponder) writeSuccess(mountName string, mountCfg *config.MountConfig, res indexer.Result, warningsHuman []string) error {
+	stdout := io.Discard
+	if r != nil && r.cmd != nil {
+		stdout = r.cmd.OutOrStdout()
+	}
+	printIndexSummary(stdout, res, warningsHuman)
+	return nil
+}
+
+// printIndexHeader prints a short human-readable header before scanning.
+func printIndexHeader(w io.Writer, mountName string, mountCfg *config.MountConfig) {
+	if w == nil || mountCfg == nil {
+		return
+	}
+	var ids []string
+	for _, sp := range mountCfg.StoragePaths {
+		if sp.Indexed {
+			ids = append(ids, sp.ID)
+		}
+	}
+	sort.Strings(ids)
+	fmt.Fprintf(w, "pfs index: mount=%s\n", mountName)
+	fmt.Fprintf(w, "Scanning storages: %s\n", strings.Join(ids, ", "))
+}
+
+// printIndexSummary prints the human summary (per-storage + totals + warnings).
+func printIndexSummary(w io.Writer, res indexer.Result, warningsHuman []string) {
+	if w == nil {
+		return
+	}
+
+	fmt.Fprintln(w, "Summary:")
+
+	totalUpserts := int64(0)
+	totalDeletes := int64(0)
+	for _, sr := range res.StoragePaths {
+		dur := time.Duration(sr.DurationMS) * time.Millisecond
+		fmt.Fprintf(w, "  %s  scanned  %s dirs  %s files  (%s)\n",
+			sr.ID,
+			humanize.Comma(sr.DirsScanned),
+			humanize.Comma(sr.FilesScanned),
+			dur.Round(100*time.Millisecond),
+		)
+		totalUpserts += sr.Upserts
+		totalDeletes += sr.StaleRemoved
+	}
+
+	fmt.Fprintf(w, "Index DB: updated (%s upserts, %s stale removals)\n",
+		humanize.Comma(totalUpserts),
+		humanize.Comma(totalDeletes),
+	)
+
+	totalDur := time.Duration(res.TotalDurationMS) * time.Millisecond
+	fmt.Fprintf(w, "Done: %s files, %s dirs, %s in %s\n",
+		humanize.Comma(res.TotalFiles),
+		humanize.Comma(res.TotalDirs),
+		humanize.Bytes(uint64(res.TotalBytes)),
+		totalDur.Round(100*time.Millisecond),
+	)
+
+	if len(warningsHuman) > 0 {
+		fmt.Fprintf(w, "\nWarnings (%d):\n\n", len(warningsHuman))
+		for _, warn := range warningsHuman {
+			fmt.Fprintf(w, "- %s\n", warn)
+		}
+	}
 }
 
 // newIndexCmd creates `pfs index`.
 func newIndexCmd(configPath *string) *cobra.Command {
-	var jsonOut bool
-	var logFile string
+	var quiet bool
+	var verbose bool
+	var progress string
 	var storageID string
 	var rebuild bool
 
@@ -39,8 +211,9 @@ func newIndexCmd(configPath *string) *cobra.Command {
 
 This enables metadata operations (lookup/readdir/getattr) to avoid touching disks for indexed paths.`,
 		Example: `  pfs index media
-  pfs index media --json
   pfs index media --rebuild
+  pfs index media --quiet
+  pfs index media --progress=plain
   pfs index media --storage hdd1`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
@@ -50,145 +223,125 @@ This enables metadata operations (lookup/readdir/getattr) to avoid touching disk
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			mountName := args[0]
+			cfg := *configPath
+			r := newIndexResponder(cmd, cfg)
 
-			rootCfg, mountCfg, _, err := loadAndResolveMount(*configPath, mountName)
-			if err != nil {
-				if isUsageError(err) {
-					return &CLIError{Code: ExitUsage, Cmd: "index", Headline: "invalid arguments", Cause: rootCause(err), Hint: "run 'pfs index --help'"}
+			progressMode := strings.TrimSpace(progress)
+			if progressMode == "" {
+				progressMode = "auto"
+			}
+			if quiet {
+				progressMode = "off"
+			}
+			if quiet && verbose {
+				return r.fail(ExitUsage, "invalid arguments", errors.New("--quiet cannot be used with -v"), "run 'pfs index --help'")
+			}
+			switch progressMode {
+			case "auto", "tty", "plain", "off":
+			default:
+				return r.fail(
+					ExitUsage,
+					"invalid arguments",
+					fmt.Errorf("invalid value for --progress: %q", progressMode),
+					"run 'pfs index --help'",
+				)
+			}
+			if verbose {
+				if cmd.Flags().Changed("progress") && progressMode != "off" {
+					return r.fail(ExitUsage, "invalid arguments", errors.New("--progress cannot be used with -v"), "run 'pfs index --help'")
 				}
-				if errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrPermission) {
-					return newConfigLoadCLIError("index", *configPath, err)
-				}
-				return &CLIError{Code: ExitFail, Cmd: "index", Headline: fmt.Sprintf("invalid config: %s", *configPath), Cause: rootCause(err)}
+				progressMode = "off"
 			}
 
-			jobLog, closer, err := NewJobLogger(rootCfg.Log, logFile)
+			warningsHuman := []string{}
+			_, mountCfg, _, err := loadAndResolveMount(cfg, mountName)
 			if err != nil {
-				var eolf *OpenLogFileError
-				if errors.As(err, &eolf) {
-					return &CLIError{Code: ExitFail, Cmd: "index", Headline: "failed to open log file", Cause: rootCause(err)}
-				}
-				return &CLIError{Code: ExitFail, Cmd: "index", Headline: fmt.Sprintf("invalid config: %s", *configPath), Cause: rootCause(err)}
-			}
-			if closer != nil {
-				defer func() { _ = closer() }()
+				return r.handleLoadAndResolveMountError(err)
 			}
 
-			lk, err := lock.AcquireMountLock(mountName, "job.lock")
+			lk, err := lock.AcquireMountLock(mountName, config.DefaultJobLockFile)
 			if err != nil {
-				if errors.Is(err, errkind.ErrBusy) {
-					if jsonOut {
-						cfg := *configPath
-						scope := &JSONScope{Mount: &mountName, Config: &cfg}
-						out := JSONIndexOutput{
-							Command:  "index",
-							OK:       false,
-							Scope:    scope,
-							Warnings: []JSONIssue{},
-							Errors:   []JSONIssue{jsonIssue("LOCK_BUSY", "another job already running", "")},
-						}
-						return emitJSONAndExit(ExitBusy, out)
-					}
-					return &CLIError{Code: ExitBusy, Cmd: "index", Headline: "job already running", Cause: err}
-				}
-				return &CLIError{Code: ExitFail, Cmd: "index", Headline: "unexpected error", Cause: rootCause(err)}
+				return r.handleAcquireJobLockError(err)
 			}
-			defer func() { _ = lk.Close() }()
+			defer func() {
+				_ = lk.Close()
+			}()
 
 			if rebuild {
-				dlk, err := lock.AcquireMountLock(mountName, "daemon.lock")
+				if err := r.resetIndexDB(mountName); err != nil {
+					return err
+				}
+			}
+
+			idxDB, err := r.openIndexDB(mountName)
+			if err != nil {
+				return err
+			}
+			defer func() {
+				_ = idxDB.Close()
+			}()
+
+			mountCfg, err = r.filterMountCfgByStorageID(mountCfg, storageID)
+			if err != nil {
+				return err
+			}
+
+			ctx := cmd.Context()
+			stdout := cmd.OutOrStdout()
+			printIndexHeader(stdout, mountName, mountCfg)
+
+			hooks := indexer.Hooks{}
+			var progressUI *indexProgressUI
+			if progressMode != "off" {
+				p, err := startIndexProgress(ctx, stdout, mountName, mountCfg, progressMode)
 				if err != nil {
-					if errors.Is(err, errkind.ErrBusy) {
-						return &CLIError{Code: ExitFail, Cmd: "index", Headline: "cannot reset while daemon is running", Cause: err, Hint: "stop 'pfs mount' and try again"}
-					}
-					return &CLIError{Code: ExitFail, Cmd: "index", Headline: "unexpected error", Cause: rootCause(err)}
+					return r.fail(ExitFail, "unexpected error", err, "")
 				}
-				if err := indexdb.Reset(mountName); err != nil {
-					_ = dlk.Close()
-					return &CLIError{Code: ExitFail, Cmd: "index", Headline: "failed to reset index db", Cause: rootCause(err)}
-				}
-				_ = dlk.Close()
+				progressUI = p
+				hooks.Progress = progressUI.OnProgress
 			}
+			if verbose {
+				hooks.Progress = func(storageID string, rel string, isDir bool) {
+					_ = isDir
+					fmt.Fprintf(stdout, "%s  + %s\n", storageID, rel)
+				}
+			}
+			hooks.Warn = r.newWarnHook(&warningsHuman)
 
-			idxDB, err := indexdb.Open(mountName)
+			res, err := indexer.Run(ctx, mountName, mountCfg, idxDB.SQL(), hooks)
 			if err != nil {
-				return &CLIError{Code: ExitFail, Cmd: "index", Headline: "failed to open index db", Cause: rootCause(err)}
-			}
-			defer func() { _ = idxDB.Close() }()
-
-			if storageID != "" {
-				found := false
-				out := *mountCfg
-				out.StoragePaths = nil
-				for _, sp := range mountCfg.StoragePaths {
-					if sp.ID == storageID {
-						found = true
-						if !sp.Indexed {
-							return &CLIError{Code: ExitUsage, Cmd: "index", Headline: "invalid arguments", Cause: fmt.Errorf("storage %q is not indexed", storageID), Hint: "run 'pfs index --help'"}
-						}
-						out.StoragePaths = append(out.StoragePaths, sp)
-					}
-				}
-				if !found {
-					return &CLIError{Code: ExitUsage, Cmd: "index", Headline: "invalid arguments", Cause: fmt.Errorf("unknown storage id: %s", storageID), Hint: "run 'pfs index --help'"}
-				}
-				mountCfg = &out
+				return r.fail(ExitFail, "unexpected error", err, "")
 			}
 
-			ctx := context.Background()
-			res, err := indexer.Run(ctx, mountName, mountCfg, idxDB.SQL(), jobLog)
-			if err != nil {
-				return &CLIError{Code: ExitFail, Cmd: "index", Headline: "unexpected error", Cause: rootCause(err)}
+			if progressUI != nil {
+				progressUI.Finish()
 			}
-
-			if jsonOut {
-				cfg := *configPath
-				scope := &JSONScope{Mount: &mountName, Config: &cfg}
-				out := JSONIndexOutput{Command: "index", OK: true, Scope: scope, Result: &res, Warnings: []JSONIssue{}, Errors: []JSONIssue{}}
-				if err := writeJSON(out); err != nil {
-					return &CLIError{Code: ExitFail, Cmd: "index", Headline: "failed to write json", Cause: rootCause(err)}
-				}
-				return nil
-			}
-
-			printIndexSummary(cmd.OutOrStdout(), res)
-			return nil
+			return r.writeSuccess(mountName, mountCfg, res, warningsHuman)
 		},
 	}
-
-	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "output as JSON")
-	cmd.Flags().StringVar(&logFile, "log-file", "", "path to log file (overrides PFS_LOG_FILE)")
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
+	cmd.Flags().BoolVar(&quiet, "quiet", false, "disable progress output")
+	cmd.Flags().StringVar(&progress, "progress", "auto", "progress output: auto|tty|plain|off")
 	cmd.Flags().StringVar(&storageID, "storage", "", "index a specific storage id")
 	cmd.Flags().BoolVar(&rebuild, "rebuild", false, "delete index db before indexing")
-	cmd.Flags().BoolVar(&rebuild, "reset", false, "alias for --rebuild")
 
 	return cmd
 }
 
-// printIndexSummary prints a deterministic, human-readable summary of an index run.
-func printIndexSummary(w io.Writer, res indexer.Result) {
-	if w == nil {
-		return
+// simplifyError simplifies error messages for user-friendly output.
+func simplifyError(err error) string {
+	if err == nil {
+		return ""
 	}
-
-	fmt.Fprintln(w, "OK")
-	fmt.Fprintf(w, "mount: %s\n", res.Mount)
-
-	paths := append([]indexer.StorageResult{}, res.StoragePaths...)
-	sort.Slice(paths, func(i, j int) bool { return paths[i].ID < paths[j].ID })
-
-	for _, sp := range paths {
-		fmt.Fprintf(
-			w,
-			"%s: files=%d bytes=%d stale_removed=%d dur_ms=%d warnings=%d errors=%d\n",
-			sp.ID,
-			sp.FilesIndexed,
-			sp.BytesIndexed,
-			sp.StaleRemoved,
-			sp.DurationMS,
-			sp.Warnings,
-			sp.Errors,
-		)
+	var pe *os.PathError
+	if errors.As(err, &pe) {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Sprintf("not found: %s", pe.Path)
+		}
+		if errors.Is(err, os.ErrPermission) {
+			return fmt.Sprintf("permission denied: %s", pe.Path)
+		}
+		return pe.Err.Error()
 	}
-	fmt.Fprintf(w, "total: files=%d bytes=%d dur_ms=%d\n", res.TotalFiles, res.TotalBytes, res.TotalDurationMS)
+	return err.Error()
 }

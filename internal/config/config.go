@@ -12,8 +12,10 @@ import (
 )
 
 const (
-	DefaultConfigFilePath = "/etc/pfs/pfs.yaml"
-	DefaultLogFilePath    = "/var/log/pfs/pfs.log"
+	DefaultConfigFile     = "/etc/pfs/pfs.yaml"
+	DefaultLogFile        = "/var/log/pfs/pfs.log"
+	DefaultDaemonLockFile = "daemon.lock"
+	DefaultJobLockFile    = "job.lock"
 	DefaultStateDir       = "/var/lib/pfs"
 	DefaultRuntimeDir     = "/run/pfs"
 	DefaultWritePolicy    = "first_found"
@@ -23,7 +25,7 @@ const (
 func ConfigFilePath() string {
 	p := strings.TrimSpace(os.Getenv("PFS_CONFIG_FILE"))
 	if p == "" {
-		return DefaultConfigFilePath
+		return DefaultConfigFile
 	}
 	return p
 }
@@ -32,7 +34,7 @@ func ConfigFilePath() string {
 func LogFilePath() string {
 	p := strings.TrimSpace(os.Getenv("PFS_LOG_FILE"))
 	if p == "" {
-		return DefaultLogFilePath
+		return DefaultLogFile
 	}
 	return p
 }
@@ -186,4 +188,18 @@ func (m *MountConfig) FirstStoragePath() (string, error) {
 		return "", &errkind.RequiredError{Msg: "config: storage_paths[0].path is required"}
 	}
 	return m.StoragePaths[0].Path, nil
+}
+
+// GetIndexedStoragePaths returns only storage paths flagged as indexed.
+func (m *MountConfig) GetIndexedStoragePaths() ([]StoragePath, error) {
+	if m == nil {
+		return nil, &errkind.NilError{What: "mount config"}
+	}
+	indexed := []StoragePath{}
+	for _, sp := range m.StoragePaths {
+		if sp.Indexed {
+			indexed = append(indexed, sp)
+		}
+	}
+	return indexed, nil
 }

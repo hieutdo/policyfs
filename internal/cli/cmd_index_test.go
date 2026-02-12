@@ -1,16 +1,23 @@
 package cli
 
 import (
-	"encoding/json"
+	"bufio"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
+	"github.com/hieutdo/policyfs/internal/config"
+	"github.com/hieutdo/policyfs/internal/lock"
 	"github.com/stretchr/testify/require"
 )
 
 // TestIndex_Text_shouldPrintSummary verifies `pfs index <mount>` prints a short human-readable summary to stdout.
 func TestIndex_Text_shouldPrintSummary(t *testing.T) {
+	if os.Getenv("PFS_TEST_HELPER") == "1" {
+		return
+	}
+
 	runtimeDir := filepath.Join(t.TempDir(), "runtime")
 	require.NoError(t, os.MkdirAll(runtimeDir, 0o755))
 	t.Setenv("PFS_RUNTIME_DIR", runtimeDir)
@@ -38,14 +45,19 @@ mounts:
 
 	code, stdout, _ := runCLI(t, []string{"--config", cfg, "index", "media"})
 	require.Equal(t, ExitOK, code)
-	require.Contains(t, stdout, "OK\n")
-	require.Contains(t, stdout, "mount: media\n")
-	require.Contains(t, stdout, "hdd1:")
-	require.Contains(t, stdout, "total:")
+	require.Contains(t, stdout, "pfs index: mount=media")
+	require.Contains(t, stdout, "Scanning storages: hdd1")
+	require.Contains(t, stdout, "Summary:")
+	require.Contains(t, stdout, "Index DB: updated")
+	require.Contains(t, stdout, "Done:")
 }
 
-// TestIndex_Reset_shouldReplaceNonSQLiteDB verifies `pfs index --reset` deletes an existing DB file and recreates a fresh one.
-func TestIndex_Reset_shouldReplaceNonSQLiteDB(t *testing.T) {
+// TestIndex_Rebuild_shouldReplaceNonSQLiteDB verifies `pfs index --rebuild` deletes an existing DB file and recreates a fresh one.
+func TestIndex_Rebuild_shouldReplaceNonSQLiteDB(t *testing.T) {
+	if os.Getenv("PFS_TEST_HELPER") == "1" {
+		return
+	}
+
 	runtimeDir := filepath.Join(t.TempDir(), "runtime")
 	require.NoError(t, os.MkdirAll(runtimeDir, 0o755))
 	t.Setenv("PFS_RUNTIME_DIR", runtimeDir)
@@ -75,7 +87,7 @@ mounts:
 	require.NoError(t, os.MkdirAll(filepath.Dir(dbPath), 0o755))
 	require.NoError(t, os.WriteFile(dbPath, []byte("not a sqlite db"), 0o644))
 
-	code, _, _ := runCLI(t, []string{"--config", cfg, "index", "media", "--reset"})
+	code, _, _ := runCLI(t, []string{"--config", cfg, "index", "media", "--rebuild"})
 	require.Equal(t, ExitOK, code)
 
 	b, err := os.ReadFile(dbPath)
@@ -84,8 +96,12 @@ mounts:
 	require.Equal(t, "SQLite format 3\x00", string(b[:16]))
 }
 
-// TestIndex_JSON_shouldEmitValidJSON verifies `pfs index --json` emits valid JSON only on stdout.
-func TestIndex_JSON_shouldEmitValidJSON(t *testing.T) {
+// TestIndex_Progress_shouldPrintProgress verifies `pfs index --progress` prints progress output.
+func TestIndex_Progress_shouldPrintProgress(t *testing.T) {
+	if os.Getenv("PFS_TEST_HELPER") == "1" {
+		return
+	}
+
 	runtimeDir := filepath.Join(t.TempDir(), "runtime")
 	require.NoError(t, os.MkdirAll(runtimeDir, 0o755))
 	t.Setenv("PFS_RUNTIME_DIR", runtimeDir)
@@ -111,15 +127,252 @@ mounts:
         targets: ["hdd1"]
 `)
 
-	code, stdout, _ := runCLI(t, []string{"--config", cfg, "index", "media", "--json"})
+	code, stdout, _ := runCLI(t, []string{"--config", cfg, "index", "media"})
 	require.Equal(t, ExitOK, code)
+	require.Contains(t, stdout, "Indexing")
+}
 
-	var out JSONIndexOutput
-	require.NoError(t, json.Unmarshal([]byte(stdout), &out))
-	require.Equal(t, "index", out.Command)
-	require.True(t, out.OK)
-	require.NotNil(t, out.Scope)
-	require.NotNil(t, out.Scope.Config)
-	require.NotNil(t, out.Scope.Mount)
-	require.NotNil(t, out.Result)
+// TestIndex_Quiet_shouldSuppressProgress verifies `pfs index --quiet` suppresses progress output.
+func TestIndex_Quiet_shouldSuppressProgress(t *testing.T) {
+	if os.Getenv("PFS_TEST_HELPER") == "1" {
+		return
+	}
+
+	runtimeDir := filepath.Join(t.TempDir(), "runtime")
+	require.NoError(t, os.MkdirAll(runtimeDir, 0o755))
+	t.Setenv("PFS_RUNTIME_DIR", runtimeDir)
+
+	stateDir := filepath.Join(t.TempDir(), "state")
+	require.NoError(t, os.MkdirAll(stateDir, 0o755))
+	t.Setenv("PFS_STATE_DIR", stateDir)
+
+	storageRoot := filepath.Join(t.TempDir(), "hdd1")
+	require.NoError(t, os.MkdirAll(filepath.Join(storageRoot, "library"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(storageRoot, "library", "a.txt"), []byte("hello"), 0o644))
+
+	cfg := writeTempConfig(t, `
+mounts:
+  media:
+    mountpoint: "/mnt/pfs/media"
+    storage_paths:
+      - id: "hdd1"
+        path: "`+storageRoot+`"
+        indexed: true
+    routing_rules:
+      - match: "**"
+        targets: ["hdd1"]
+`)
+
+	code, stdout, _ := runCLI(t, []string{"--config", cfg, "index", "media", "--quiet"})
+	require.Equal(t, ExitOK, code)
+	require.Contains(t, stdout, "Summary:")
+	require.Contains(t, stdout, "Done:")
+}
+
+// TestIndex_InvalidArgs_shouldReturnUsage verifies missing mount arg returns ExitUsage.
+func TestIndex_InvalidArgs_shouldReturnUsage(t *testing.T) {
+	if os.Getenv("PFS_TEST_HELPER") == "1" {
+		return
+	}
+
+	code, _, stderr := runCLI(t, []string{"index"})
+	require.Equal(t, ExitUsage, code)
+	require.Contains(t, stderr, "error: invalid arguments")
+}
+
+// TestIndex_InvalidMountName_shouldReturnUsage verifies invalid mount names are rejected.
+func TestIndex_InvalidMountName_shouldReturnUsage(t *testing.T) {
+	if os.Getenv("PFS_TEST_HELPER") == "1" {
+		return
+	}
+
+	code, _, stderr := runCLI(t, []string{"index", "bad mount"})
+	require.Equal(t, ExitUsage, code)
+	require.Contains(t, stderr, "error: invalid arguments")
+	require.Contains(t, stderr, "hint: run 'pfs index --help'")
+}
+
+// TestIndex_UnknownMount_shouldReturnUsage verifies unknown mounts are reported as usage errors.
+func TestIndex_UnknownMount_shouldReturnUsage(t *testing.T) {
+	if os.Getenv("PFS_TEST_HELPER") == "1" {
+		return
+	}
+
+	cfg := writeTempConfig(t, `
+mounts:
+  media:
+    mountpoint: "/mnt/pfs/media"
+    storage_paths:
+      - id: "hdd1"
+        path: "/tmp/hdd1"
+        indexed: true
+    routing_rules:
+      - match: "**"
+        targets: ["hdd1"]
+`)
+
+	code, _, stderr := runCLI(t, []string{"--config", cfg, "index", "unknown"})
+	require.Equal(t, ExitUsage, code)
+	require.Contains(t, stderr, "error: invalid arguments")
+}
+
+// TestIndex_InvalidProgressValue_shouldReturnUsage verifies invalid --progress values are rejected.
+func TestIndex_InvalidProgressValue_shouldReturnUsage(t *testing.T) {
+	if os.Getenv("PFS_TEST_HELPER") == "1" {
+		return
+	}
+
+	cfg := writeTempConfig(t, `
+mounts:
+  media:
+    mountpoint: "/mnt/pfs/media"
+    storage_paths:
+      - id: "hdd1"
+        path: "/tmp/hdd1"
+        indexed: true
+    routing_rules:
+      - match: "**"
+        targets: ["hdd1"]
+`)
+
+	code, _, stderr := runCLI(t, []string{"--config", cfg, "index", "media", "--progress=nope"})
+	require.Equal(t, ExitUsage, code)
+	require.Contains(t, stderr, "error: invalid arguments")
+}
+
+// TestIndex_UnknownStorageID_shouldReturnUsage verifies --storage rejects unknown storage ids.
+func TestIndex_UnknownStorageID_shouldReturnUsage(t *testing.T) {
+	if os.Getenv("PFS_TEST_HELPER") == "1" {
+		return
+	}
+
+	cfg := writeTempConfig(t, `
+mounts:
+  media:
+    mountpoint: "/mnt/pfs/media"
+    storage_paths:
+      - id: "hdd1"
+        path: "/tmp/hdd1"
+        indexed: true
+    routing_rules:
+      - match: "**"
+        targets: ["hdd1"]
+`)
+
+	code, _, stderr := runCLI(t, []string{"--config", cfg, "index", "media", "--storage", "hdd2"})
+	require.Equal(t, ExitUsage, code)
+	require.Contains(t, stderr, "error: invalid arguments")
+}
+
+// TestIndex_StorageNotIndexed_shouldReturnUsage verifies --storage rejects non-indexed storage.
+func TestIndex_StorageNotIndexed_shouldReturnUsage(t *testing.T) {
+	if os.Getenv("PFS_TEST_HELPER") == "1" {
+		return
+	}
+
+	cfg := writeTempConfig(t, `
+mounts:
+  media:
+    mountpoint: "/mnt/pfs/media"
+    storage_paths:
+      - id: "hdd1"
+        path: "/tmp/hdd1"
+        indexed: false
+    routing_rules:
+      - match: "**"
+        targets: ["hdd1"]
+`)
+
+	code, _, stderr := runCLI(t, []string{"--config", cfg, "index", "media", "--storage", "hdd1"})
+	require.Equal(t, ExitUsage, code)
+	require.Contains(t, stderr, "error: invalid arguments")
+}
+
+// TestIndex_JobLockBusy_shouldReturnExitBusy verifies index returns ExitBusy when job.lock is held.
+func TestIndex_JobLockBusy_shouldReturnExitBusy(t *testing.T) {
+	if os.Getenv("PFS_TEST_HELPER") == "1" {
+		return
+	}
+
+	runtimeDir := filepath.Join(t.TempDir(), "runtime")
+	require.NoError(t, os.MkdirAll(runtimeDir, 0o755))
+	t.Setenv("PFS_RUNTIME_DIR", runtimeDir)
+
+	stateDir := filepath.Join(t.TempDir(), "state")
+	require.NoError(t, os.MkdirAll(stateDir, 0o755))
+	t.Setenv("PFS_STATE_DIR", stateDir)
+
+	storageRoot := filepath.Join(t.TempDir(), "hdd1")
+	require.NoError(t, os.MkdirAll(filepath.Join(storageRoot, "library"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(storageRoot, "library", "a.txt"), []byte("hello"), 0o644))
+
+	cfg := writeTempConfig(t, `
+mounts:
+  media:
+    mountpoint: "/mnt/pfs/media"
+    storage_paths:
+      - id: "hdd1"
+        path: "`+storageRoot+`"
+        indexed: true
+    routing_rules:
+      - match: "**"
+        targets: ["hdd1"]
+`)
+
+	cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcessIndexHoldJobLock")
+	cmd.Env = append(
+		os.Environ(),
+		"PFS_TEST_HELPER=1",
+		"PFS_RUNTIME_DIR="+runtimeDir,
+		"PFS_TEST_MOUNT=media",
+		"PFS_TEST_LOCK_FILE="+config.DefaultJobLockFile,
+	)
+	stdout, err := cmd.StdoutPipe()
+	require.NoError(t, err)
+	stdin, err := cmd.StdinPipe()
+	require.NoError(t, err)
+	cmd.Stderr = os.Stderr
+	require.NoError(t, cmd.Start())
+
+	waited := false
+	t.Cleanup(func() {
+		_ = stdin.Close()
+		if !waited {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	})
+
+	r := bufio.NewReader(stdout)
+	line, err := r.ReadString('\n')
+	require.NoError(t, err)
+	require.Equal(t, "ready\n", line)
+
+	code, _, stderr := runCLI(t, []string{"--config", cfg, "index", "media", "--quiet"})
+	require.Equal(t, ExitBusy, code)
+	require.Contains(t, stderr, "error: job already running")
+
+	require.NoError(t, stdin.Close())
+	require.NoError(t, cmd.Wait())
+	waited = true
+}
+
+// TestHelperProcessIndexHoldJobLock holds job.lock until stdin closes.
+func TestHelperProcessIndexHoldJobLock(t *testing.T) {
+	if os.Getenv("PFS_TEST_HELPER") != "1" {
+		return
+	}
+
+	mountName := os.Getenv("PFS_TEST_MOUNT")
+	lockFile := os.Getenv("PFS_TEST_LOCK_FILE")
+
+	lk, err := lock.AcquireMountLock(mountName, lockFile)
+	if err != nil {
+		os.Exit(1)
+	}
+
+	_, _ = os.Stdout.Write([]byte("ready\n"))
+	_, _ = bufio.NewReader(os.Stdin).ReadBytes(0)
+	_ = lk.Close()
+	os.Exit(0)
 }

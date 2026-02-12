@@ -25,7 +25,20 @@
       "preLaunchTask": "make dev-dlv",
       "substitutePath": [{ "from": "${workspaceFolder:pfs-project}", "to": "/workspace" }],
       "program": "/workspace/bin/pfs",
-      "args": ["--config", "/workspace/configs/dev.yaml", "--log-file", "/workspace/tmp/pfs.log", "mount", "media"]
+      "args": ["mount", "media"]
+    },
+    {
+      "name": "debug cmd: index",
+      "type": "go",
+      "request": "launch",
+      "mode": "exec",
+      "debugAdapter": "dlv-dap",
+      "host": "127.0.0.1",
+      "port": 40000,
+      "preLaunchTask": "make dev-dlv",
+      "substitutePath": [{ "from": "${workspaceFolder:pfs-project}", "to": "/workspace" }],
+      "program": "/workspace/bin/pfs",
+      "args": ["index", "media"]
     },
     {
       "name": "debug test: unit : cli",

@@ -9,6 +9,7 @@ import (
 
 	"github.com/hieutdo/policyfs/internal/config"
 	"github.com/hieutdo/policyfs/internal/errkind"
+	"github.com/hieutdo/policyfs/internal/pathmatch"
 )
 
 var (
@@ -39,7 +40,7 @@ type compiledRule struct {
 	rule  config.RoutingRule
 	read  []string
 	write []string
-	segs  [][]string
+	pat   *pathmatch.Pattern
 }
 
 // New builds a Router from a mount config.
@@ -76,11 +77,7 @@ func New(m *config.MountConfig) (*Router, error) {
 			return nil, &errkind.RequiredError{Msg: fmt.Sprintf("config: routing_rules[%d].match is required", i)}
 		}
 
-		expanded, err := expandBraces(rr.Match)
-		if err != nil {
-			return nil, fmt.Errorf("failed to expand routing rule pattern: %w", err)
-		}
-		segs, err := parseGlobExpanded(expanded)
+		pat, err := pathmatch.Compile(rr.Match)
 		if err != nil {
 			return nil, fmt.Errorf("failed to compile routing rule pattern: %w", err)
 		}
@@ -94,7 +91,7 @@ func New(m *config.MountConfig) (*Router, error) {
 			write = rr.Targets
 		}
 
-		r.rules = append(r.rules, compiledRule{rule: rr, read: read, write: write, segs: segs})
+		r.rules = append(r.rules, compiledRule{rule: rr, read: read, write: write, pat: pat})
 	}
 	return r, nil
 }
@@ -231,10 +228,8 @@ func (r *Router) SelectWriteTarget(virtualPath string) (Target, error) {
 
 // matchRule returns the first routing rule that matches a path.
 func (r *Router) matchRule(virtualPath string) (compiledRule, bool) {
-	p := normalizePath(virtualPath)
-	pathSegs := splitSegments(p)
 	for _, cr := range r.rules {
-		if globMatchAny(cr.segs, pathSegs) {
+		if cr.pat.Match(virtualPath) {
 			return cr, true
 		}
 	}
@@ -250,13 +245,10 @@ func (r *Router) ResolveListTargets(virtualDirPath string) ([]Target, error) {
 		return nil, &errkind.NilError{What: "router"}
 	}
 
-	dir := normalizePath(virtualDirPath)
-	dirSegs := splitSegments(dir)
-
 	union := []string{}
 	matchedAny := false
 	for _, cr := range r.rules {
-		if !ruleCanMatchDescendant(cr.segs, dirSegs) {
+		if !cr.pat.CanMatchDescendant(virtualDirPath) {
 			continue
 		}
 		matchedAny = true
@@ -328,97 +320,9 @@ func (r *Router) targetsFromIDs(ids []string) ([]Target, error) {
 	return out, nil
 }
 
-// parseGlobExpanded parses brace-expanded patterns into segment lists.
-func parseGlobExpanded(expanded []string) ([][]string, error) {
-	if len(expanded) == 0 {
-		return nil, &errkind.InvalidError{Msg: "empty expanded patterns"}
-	}
-
-	segs := make([][]string, 0, len(expanded))
-	for _, p := range expanded {
-		p = normalizeGlobPattern(p)
-		segs = append(segs, splitSegments(p))
-	}
-	return segs, nil
-}
-
-// expandBraces expands simple {a,b,c} brace syntax.
-func expandBraces(pattern string) ([]string, error) {
-	const maxExpansions = 64
-	pattern = strings.TrimSpace(pattern)
-	if pattern == "" {
-		return nil, &errkind.InvalidError{Msg: "empty pattern"}
-	}
-
-	open := strings.IndexByte(pattern, '{')
-	if open == -1 {
-		return []string{pattern}, nil
-	}
-	close := strings.IndexByte(pattern[open+1:], '}')
-	if close == -1 {
-		return []string{pattern}, nil
-	}
-	close = open + 1 + close
-
-	inner := pattern[open+1 : close]
-	parts := strings.Split(inner, ",")
-	if len(parts) == 0 {
-		return []string{pattern}, nil
-	}
-
-	out := []string{}
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		candidate := pattern[:open] + part + pattern[close+1:]
-		exp, err := expandBraces(candidate)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, exp...)
-		if len(out) > maxExpansions {
-			return nil, &errkind.InvalidError{Msg: "pattern expansion too large"}
-		}
-	}
-	return out, nil
-}
-
-// normalizeGlobPattern normalizes patterns per routing spec.
-func normalizeGlobPattern(p string) string {
-	p = strings.TrimSpace(p)
-	p = strings.TrimPrefix(p, "/")
-	p = strings.TrimSuffix(p, "/")
-	return collapseSlashes(p)
-}
-
-// normalizePath normalizes virtual paths per routing spec.
-func normalizePath(p string) string {
-	p = strings.TrimSpace(p)
-	p = strings.TrimPrefix(p, "/")
-	p = strings.TrimSuffix(p, "/")
-	return collapseSlashes(p)
-}
-
-// collapseSlashes collapses repeated slashes into a single slash.
-func collapseSlashes(s string) string {
-	for strings.Contains(s, "//") {
-		s = strings.ReplaceAll(s, "//", "/")
-	}
-	return s
-}
-
-// splitSegments splits a normalized path into segments.
-func splitSegments(p string) []string {
-	p = strings.TrimPrefix(p, "/")
-	p = strings.TrimSuffix(p, "/")
-	if strings.TrimSpace(p) == "" {
-		return nil
-	}
-	return strings.Split(p, "/")
-}
-
 // parentVirtualDir returns the parent directory of a virtual path.
 func parentVirtualDir(virtualPath string) string {
-	p := normalizePath(virtualPath)
+	p := pathmatch.NormalizePath(virtualPath)
 	parent := filepath.Dir(p)
 	if parent == "." {
 		return ""
@@ -434,182 +338,4 @@ func freeSpaceGB(path string) (float64, error) {
 	}
 	free := float64(st.Bavail) * float64(st.Bsize)
 	return free / (1024.0 * 1024.0 * 1024.0), nil
-}
-
-// ruleCanMatchDescendant reports whether any expanded pattern can match a path under dirSegs.
-func ruleCanMatchDescendant(expandedSegs [][]string, dirSegs []string) bool {
-	for _, segs := range expandedSegs {
-		if globCanMatchDescendant(segs, dirSegs) {
-			return true
-		}
-	}
-	return false
-}
-
-// globCanMatchDescendant checks whether a pattern can match at least one descendant path.
-func globCanMatchDescendant(patternSegs []string, dirSegs []string) bool {
-	states := map[int]struct{}{0: {}}
-	states = globEpsilonClose(patternSegs, states)
-	for _, ds := range dirSegs {
-		next := map[int]struct{}{}
-		for i := range states {
-			if i >= len(patternSegs) {
-				continue
-			}
-			ps := patternSegs[i]
-			if ps == "**" {
-				next[i] = struct{}{}
-				continue
-			}
-			if matchSegment(ps, ds) {
-				next[i+1] = struct{}{}
-			}
-		}
-		states = globEpsilonClose(patternSegs, next)
-		if len(states) == 0 {
-			return false
-		}
-	}
-	return len(states) > 0
-}
-
-// globEpsilonClose expands states that can advance without consuming a segment (only `**`).
-func globEpsilonClose(patternSegs []string, in map[int]struct{}) map[int]struct{} {
-	out := map[int]struct{}{}
-	for k := range in {
-		out[k] = struct{}{}
-	}
-	changed := true
-	for changed {
-		changed = false
-		for i := range out {
-			if i < len(patternSegs) && patternSegs[i] == "**" {
-				if _, ok := out[i+1]; !ok {
-					out[i+1] = struct{}{}
-					changed = true
-				}
-			}
-		}
-	}
-	return out
-}
-
-// matchSegment matches a single path segment (no '/') against a glob segment.
-func matchSegment(pattern string, s string) bool {
-	pi := 0
-	si := 0
-	star := -1
-	starMatch := 0
-
-	for si < len(s) {
-		if pi < len(pattern) {
-			switch pattern[pi] {
-			case '*':
-				star = pi
-				pi++
-				starMatch = si
-				continue
-			case '?':
-				pi++
-				si++
-				continue
-			case '[':
-				ok, n := matchCharClass(pattern[pi:], s[si])
-				if ok {
-					pi += n
-					si++
-					continue
-				}
-			}
-
-			if pattern[pi] == s[si] {
-				pi++
-				si++
-				continue
-			}
-		}
-
-		if star != -1 {
-			pi = star + 1
-			starMatch++
-			si = starMatch
-			continue
-		}
-		return false
-	}
-
-	for pi < len(pattern) && pattern[pi] == '*' {
-		pi++
-	}
-	return pi == len(pattern)
-}
-
-// matchCharClass matches a simple character class at the start of a pattern.
-func matchCharClass(pattern string, b byte) (bool, int) {
-	if len(pattern) == 0 || pattern[0] != '[' {
-		return false, 0
-	}
-	end := strings.IndexByte(pattern, ']')
-	if end == -1 {
-		return false, 0
-	}
-
-	inner := pattern[1:end]
-	neg := false
-	if strings.HasPrefix(inner, "!") {
-		neg = true
-		inner = inner[1:]
-	}
-
-	match := false
-	for i := 0; i < len(inner); i++ {
-		if inner[i] == b {
-			match = true
-			break
-		}
-	}
-	if neg {
-		match = !match
-	}
-	return match, end + 1
-}
-
-// globMatchAny matches a path against any brace-expanded segment list.
-func globMatchAny(expandedSegs [][]string, pathSegs []string) bool {
-	for _, segs := range expandedSegs {
-		if globMatchSegments(segs, pathSegs) {
-			return true
-		}
-	}
-	return false
-}
-
-// globMatchSegments matches a full path against a glob segment list.
-func globMatchSegments(patternSegs []string, pathSegs []string) bool {
-	states := map[int]struct{}{0: {}}
-	states = globEpsilonClose(patternSegs, states)
-
-	for _, s := range pathSegs {
-		next := map[int]struct{}{}
-		for i := range states {
-			if i >= len(patternSegs) {
-				continue
-			}
-			ps := patternSegs[i]
-			if ps == "**" {
-				next[i] = struct{}{}
-				continue
-			}
-			if matchSegment(ps, s) {
-				next[i+1] = struct{}{}
-			}
-		}
-		states = globEpsilonClose(patternSegs, next)
-		if len(states) == 0 {
-			return false
-		}
-	}
-	states = globEpsilonClose(patternSegs, states)
-	_, ok := states[len(patternSegs)]
-	return ok
 }

@@ -3,8 +3,10 @@ package indexer
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -13,17 +15,25 @@ import (
 
 	"github.com/hieutdo/policyfs/internal/config"
 	"github.com/hieutdo/policyfs/internal/errkind"
-	"github.com/rs/zerolog"
+	"github.com/hieutdo/policyfs/internal/pathmatch"
+	"github.com/mattn/go-sqlite3"
 )
 
 const (
-	batchSize = 1000
+	batchSize         = 1000
+	dbWriteMaxRetries = 3
+	dbWriteRetryDelay = 50 * time.Millisecond
+)
+
+var (
+	errMissingStat = errkind.SentinelError("missing stat")
 )
 
 // Result contains summary stats for one index run.
 type Result struct {
 	Mount           string          `json:"mount"`
 	StoragePaths    []StorageResult `json:"storage_paths"`
+	TotalDirs       int64           `json:"-"`
 	TotalFiles      int64           `json:"total_files"`
 	TotalBytes      int64           `json:"total_bytes"`
 	TotalDurationMS int64           `json:"total_duration_ms"`
@@ -32,12 +42,22 @@ type Result struct {
 // StorageResult contains summary stats for one indexed storage path.
 type StorageResult struct {
 	ID           string `json:"id"`
-	FilesIndexed int64  `json:"files_indexed"`
-	BytesIndexed int64  `json:"bytes_indexed"`
+	Upserts      int64  `json:"-"`
+	DirsScanned  int64  `json:"dirs_scanned"`
+	FilesScanned int64  `json:"files_scanned"`
+	BytesScanned int64  `json:"bytes_scanned"`
 	StaleRemoved int64  `json:"stale_removed"`
 	DurationMS   int64  `json:"duration_ms"`
 	Warnings     int64  `json:"warnings"`
 	Errors       int64  `json:"errors"`
+}
+
+// Hooks provides optional callbacks for progress and warnings.
+type Hooks struct {
+	// Progress is called for each scanned entry when verbose mode is enabled.
+	Progress func(storageID string, rel string, isDir bool)
+	// Warn is called for non-fatal scan issues.
+	Warn func(storageID string, rel string, err error)
 }
 
 // entryRow is the DB write payload for one filesystem entry.
@@ -62,7 +82,7 @@ type dirAgg struct {
 }
 
 // Run indexes all indexed storage paths for a mount.
-func Run(ctx context.Context, mountName string, mountCfg *config.MountConfig, db *sql.DB, log zerolog.Logger) (Result, error) {
+func Run(ctx context.Context, mountName string, mountCfg *config.MountConfig, db *sql.DB, hooks Hooks) (Result, error) {
 	if mountName == "" {
 		return Result{}, &errkind.RequiredError{What: "mount name"}
 	}
@@ -80,28 +100,25 @@ func Run(ctx context.Context, mountName string, mountCfg *config.MountConfig, db
 		}
 	}
 
-	jobLog := log.With().Str("component", "indexer").Str("op", "index").Str("mount", mountName).Logger()
-
 	res := Result{Mount: mountName, StoragePaths: make([]StorageResult, 0, len(indexed))}
-	start := time.Now()
 
 	for _, sp := range indexed {
-		sr, err := indexOne(ctx, db, sp, mountCfg, jobLog)
+		sr, err := indexOne(ctx, db, sp, mountCfg, hooks)
 		if err != nil {
 			return Result{}, err
 		}
 		res.StoragePaths = append(res.StoragePaths, sr)
-		res.TotalFiles += sr.FilesIndexed
-		res.TotalBytes += sr.BytesIndexed
+		res.TotalDirs += sr.DirsScanned
+		res.TotalFiles += sr.FilesScanned
+		res.TotalBytes += sr.BytesScanned
 		res.TotalDurationMS += sr.DurationMS
 	}
 
-	jobLog.Info().Int64("dur_ms", time.Since(start).Milliseconds()).Msg("index finished")
 	return res, nil
 }
 
 // indexOne indexes a single storage path into the files table.
-func indexOne(ctx context.Context, db *sql.DB, sp config.StoragePath, mountCfg *config.MountConfig, log zerolog.Logger) (StorageResult, error) {
+func indexOne(ctx context.Context, db *sql.DB, sp config.StoragePath, mountCfg *config.MountConfig, hooks Hooks) (StorageResult, error) {
 	if mountCfg == nil {
 		return StorageResult{}, &errkind.NilError{What: "mount config"}
 	}
@@ -110,6 +127,23 @@ func indexOne(ctx context.Context, db *sql.DB, sp config.StoragePath, mountCfg *
 	}
 	if strings.TrimSpace(sp.Path) == "" {
 		return StorageResult{}, &errkind.RequiredError{What: "storage path"}
+	}
+
+	if _, err := os.Stat(sp.Path); err != nil {
+		if hooks.Warn != nil {
+			hooks.Warn(sp.ID, "", err)
+		}
+		return StorageResult{
+			ID:           sp.ID,
+			DirsScanned:  0,
+			Upserts:      0,
+			FilesScanned: 0,
+			BytesScanned: 0,
+			StaleRemoved: 0,
+			DurationMS:   0,
+			Warnings:     1,
+			Errors:       0,
+		}, nil
 	}
 
 	start := time.Now()
@@ -141,30 +175,42 @@ func indexOne(ctx context.Context, db *sql.DB, sp config.StoragePath, mountCfg *
 		return nil
 	}
 
-	var filesIndexed int64
-	var bytesIndexed int64
+	var dirsScanned int64
+	var filesScanned int64
+	var bytesScanned int64
 	warnings := int64(0)
-	debugEntries := log.GetLevel() <= zerolog.DebugLevel
+	tombstoneAllowed := true
 
 	ignore := mountCfg.Indexer.Ignore
+	ignoreMatcher, err := pathmatch.NewMatcher(ignore)
+	if err != nil {
+		return StorageResult{}, fmt.Errorf("failed to compile ignore patterns: %w", err)
+	}
+
+	warn := func(rel string, err error) {
+		warnings++
+		if shouldSkipTombstone(err) {
+			tombstoneAllowed = false
+		}
+		if hooks.Warn != nil {
+			hooks.Warn(sp.ID, rel, err)
+		}
+	}
 
 	walkFn := func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return err
-		}
-
-		entryName := d.Name()
-		for _, pat := range ignore {
-			pat = strings.TrimSpace(pat)
-			if pat == "" {
-				continue
-			}
-			if ok, _ := filepath.Match(pat, entryName); ok {
-				if d.IsDir() {
-					return fs.SkipDir
+			rel := p
+			if v, relErr := filepath.Rel(sp.Path, p); relErr == nil {
+				rel = filepath.ToSlash(v)
+				if rel == "." {
+					rel = ""
 				}
-				return nil
+				rel = strings.TrimPrefix(rel, "/")
+				rel = strings.TrimSuffix(rel, "/")
 			}
+			warn(rel, err)
+			// v1 behavior: log warning, skip and continue indexing.
+			return nil
 		}
 
 		rel, err := filepath.Rel(sp.Path, p)
@@ -177,20 +223,31 @@ func indexOne(ctx context.Context, db *sql.DB, sp config.StoragePath, mountCfg *
 		}
 		rel = strings.TrimPrefix(rel, "/")
 		rel = strings.TrimSuffix(rel, "/")
-		if debugEntries {
-			log.Debug().Str("storage_id", sp.ID).Str("path", rel).Msg("index entry")
+
+		if ignoreMatcher.Match(rel) {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
+
+		if d.Type()&os.ModeSymlink != 0 {
+			if _, err := os.Stat(p); err != nil {
+				warn(rel, err)
+			}
+			return nil
 		}
 
 		info, err := d.Info()
 		if err != nil {
-			warnings++
+			warn(rel, err)
 			//nolint:nilerr // v1 behavior: log warning, skip and continue indexing.
 			return nil
 		}
 		st, _ := info.Sys().(*syscall.Stat_t)
 		mtimeSec := info.ModTime().Unix()
 		if st == nil {
-			warnings++
+			warn(rel, errMissingStat)
 			return nil
 		}
 		uid := uint32(st.Uid)
@@ -207,6 +264,12 @@ func indexOne(ctx context.Context, db *sql.DB, sp config.StoragePath, mountCfg *
 		}
 
 		if d.IsDir() {
+			if rel != "" && hooks.Progress != nil {
+				hooks.Progress(sp.ID, rel, true)
+			}
+			if rel != "" {
+				dirsScanned++
+			}
 			ensureDirAgg(rel)
 			rows = append(rows, entryRow{
 				path:      rel,
@@ -226,6 +289,9 @@ func indexOne(ctx context.Context, db *sql.DB, sp config.StoragePath, mountCfg *
 			// Index only regular files for v1.
 			return nil
 		}
+		if rel != "" && hooks.Progress != nil {
+			hooks.Progress(sp.ID, rel, false)
+		}
 
 		sz := info.Size()
 		rows = append(rows, entryRow{
@@ -239,8 +305,8 @@ func indexOne(ctx context.Context, db *sql.DB, sp config.StoragePath, mountCfg *
 			uid:       uid,
 			gid:       gid,
 		})
-		filesIndexed++
-		bytesIndexed += sz
+		filesScanned++
+		bytesScanned += sz
 
 		ensureDirAgg(parent)
 		aggs[parent].fileCount++
@@ -275,30 +341,99 @@ func indexOne(ctx context.Context, db *sql.DB, sp config.StoragePath, mountCfg *
 		return StorageResult{}, err
 	}
 
-	staleRemoved, err := tombstoneStale(ctx, db, sp.ID, runID)
-	if err != nil {
-		return StorageResult{}, err
+	staleRemoved := int64(0)
+	if tombstoneAllowed {
+		var err error
+		staleRemoved, err = tombstoneStale(ctx, db, sp.ID, runID)
+		if err != nil {
+			return StorageResult{}, err
+		}
 	}
 	if err := updateDirAggregates(ctx, db, sp.ID, runID, aggs); err != nil {
 		return StorageResult{}, err
 	}
 
 	dur := time.Since(start)
-	if err := updateIndexerState(ctx, db, sp.ID, runID, dur, filesIndexed, bytesIndexed); err != nil {
+	if err := updateIndexerState(ctx, db, sp.ID, runID, dur, filesScanned, bytesScanned); err != nil {
 		return StorageResult{}, err
 	}
 
-	log.Info().Str("storage_id", sp.ID).Int64("dur_ms", dur.Milliseconds()).Msg("storage indexed")
+	upserts := filesScanned + dirsScanned
 
 	return StorageResult{
 		ID:           sp.ID,
-		FilesIndexed: filesIndexed,
-		BytesIndexed: bytesIndexed,
+		Upserts:      upserts,
+		DirsScanned:  dirsScanned,
+		FilesScanned: filesScanned,
+		BytesScanned: bytesScanned,
 		StaleRemoved: staleRemoved,
 		DurationMS:   dur.Milliseconds(),
 		Warnings:     warnings,
 		Errors:       0,
 	}, nil
+}
+
+// shouldSkipTombstone reports whether a warning implies the scan was incomplete.
+func shouldSkipTombstone(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return false
+	}
+	if errors.Is(err, os.ErrPermission) {
+		return true
+	}
+	if errors.Is(err, errMissingStat) {
+		return true
+	}
+	return true
+}
+
+// retryDBWrite retries a write operation unless the error is non-retryable.
+func retryDBWrite(ctx context.Context, op string, fn func() error) error {
+	var lastErr error
+	for attempt := 1; attempt <= dbWriteMaxRetries; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("failed to %s: %w", op, err)
+		}
+		if err := fn(); err != nil {
+			lastErr = err
+			if !shouldRetryDBWrite(err) {
+				return fmt.Errorf("failed to %s: %w", op, err)
+			}
+			if attempt == dbWriteMaxRetries {
+				return fmt.Errorf("failed to %s after %d attempts: %w", op, attempt, err)
+			}
+			time.Sleep(dbWriteRetryDelay)
+			continue
+		}
+		return nil
+	}
+	return fmt.Errorf("failed to %s: %w", op, lastErr)
+}
+
+// shouldRetryDBWrite reports whether a DB write error should be retried.
+func shouldRetryDBWrite(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	if isSQLiteFull(err) {
+		return false
+	}
+	return true
+}
+
+// isSQLiteFull reports whether a sqlite error indicates a disk-full condition.
+func isSQLiteFull(err error) bool {
+	var sqliteErr sqlite3.Error
+	if !errors.As(err, &sqliteErr) {
+		return false
+	}
+	return sqliteErr.Code == sqlite3.ErrFull
 }
 
 // allocateRunID increments indexer_state.current_run_id and returns the new run ID.
@@ -331,8 +466,15 @@ ON CONFLICT(storage_id) DO NOTHING;`, storageID)
 	return next, nil
 }
 
-// upsertEntriesBatch inserts or updates entry rows in one transaction.
+// upsertEntriesBatch inserts or updates entry rows in one transaction with retries.
 func upsertEntriesBatch(ctx context.Context, db *sql.DB, storageID string, runID int64, rows []entryRow) error {
+	return retryDBWrite(ctx, "upsert file batch", func() error {
+		return upsertEntriesBatchOnce(ctx, db, storageID, runID, rows)
+	})
+}
+
+// upsertEntriesBatchOnce inserts or updates entry rows in one transaction.
+func upsertEntriesBatchOnce(ctx context.Context, db *sql.DB, storageID string, runID int64, rows []entryRow) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin tx: %w", err)

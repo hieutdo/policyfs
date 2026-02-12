@@ -21,7 +21,7 @@ import (
 const (
 	workspace = "/workspace"
 	pfsSrc    = "/workspace/cmd/pfs"
-	pfsBin    = "/workspace/bin/pfs"
+	pfsBin    = "/workspace/tmp/pfs-integration/bin/pfs"
 	tmpDir    = "/workspace/tmp/pfs-integration"
 	mountBase = "/mnt/pfs/pfs-integration"
 )
@@ -38,6 +38,12 @@ func run(m *testing.M) int {
 		fmt.Fprintln(os.Stderr, "failed to ensure tmp dir", err)
 		return 2
 	}
+
+	if err := os.MkdirAll(filepath.Dir(pfsBin), 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, "failed to ensure pfs bin dir", err)
+		return 2
+	}
+
 	if err := os.MkdirAll(mountBase, 0o755); err != nil {
 		fmt.Fprintln(os.Stderr, "failed to ensure mount base dir", err)
 		return 2

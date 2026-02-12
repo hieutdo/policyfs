@@ -16,6 +16,17 @@ const (
 	logFileEnvVar = "PFS_LOG_FILE"
 )
 
+// effectiveLogFilePath resolves the log file path from the flag or environment.
+func effectiveLogFilePath(logFileFlag string) string {
+	if strings.TrimSpace(logFileFlag) != "" {
+		return strings.TrimSpace(logFileFlag)
+	}
+	if v := os.Getenv(logFileEnvVar); strings.TrimSpace(v) != "" {
+		return strings.TrimSpace(v)
+	}
+	return ""
+}
+
 // OpenLogFileError indicates the optional log file output could not be enabled.
 type OpenLogFileError struct {
 	Path  string
@@ -97,12 +108,7 @@ func newLogger(cfg config.LogConfig, logFileFlag string, jsonOut io.Writer, text
 	}
 
 	// Optional structured file output.
-	logFilePath := ""
-	if strings.TrimSpace(logFileFlag) != "" {
-		logFilePath = logFileFlag
-	} else if v := os.Getenv(logFileEnvVar); strings.TrimSpace(v) != "" {
-		logFilePath = v
-	}
+	logFilePath := effectiveLogFilePath(logFileFlag)
 	if logFilePath != "" {
 		dir := filepath.Dir(logFilePath)
 		if dir != "." {
