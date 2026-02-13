@@ -1,0 +1,9 @@
+Package: pfs
+Version: @VERSION@
+Section: utils
+Priority: optional
+Architecture: @ARCH@
+Maintainer: PolicyFS <root@localhost>
+Suggests: fuse3
+Description: PolicyFS indexer and FUSE daemon
+ PolicyFS provides a FUSE mount plus maintenance jobs like indexer.

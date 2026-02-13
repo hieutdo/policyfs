@@ -1,0 +1,10 @@
+[Unit]
+Description=Run PolicyFS index for mount %i
+
+[Timer]
+OnCalendar=*:0/30
+Persistent=true
+RandomizedDelaySec=2m
+
+[Install]
+WantedBy=timers.target

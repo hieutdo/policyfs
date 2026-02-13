@@ -14,7 +14,7 @@ func TestIndexProgressUI_Finish_shouldFlushFinal100Percent(t *testing.T) {
 	var buf bytes.Buffer
 
 	tracker := NewProgressTracker(ProgressTrackerConfig{
-		Writer: &buf, Label: "Indexing", Total: 3, Mode: "tty",
+		Writer: &buf, Label: "Indexing", Total: 3, Mode: "tty", MinUpdates: 2,
 	})
 	ui := &indexProgressUI{tracker: tracker}
 
@@ -34,7 +34,7 @@ func TestIndexProgressUI_TTY_shouldRewriteMultiLineRegion(t *testing.T) {
 	var buf bytes.Buffer
 
 	tracker := NewProgressTracker(ProgressTrackerConfig{
-		Writer: &buf, Label: "Indexing", Total: 2, Mode: "tty",
+		Writer: &buf, Label: "Indexing", Total: 2, Mode: "tty", MinUpdates: 2,
 	})
 
 	tracker.OnItem("hdd1: media/text1.txt")
@@ -45,18 +45,18 @@ func TestIndexProgressUI_TTY_shouldRewriteMultiLineRegion(t *testing.T) {
 	require.Contains(t, out, "\x1b[4A")
 }
 
-// TestIndexProgressUI_OnProgress_shouldFilterDirs verifies directory entries are skipped.
-func TestIndexProgressUI_OnProgress_shouldFilterDirs(t *testing.T) {
+// TestIndexProgressUI_OnProgress_shouldCountDirs verifies directory entries count toward progress.
+func TestIndexProgressUI_OnProgress_shouldCountDirs(t *testing.T) {
 	var buf bytes.Buffer
 
 	tracker := NewProgressTracker(ProgressTrackerConfig{
-		Writer: &buf, Label: "Indexing", Total: 2, Mode: "plain",
+		Writer: &buf, Label: "Indexing", Total: 2, Mode: "plain", MinUpdates: 2,
 	})
 	ui := &indexProgressUI{tracker: tracker}
 
 	ui.OnProgress("hdd1", "media/subdir", true)
-	require.Equal(t, int64(0), tracker.done)
+	require.Equal(t, int64(1), tracker.done)
 
 	ui.OnProgress("hdd1", "media/text1.txt", false)
-	require.Equal(t, int64(1), tracker.done)
+	require.Equal(t, int64(2), tracker.done)
 }

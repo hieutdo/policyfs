@@ -18,18 +18,22 @@ import (
 type CountResult struct {
 	Mount           string         `json:"mount"`
 	StoragePaths    []StorageCount `json:"storage_paths"`
+	TotalDirs       int64          `json:"total_dirs"`
 	TotalFiles      int64          `json:"total_files"`
+	TotalEntries    int64          `json:"total_entries"`
 	TotalDurationMS int64          `json:"total_duration_ms"`
 }
 
 // StorageCount contains summary stats for counting one storage path.
 type StorageCount struct {
-	ID           string `json:"id"`
-	FilesCounted int64  `json:"files_counted"`
-	DurationMS   int64  `json:"duration_ms"`
+	ID             string `json:"id"`
+	DirsCounted    int64  `json:"dirs_counted"`
+	FilesCounted   int64  `json:"files_counted"`
+	EntriesCounted int64  `json:"entries_counted"`
+	DurationMS     int64  `json:"duration_ms"`
 }
 
-// Count counts regular files across all indexed storage paths for a mount.
+// Count counts entries (directories + regular files) across all indexed storage paths for a mount.
 //
 // This is a best-effort, "fast walk" phase used only for progress percentage/ETA.
 // It intentionally avoids stat calls and does not emit warnings.
@@ -54,13 +58,15 @@ func Count(ctx context.Context, mountName string, mountCfg *config.MountConfig) 
 			return CountResult{}, err
 		}
 		out.StoragePaths = append(out.StoragePaths, sc)
+		out.TotalDirs += sc.DirsCounted
 		out.TotalFiles += sc.FilesCounted
+		out.TotalEntries += sc.EntriesCounted
 	}
 	out.TotalDurationMS = time.Since(start).Milliseconds()
 	return out, nil
 }
 
-// countOne counts regular files in a single storage path.
+// countOne counts entries (directories + regular files) in a single storage path.
 func countOne(ctx context.Context, sp config.StoragePath, mountCfg *config.MountConfig) (StorageCount, error) {
 	if mountCfg == nil {
 		return StorageCount{}, &errkind.NilError{What: "mount config"}
@@ -72,9 +78,9 @@ func countOne(ctx context.Context, sp config.StoragePath, mountCfg *config.Mount
 		return StorageCount{}, &errkind.RequiredError{What: "storage path"}
 	}
 
-	// Best-effort: if the storage root is missing/unreadable, treat it as 0 files.
+	// Best-effort: if the storage root is missing/unreadable, treat it as 0 entries.
 	if _, err := os.Stat(sp.Path); err != nil {
-		return StorageCount{ID: sp.ID, FilesCounted: 0, DurationMS: 0}, nil //nolint:nilerr
+		return StorageCount{ID: sp.ID, DirsCounted: 0, FilesCounted: 0, EntriesCounted: 0, DurationMS: 0}, nil //nolint:nilerr
 	}
 
 	ignore := mountCfg.Indexer.Ignore
@@ -82,7 +88,9 @@ func countOne(ctx context.Context, sp config.StoragePath, mountCfg *config.Mount
 	if err != nil {
 		return StorageCount{}, fmt.Errorf("failed to compile ignore patterns: %w", err)
 	}
+	dirsCounted := int64(0)
 	filesCounted := int64(0)
+	entriesCounted := int64(0)
 	start := time.Now()
 
 	walkFn := func(p string, d fs.DirEntry, err error) error {
@@ -115,6 +123,10 @@ func countOne(ctx context.Context, sp config.StoragePath, mountCfg *config.Mount
 		}
 
 		if d.IsDir() {
+			if rel != "" {
+				dirsCounted++
+				entriesCounted++
+			}
 			return nil
 		}
 
@@ -123,13 +135,20 @@ func countOne(ctx context.Context, sp config.StoragePath, mountCfg *config.Mount
 			return nil
 		}
 		filesCounted++
+		entriesCounted++
 		return nil
 	}
 
 	if err := filepath.WalkDir(sp.Path, walkFn); err != nil {
 		// Best-effort: if the walk fails at the root, treat it as 0.
-		return StorageCount{ID: sp.ID, FilesCounted: 0, DurationMS: time.Since(start).Milliseconds()}, nil //nolint:nilerr
+		return StorageCount{ID: sp.ID, DirsCounted: 0, FilesCounted: 0, EntriesCounted: 0, DurationMS: time.Since(start).Milliseconds()}, nil //nolint:nilerr
 	}
 
-	return StorageCount{ID: sp.ID, FilesCounted: filesCounted, DurationMS: time.Since(start).Milliseconds()}, nil
+	return StorageCount{
+		ID:             sp.ID,
+		DirsCounted:    dirsCounted,
+		FilesCounted:   filesCounted,
+		EntriesCounted: entriesCounted,
+		DurationMS:     time.Since(start).Milliseconds(),
+	}, nil
 }

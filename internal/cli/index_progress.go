@@ -20,13 +20,14 @@ func (u *indexProgressUI) OnProgress(storageID string, rel string, isDir bool) {
 	if u == nil || u.tracker == nil {
 		return
 	}
-	if isDir {
-		return
-	}
 	if strings.TrimSpace(rel) == "" {
 		return
 	}
-	u.tracker.OnItem(fmt.Sprintf("%s: %s", storageID, rel))
+	label := rel
+	if isDir {
+		label = rel + "/"
+	}
+	u.tracker.OnItem(fmt.Sprintf("%s: %s", storageID, label))
 }
 
 // Finish delegates to the tracker.
@@ -45,13 +46,14 @@ func startIndexProgress(ctx context.Context, w io.Writer, mountName string, moun
 
 	cr, err := indexer.Count(ctx, mountName, mountCfg)
 	if err != nil {
-		return nil, fmt.Errorf("failed to count files: %w", err)
+		return nil, fmt.Errorf("failed to count entries: %w", err)
 	}
 	tracker := NewProgressTracker(ProgressTrackerConfig{
-		Writer: w,
-		Label:  "Indexing",
-		Total:  cr.TotalFiles,
-		Mode:   mode,
+		Writer:     w,
+		Label:      "Indexing",
+		Total:      cr.TotalEntries,
+		MinUpdates: 4,
+		Mode:       mode,
 	})
 	return &indexProgressUI{tracker: tracker}, nil
 }

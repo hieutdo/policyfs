@@ -220,6 +220,10 @@ func TestCount_IgnoreFullPath_shouldSkip(t *testing.T) {
 	res, err := Count(context.Background(), mountName, mountCfg)
 	require.NoError(t, err)
 	require.Len(t, res.StoragePaths, 1)
+	require.Equal(t, int64(2), res.TotalDirs)
 	require.Equal(t, int64(1), res.TotalFiles)
+	require.Equal(t, int64(3), res.TotalEntries)
+	require.Equal(t, int64(2), res.StoragePaths[0].DirsCounted)
 	require.Equal(t, int64(1), res.StoragePaths[0].FilesCounted)
+	require.Equal(t, int64(3), res.StoragePaths[0].EntriesCounted)
 }

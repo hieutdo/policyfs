@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+
+if command -v systemctl >/dev/null 2>&1; then
+  rm -f /etc/systemd/system/multi-user.target.wants/pfs@*.service
+  rm -f /etc/systemd/system/multi-user.target.wants/pfs-index@*.service
+  rm -f /etc/systemd/system/timers.target.wants/pfs-index@*.timer
+  systemctl daemon-reload
+fi

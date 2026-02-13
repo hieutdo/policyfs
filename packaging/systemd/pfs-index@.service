@@ -1,0 +1,10 @@
+[Unit]
+Description=PolicyFS index (mount %i)
+Wants=pfs@%i.service
+After=pfs@%i.service
+PartOf=pfs@%i.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/pfs index %i
+SuccessExitStatus=75

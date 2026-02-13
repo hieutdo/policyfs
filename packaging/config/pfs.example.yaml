@@ -1,0 +1,24 @@
+# Example PolicyFS config for a single mount + indexer.
+# Copy to /etc/pfs/pfs.yaml and edit paths to match your server.
+
+fuse:
+  allow_other: true
+
+log:
+  level: info
+  format: json
+
+mounts:
+  media:
+    mountpoint: /mnt/pfs/media
+    storage_paths:
+      - id: hdd1
+        path: /mnt/hdd1/media
+        indexed: true
+
+    storage_groups:
+      hdds: [hdd1]
+
+    routing_rules:
+      - match: '**'
+        targets: [hdds]

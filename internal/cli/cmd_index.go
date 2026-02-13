@@ -12,6 +12,7 @@ import (
 	"github.com/dustin/go-humanize"
 	"github.com/hieutdo/policyfs/internal/config"
 	"github.com/hieutdo/policyfs/internal/errkind"
+	"github.com/hieutdo/policyfs/internal/humanfmt"
 	"github.com/hieutdo/policyfs/internal/indexdb"
 	"github.com/hieutdo/policyfs/internal/indexer"
 	"github.com/hieutdo/policyfs/internal/lock"
@@ -184,7 +185,7 @@ func printIndexSummary(w io.Writer, res indexer.Result, warningsHuman []string) 
 	fmt.Fprintf(w, "Done: %s files, %s dirs, %s in %s\n",
 		humanize.Comma(res.TotalFiles),
 		humanize.Comma(res.TotalDirs),
-		humanize.Bytes(uint64(res.TotalBytes)),
+		humanfmt.FormatBytesIEC(res.TotalBytes, 1),
 		totalDur.Round(100*time.Millisecond),
 	)
 

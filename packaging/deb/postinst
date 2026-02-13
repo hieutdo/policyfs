@@ -1,0 +1,28 @@
+#!/bin/sh
+set -eu
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "pfs: hint: run installer as root (sudo dpkg -i ...)" >&2
+fi
+
+if ! command -v systemctl >/dev/null 2>&1; then
+  echo "pfs: hint: systemd not found; PolicyFS requires systemd in v1" >&2
+fi
+
+if ! command -v fusermount3 >/dev/null 2>&1; then
+  echo "pfs: hint: install fuse3 (apt-get install fuse3) to use pfs mount" >&2
+fi
+
+if [ ! -d /etc/pfs ]; then
+  mkdir -p /etc/pfs
+fi
+
+if [ ! -f /etc/pfs/pfs.yaml ] && [ -f /etc/pfs/pfs.yaml.example ]; then
+  cp /etc/pfs/pfs.yaml.example /etc/pfs/pfs.yaml
+  echo "pfs: created /etc/pfs/pfs.yaml from example; please edit it" >&2
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl daemon-reload
+  echo "pfs: next: systemctl enable --now pfs-index@<mount>.timer" >&2
+fi

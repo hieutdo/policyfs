@@ -1,0 +1,18 @@
+[Unit]
+Description=PolicyFS daemon (mount %i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+RuntimeDirectory=pfs/%i
+RuntimeDirectoryMode=0755
+ExecStart=/usr/bin/pfs mount %i
+Restart=on-failure
+RestartSec=2s
+
+# Treat "lock already held" as a clean failure (avoid spamming logs)
+SuccessExitStatus=75
+
+[Install]
+WantedBy=multi-user.target

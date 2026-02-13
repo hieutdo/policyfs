@@ -1,4 +1,4 @@
-.PHONY: dev dev-build dev-down dev-shell build build-local test test-unit test-integration coverage fmt fmt-staged lint lint-staged hooks clean
+.PHONY: dev dev-build dev-down dev-shell build build-local package-deb test test-unit test-integration coverage fmt fmt-staged lint lint-staged hooks clean
 
 # Version info from git
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -63,6 +63,9 @@ build:
 
 build-local:
 	go build -ldflags "$(LDFLAGS)" -o bin/pfs ./cmd/pfs
+
+package-deb:
+	DOCKER_DEFAULT_PLATFORM=linux/amd64 $(DCD) run --rm --no-deps dev bash /workspace/scripts/package_deb.sh
 
 fmt:
 	$(DCD_EXEC_T) bash /workspace/scripts/fmt.sh all

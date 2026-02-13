@@ -14,7 +14,7 @@ func TestProgressTracker_Finish_shouldFlushFinal100Percent(t *testing.T) {
 	var buf bytes.Buffer
 
 	p := NewProgressTracker(ProgressTrackerConfig{
-		Writer: &buf, Label: "Indexing", Total: 3, Mode: "tty",
+		Writer: &buf, Label: "Indexing", Total: 3, Mode: "tty", MinUpdates: 2,
 	})
 	p.OnItem("hdd1: media/text1.txt")
 	p.OnItem("hdd2: media/text2.txt")
@@ -32,7 +32,7 @@ func TestProgressTracker_TTY_shouldRewriteMultiLineRegion(t *testing.T) {
 	var buf bytes.Buffer
 
 	p := NewProgressTracker(ProgressTrackerConfig{
-		Writer: &buf, Label: "Moving", Total: 2, Mode: "tty",
+		Writer: &buf, Label: "Moving", Total: 2, Mode: "tty", MinUpdates: 2,
 	})
 
 	p.OnItem("hdd1: media/text1.txt")
@@ -48,7 +48,7 @@ func TestProgressTracker_Plain_shouldUseLabel(t *testing.T) {
 	var buf bytes.Buffer
 
 	p := NewProgressTracker(ProgressTrackerConfig{
-		Writer: &buf, Label: "Pruning", Total: 10, Mode: "plain",
+		Writer: &buf, Label: "Pruning", Total: 10, Mode: "plain", MinUpdates: 2,
 	})
 	p.OnItem("DELETE library/old.mkv")
 

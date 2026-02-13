@@ -11,9 +11,10 @@ import (
 )
 
 const (
-	progressBarWidth = 20
-	progressInterval = 200 * time.Millisecond
-	progressLines    = 4
+	progressBarWidth  = 20
+	progressInterval  = 200 * time.Millisecond
+	minUpdateInterval = 60 * time.Millisecond
+	progressLines     = 4
 )
 
 // progressState is a snapshot of tracker state passed to renderers.
@@ -32,15 +33,21 @@ type ProgressTrackerConfig struct {
 	Label  string // e.g. "Indexing", "Moving", "Pruning"
 	Total  int64  // total item count (0 = indeterminate)
 	Mode   string // "tty", "plain", or "auto"
+	// MinUpdates ensures a minimum number of renders even if work finishes quickly.
+	MinUpdates int
 }
 
 // ProgressTracker is a generic item-counting progress bar.
 type ProgressTracker struct {
-	w         io.Writer
-	label     string
-	total     int64
-	startedAt time.Time
-	lastPrint time.Time
+	w           io.Writer
+	label       string
+	total       int64
+	startedAt   time.Time
+	lastPrint   time.Time
+	interactive bool
+
+	minUpdates int
+	updates    int
 
 	done     int64
 	current  string
@@ -59,6 +66,7 @@ func NewProgressTracker(cfg ProgressTrackerConfig) *ProgressTracker {
 			mode = "plain"
 		}
 	}
+	interactive := mode == "tty" && isInteractiveWriter(cfg.Writer)
 
 	var render func(io.Writer, progressState)
 	switch mode {
@@ -69,13 +77,18 @@ func NewProgressTracker(cfg ProgressTrackerConfig) *ProgressTracker {
 	}
 
 	p := &ProgressTracker{
-		w:         cfg.Writer,
-		label:     cfg.Label,
-		total:     cfg.Total,
-		startedAt: time.Now(),
-		render:    render,
+		w:           cfg.Writer,
+		label:       cfg.Label,
+		total:       cfg.Total,
+		startedAt:   time.Now(),
+		interactive: interactive,
+		minUpdates:  cfg.MinUpdates,
+		render:      render,
 	}
 	p.flush()
+	if p.interactive {
+		p.lastPrint = time.Now()
+	}
 	return p
 }
 
@@ -89,7 +102,11 @@ func (p *ProgressTracker) OnItem(display string) {
 	p.current = display
 
 	now := time.Now()
-	if !p.lastPrint.IsZero() && now.Sub(p.lastPrint) < progressInterval {
+	interval := progressInterval
+	if p.interactive && p.minUpdates > 0 && p.updates < p.minUpdates {
+		interval = minUpdateInterval
+	}
+	if !p.lastPrint.IsZero() && now.Sub(p.lastPrint) < interval {
 		return
 	}
 	p.lastPrint = now
@@ -103,6 +120,13 @@ func (p *ProgressTracker) Finish() {
 	}
 	if p.total > 0 && p.done < p.total {
 		p.done = p.total
+	}
+	if p.interactive && p.minUpdates > 0 && p.updates < p.minUpdates && !p.lastPrint.IsZero() {
+		now := time.Now()
+		delta := now.Sub(p.lastPrint)
+		if delta > 0 && delta < minUpdateInterval {
+			time.Sleep(minUpdateInterval - delta)
+		}
 	}
 	p.finished = true
 	p.flush()
@@ -125,6 +149,7 @@ func (p *ProgressTracker) flush() {
 		elapsed:  elapsed,
 		finished: p.finished,
 	})
+	p.updates++
 }
 
 // computeProgressMetrics computes display values from a progress state snapshot.

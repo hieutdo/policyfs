@@ -1,5 +1,7 @@
 .DS_Store
 bin/
+dist/
+packaging/build/
 coverage.out
 coverage.html
 coverage/
