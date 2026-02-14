@@ -4,8 +4,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/hieutdo/policyfs/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -13,28 +15,28 @@ import (
 func runCLI(t *testing.T, args []string) (int, string, string) {
 	t.Helper()
 
-	if _, ok := os.LookupEnv("PFS_RUNTIME_DIR"); !ok {
-		old, hadOld := os.LookupEnv("PFS_RUNTIME_DIR")
-		p := filepath.Join(t.TempDir(), "runtime")
-		require.NoError(t, os.MkdirAll(p, 0o755))
-		require.NoError(t, os.Setenv("PFS_RUNTIME_DIR", p))
+	if cur, ok := os.LookupEnv("PFS_RUNTIME_DIR"); !ok || cur == config.DefaultRuntimeDir || cur == "/workspace/tmp/pfs" || strings.HasPrefix(cur, "/workspace/tmp/pfs/") {
+		oldRuntime, hadRuntime := os.LookupEnv("PFS_RUNTIME_DIR")
+		runtimeDir := filepath.Join(t.TempDir(), "runtime")
+		require.NoError(t, os.MkdirAll(runtimeDir, 0o755))
+		require.NoError(t, os.Setenv("PFS_RUNTIME_DIR", runtimeDir))
 		t.Cleanup(func() {
-			if hadOld {
-				_ = os.Setenv("PFS_RUNTIME_DIR", old)
+			if hadRuntime {
+				_ = os.Setenv("PFS_RUNTIME_DIR", oldRuntime)
 				return
 			}
 			_ = os.Unsetenv("PFS_RUNTIME_DIR")
 		})
 	}
 
-	if _, ok := os.LookupEnv("PFS_STATE_DIR"); !ok {
-		old, hadOld := os.LookupEnv("PFS_STATE_DIR")
-		p := filepath.Join(t.TempDir(), "state")
-		require.NoError(t, os.MkdirAll(p, 0o755))
-		require.NoError(t, os.Setenv("PFS_STATE_DIR", p))
+	if cur, ok := os.LookupEnv("PFS_STATE_DIR"); !ok || cur == config.DefaultStateDir || cur == "/workspace/tmp/pfs" || strings.HasPrefix(cur, "/workspace/tmp/pfs/") {
+		oldState, hadState := os.LookupEnv("PFS_STATE_DIR")
+		stateDir := filepath.Join(t.TempDir(), "state")
+		require.NoError(t, os.MkdirAll(stateDir, 0o755))
+		require.NoError(t, os.Setenv("PFS_STATE_DIR", stateDir))
 		t.Cleanup(func() {
-			if hadOld {
-				_ = os.Setenv("PFS_STATE_DIR", old)
+			if hadState {
+				_ = os.Setenv("PFS_STATE_DIR", oldState)
 				return
 			}
 			_ = os.Unsetenv("PFS_STATE_DIR")

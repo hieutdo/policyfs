@@ -56,6 +56,8 @@ func Test_listDirEntriesForVirtualPath(t *testing.T) {
 		for _, e := range entries {
 			got[e.Name] = e.Mode
 		}
+		require.Contains(t, got, ".")
+		require.Contains(t, got, "..")
 		require.Contains(t, got, "a.txt")
 		require.Contains(t, got, "b.txt")
 		require.Contains(t, got, "dup")
@@ -72,8 +74,13 @@ func Test_listDirEntriesForVirtualPath(t *testing.T) {
 
 		entries, errno := listDirEntriesForVirtualPath(context.Background(), virtualDir, rt, nil)
 		require.Equal(t, syscall.Errno(0), errno)
-		require.Len(t, entries, 1)
-		require.Equal(t, "b.txt", entries[0].Name)
+		got := map[string]struct{}{}
+		for _, e := range entries {
+			got[e.Name] = struct{}{}
+		}
+		require.Contains(t, got, ".")
+		require.Contains(t, got, "..")
+		require.Contains(t, got, "b.txt")
 	})
 
 	t.Run("should return ENOENT when no directory exists on any target", func(t *testing.T) {

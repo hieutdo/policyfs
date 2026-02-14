@@ -15,15 +15,16 @@ import (
 // Node is a PolicyFS inode implementation (including the root inode).
 type Node struct {
 	*fs.LoopbackNode
-	rt *router.Router
-	db *indexdb.DB
+	mountName string
+	rt        *router.Router
+	db        *indexdb.DB
 }
 
 // NewRoot creates the PolicyFS root node for mounting.
 //
 // Currently this is a thin wrapper around go-fuse's loopback root to keep behavior
 // identical while we incrementally add PolicyFS operations.
-func NewRoot(m *config.MountConfig, primaryRootPath string, db *indexdb.DB) (fs.InodeEmbedder, error) {
+func NewRoot(mountName string, m *config.MountConfig, primaryRootPath string, db *indexdb.DB) (fs.InodeEmbedder, error) {
 	rt, err := router.New(m)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create router: %w", err)
@@ -40,7 +41,7 @@ func NewRoot(m *config.MountConfig, primaryRootPath string, db *indexdb.DB) (fs.
 		return op, nil
 	}
 
-	n := &Node{LoopbackNode: lb, rt: rt, db: db}
+	n := &Node{LoopbackNode: lb, mountName: mountName, rt: rt, db: db}
 	if lb.RootData != nil {
 		lb.RootData.RootNode = n
 	}
@@ -53,12 +54,12 @@ func (n *Node) WrapChild(ctx context.Context, ops fs.InodeEmbedder) fs.InodeEmbe
 	if !ok {
 		return ops
 	}
-	return &Node{LoopbackNode: lb, rt: n.rt, db: n.db}
+	return &Node{LoopbackNode: lb, mountName: n.mountName, rt: n.rt, db: n.db}
 }
 
 // Lookup resolves a child entry using the router's read target order.
 func (n *Node) Lookup(ctx context.Context, name string, out *gofuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	return lookupChild(ctx, n.EmbeddedInode(), n.RootData, n.rt, n.db, name, out)
+	return lookupChild(ctx, n.EmbeddedInode(), n.RootData, n.mountName, n.rt, n.db, name, out)
 }
 
 // Getattr reads attributes using the router's read target order.
@@ -85,9 +86,9 @@ func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 	virtualPath := n.Path(n.Root())
 
 	if flags&gofuse.O_ANYWRITE != 0 {
-		return openFirst(ctx, n.rt, virtualPath, int(flags), true)
+		return openFirst(ctx, n.rt, n.db, virtualPath, int(flags), true)
 	}
-	return openFirst(ctx, n.rt, virtualPath, int(flags), false)
+	return openFirst(ctx, n.rt, n.db, virtualPath, int(flags), false)
 }
 
 // Release closes any file handles we created.

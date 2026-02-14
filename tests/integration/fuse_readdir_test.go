@@ -5,6 +5,8 @@ package integration
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"strings"
 	"testing"
 
 	"github.com/hieutdo/policyfs/internal/config"
@@ -116,8 +118,37 @@ func TestFUSE_Readdir_EmptyDirectory(t *testing.T) {
 		// Action: list the empty directory.
 		entries := env.MustReadDirInMountPoint(t, rel)
 
-		// Verify: no entries (FUSE typically doesn't include . and ..).
+		// Verify: no entries (os.ReadDir filters . and ..).
 		require.Empty(t, entries)
+	})
+}
+
+// TestFUSE_Readdir_LsDotEntries verifies `ls -al` shows `.` and `..` on PolicyFS.
+func TestFUSE_Readdir_LsDotEntries(t *testing.T) {
+	withMountedFS(t, IntegrationConfig{}, func(env *MountedFS) {
+		// Setup: create an empty directory.
+		rel := "readdir-edge/ls-dot"
+		env.MustMkdirInMountPoint(t, rel)
+
+		// Action: run `ls -al` through the mount.
+		p := env.MountPath(rel)
+		cmd := exec.Command("ls", "-al", p)
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "expected ls -al to succeed: path=%s out=%s", p, string(out))
+
+		// Verify: both dot entries appear.
+		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+		names := map[string]struct{}{}
+		for _, line := range lines {
+			fields := strings.Fields(line)
+			if len(fields) == 0 {
+				continue
+			}
+			name := fields[len(fields)-1]
+			names[name] = struct{}{}
+		}
+		require.Contains(t, names, ".")
+		require.Contains(t, names, "..")
 	})
 }
 

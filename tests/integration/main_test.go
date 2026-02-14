@@ -68,6 +68,42 @@ func run(m *testing.M) int {
 	return m.Run()
 }
 
+// baseEnvWithoutKeys returns the current process environment without the given keys.
+// This avoids relying on duplicate key precedence (the container sets defaults for PFS_*).
+func baseEnvWithoutKeys(keys ...string) []string {
+	drop := map[string]struct{}{}
+	for _, k := range keys {
+		k = strings.TrimSpace(k)
+		if k == "" {
+			continue
+		}
+		drop[k] = struct{}{}
+	}
+
+	out := make([]string, 0, len(os.Environ()))
+	for _, kv := range os.Environ() {
+		k, _, ok := strings.Cut(kv, "=")
+		if ok {
+			if _, shouldDrop := drop[k]; shouldDrop {
+				continue
+			}
+		}
+		out = append(out, kv)
+	}
+	return out
+}
+
+// pfsTestEnv builds a clean per-test environment for invoking the pfs binary.
+func pfsTestEnv(env *MountedFS, logFile string) []string {
+	base := baseEnvWithoutKeys("PFS_LOG_FILE", "PFS_RUNTIME_DIR", "PFS_STATE_DIR")
+	if strings.TrimSpace(logFile) != "" {
+		base = append(base, "PFS_LOG_FILE="+logFile)
+	}
+	base = append(base, "PFS_RUNTIME_DIR="+env.RuntimeDir)
+	base = append(base, "PFS_STATE_DIR="+env.StateDir)
+	return base
+}
+
 // withMountedFS mounts a PolicyFS instance for the duration of a test.
 func withMountedFS(t *testing.T, cfg IntegrationConfig, fn func(env *MountedFS)) {
 	t.Helper()
@@ -151,10 +187,12 @@ func withMountedFS(t *testing.T, cfg IntegrationConfig, fn func(env *MountedFS))
 	}
 
 	runtimeDir := filepath.Join(tmpDir, name+"-run")
+	_ = os.RemoveAll(runtimeDir)
 	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
 		t.Fatalf("failed to ensure runtime dir: %v", err)
 	}
 	stateDir := filepath.Join(tmpDir, name+"-state")
+	_ = os.RemoveAll(stateDir)
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		t.Fatalf("failed to ensure state dir: %v", err)
 	}
@@ -171,6 +209,7 @@ func withMountedFS(t *testing.T, cfg IntegrationConfig, fn func(env *MountedFS))
 	if err := ensureUnmounted(env.MountPoint, 2*time.Second); err != nil {
 		t.Fatalf("failed to ensure unmounted: %v", err)
 	}
+	_ = os.RemoveAll(env.MountPoint)
 	if err := ensureMountpointDir(env.MountPoint); err != nil {
 		t.Fatalf("failed to ensure mountpoint: %v", err)
 	}
@@ -183,12 +222,7 @@ func withMountedFS(t *testing.T, cfg IntegrationConfig, fn func(env *MountedFS))
 	ctx, cancel := context.WithCancel(context.Background())
 
 	mountCmd := exec.CommandContext(ctx, pfsBin, "--config", env.ConfigPath, "mount", env.MountName)
-	mountCmd.Env = append(
-		os.Environ(),
-		"PFS_LOG_FILE="+tmpDir+"/"+name+".log",
-		"PFS_RUNTIME_DIR="+env.RuntimeDir,
-		"PFS_STATE_DIR="+env.StateDir,
-	)
+	mountCmd.Env = pfsTestEnv(env, tmpDir+"/"+name+".log")
 	mountCmd.Stdout = os.Stdout
 	mountCmd.Stderr = os.Stderr
 	if err := mountCmd.Start(); err != nil {
@@ -286,6 +320,7 @@ func localStorageRoots(storages []IntegrationStorage, testName string) (map[stri
 			return nil, fmt.Errorf("failed to ensure storage base: %w", err)
 		}
 		root := filepath.Join(base, testName)
+		_ = os.RemoveAll(root)
 		if err := os.MkdirAll(root, 0o755); err != nil {
 			return nil, fmt.Errorf("failed to ensure storage root: %w", err)
 		}
@@ -501,4 +536,28 @@ func waitForMount(mountPoint string, timeout time.Duration) error {
 		time.Sleep(100 * time.Millisecond)
 	}
 	return fmt.Errorf("mount did not become ready within %s (mountpoint=%s)", timeout, filepath.Clean(mountPoint))
+}
+
+// createIndexedCfg returns the standard IntegrationConfig for indexed storage tests.
+func createIndexedCfg() IntegrationConfig {
+	return IntegrationConfig{
+		Storages: []IntegrationStorage{
+			{ID: "ssd1", Indexed: false, BasePath: "/mnt/ssd1/pfs-integration"},
+			{ID: "hdd1", Indexed: true, BasePath: "/mnt/hdd1/pfs-integration"},
+		},
+		Targets:     []string{"hdd1", "ssd1"},
+		ReadTargets: []string{"ssd1", "hdd1"},
+	}
+}
+
+// dirEntryNames extracts names from a slice of DirEntry, excluding . and .. entries.
+func dirEntryNames(entries []os.DirEntry) []string {
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.Name() == "." || e.Name() == ".." {
+			continue
+		}
+		names = append(names, e.Name())
+	}
+	return names
 }

@@ -89,7 +89,7 @@ This command is typically managed by systemd as a service.`,
 				defer func() { _ = idxDB.Close() }()
 			}
 
-			root, err := pfsfuse.NewRoot(mountCfg, source, idxDB)
+			root, err := pfsfuse.NewRoot(mountName, mountCfg, source, idxDB)
 			if err != nil {
 				return &CLIError{Code: ExitFail, Cmd: "mount", Headline: fmt.Sprintf("invalid config: %s", *configPath), Cause: rootCause(err)}
 			}

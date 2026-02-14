@@ -2,11 +2,16 @@ package fuse
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/hieutdo/policyfs/internal/errkind"
+	"github.com/hieutdo/policyfs/internal/eventlog"
 	"golang.org/x/sys/unix"
 )
 
@@ -24,6 +29,7 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 	virtualPath := n.Path(n.Root())
 	physicalPath := ""
 	indexed := false
+	indexedStorageID := ""
 	var fh *FileHandle
 
 	// Resolve the physical path.
@@ -33,17 +39,144 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 		fh = h
 		physicalPath = h.physicalPath
 		indexed = h.indexed
+		indexedStorageID = h.storageID
 	} else {
-		target, p, errno := firstExistingPhysical(n.rt, virtualPath)
-		if errno != 0 {
-			return errno
+		targets, err := n.rt.ResolveReadTargets(virtualPath)
+		if err != nil {
+			return toErrno(err)
 		}
-		indexed = target.Indexed
-		physicalPath = p
+		found := false
+		for _, t := range targets {
+			if !t.Indexed {
+				p := filepath.Join(t.Root, virtualPath)
+				st := syscall.Stat_t{}
+				if err := syscall.Lstat(p, &st); err != nil {
+					if errors.Is(err, syscall.ENOENT) {
+						continue
+					}
+					return fs.ToErrno(err)
+				}
+				indexed = false
+				indexedStorageID = t.ID
+				physicalPath = p
+				found = true
+				break
+			}
+
+			if n.db == nil {
+				return syscall.EIO
+			}
+			_, ok, err := n.db.GetEffectiveFile(ctx, t.ID, virtualPath)
+			if err != nil {
+				return fs.ToErrno(fmt.Errorf("failed to getattr indexed entry: %w", err))
+			}
+			if ok {
+				indexed = true
+				indexedStorageID = t.ID
+				found = true
+				break
+			}
+			dirOK, err := n.db.DirExists(ctx, t.ID, virtualPath)
+			if err != nil {
+				return fs.ToErrno(fmt.Errorf("failed to getattr indexed dir: %w", err))
+			}
+			if dirOK {
+				indexed = true
+				indexedStorageID = t.ID
+				found = true
+				break
+			}
+		}
+		if !found {
+			return syscall.ENOENT
+		}
 	}
-	// Indexed targets are not writable yet.
+	// Indexed targets use deferred SETATTR (no physical ops).
 	if indexed {
-		return syscall.EROFS
+		if n.db == nil {
+			return syscall.EIO
+		}
+		cur, ok, err := n.db.GetEffectiveFile(ctx, indexedStorageID, virtualPath)
+		if err != nil {
+			return fs.ToErrno(fmt.Errorf("failed to getattr indexed file: %w", err))
+		}
+		if !ok {
+			return syscall.ENOENT
+		}
+
+		if _, ok := in.GetSize(); ok {
+			return syscall.EROFS
+		}
+
+		uid, uok := in.GetUID()
+		gid, gok := in.GetGID()
+		if uok || gok {
+			if callerOK && caller.Uid != 0 {
+				return syscall.EPERM
+			}
+		}
+
+		var modePtr *uint32
+		if m, ok := in.GetMode(); ok {
+			if callerOK && caller.Uid != 0 {
+				if cur.UID != caller.Uid {
+					return syscall.EPERM
+				}
+			}
+			newMode := (cur.Mode & ^uint32(0o7777)) | (m & uint32(0o7777))
+			modePtr = &newMode
+		}
+
+		var uidPtr *uint32
+		var gidPtr *uint32
+		if uok {
+			u := uint32(uid)
+			uidPtr = &u
+		}
+		if gok {
+			g := uint32(gid)
+			gidPtr = &g
+		}
+
+		var mtimePtr *int64
+		if mtime, mok := in.GetMTime(); mok {
+			if callerOK && caller.Uid != 0 {
+				if cur.UID != caller.Uid {
+					return syscall.EPERM
+				}
+			}
+			mt := mtime.Unix()
+			mtimePtr = &mt
+		}
+
+		haveAny := modePtr != nil || uidPtr != nil || gidPtr != nil || mtimePtr != nil
+		if haveAny {
+			updated, err := n.db.UpsertMeta(ctx, indexedStorageID, virtualPath, modePtr, uidPtr, gidPtr, mtimePtr)
+			if err != nil {
+				return fs.ToErrno(err)
+			}
+			if updated {
+				if err := eventlog.Append(ctx, n.mountName, eventlog.SetattrEvent{Type: eventlog.TypeSetattr, StorageID: indexedStorageID, Path: virtualPath, Mode: modePtr, UID: uidPtr, GID: gidPtr, MTime: mtimePtr, TS: time.Now().Unix()}); err != nil {
+					return syscall.EIO
+				}
+			}
+		}
+
+		cur, ok, err = n.db.GetEffectiveFile(ctx, indexedStorageID, virtualPath)
+		if err != nil {
+			return fs.ToErrno(fmt.Errorf("failed to getattr indexed file: %w", err))
+		}
+		if !ok {
+			return syscall.ENOENT
+		}
+		out.Size = uint64(cur.Size)
+		out.Mtime = uint64(cur.MTimeSec)
+		out.Mtimensec = 0
+		out.Mode = cur.Mode
+		out.Nlink = 1
+		out.Uid = cur.UID
+		out.Gid = cur.GID
+		return 0
 	}
 
 	old := syscall.Stat_t{}

@@ -120,6 +120,9 @@ func Open(mountName string) (*DB, error) {
 			return nil, err
 		}
 		if ok {
+			// SQLite only supports a single writer; limit Go's pool to one
+			// connection to avoid SQLITE_BUSY and WAL visibility issues.
+			conn.SetMaxOpenConns(1)
 			return &DB{MountName: mountName, Path: dbPath, sqlDB: conn}, nil
 		}
 
@@ -182,6 +185,7 @@ func schemaLooksMerged(db *sql.DB) (ok bool, retErr error) {
 	}
 
 	required := []string{"parent_dir", "name", "is_dir", "uid", "gid"}
+	required = append(required, "real_path")
 	for _, col := range required {
 		if !have[col] {
 			return false, nil

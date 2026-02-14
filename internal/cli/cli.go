@@ -88,6 +88,7 @@ Optional indexing reduces disk wake-ups during metadata reads.`,
 
 	cmd.AddCommand(newMountCmd(&configPath))
 	cmd.AddCommand(newIndexCmd(&configPath))
+	cmd.AddCommand(newPruneCmd(&configPath))
 	cmd.AddCommand(newDoctorCmd(&configPath))
 	cmd.AddCommand(newVersionCmd())
 

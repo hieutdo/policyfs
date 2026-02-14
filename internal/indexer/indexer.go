@@ -63,6 +63,7 @@ type Hooks struct {
 // entryRow is the DB write payload for one filesystem entry.
 type entryRow struct {
 	path      string
+	realPath  string
 	parentDir string
 	name      string
 	isDir     bool
@@ -273,6 +274,7 @@ func indexOne(ctx context.Context, db *sql.DB, sp config.StoragePath, mountCfg *
 			ensureDirAgg(rel)
 			rows = append(rows, entryRow{
 				path:      rel,
+				realPath:  rel,
 				parentDir: parent,
 				name:      name,
 				isDir:     true,
@@ -296,6 +298,7 @@ func indexOne(ctx context.Context, db *sql.DB, sp config.StoragePath, mountCfg *
 		sz := info.Size()
 		rows = append(rows, entryRow{
 			path:      rel,
+			realPath:  rel,
 			parentDir: parent,
 			name:      name,
 			isDir:     false,
@@ -481,33 +484,57 @@ func upsertEntriesBatchOnce(ctx context.Context, db *sql.DB, storageID string, r
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	stmt, err := tx.PrepareContext(ctx, `INSERT INTO files (
-    storage_id, path, parent_dir, name, is_dir,
-    size, mtime, mode, uid, gid,
-    deleted, last_seen_run_id,
-    file_count, total_files, total_bytes
-)
-VALUES (
-    ?, ?, ?, ?, ?,
-    ?, ?, ?, ?, ?,
-    0, ?,
-    0, 0, 0
-)
-ON CONFLICT (storage_id, path) DO UPDATE SET
-    parent_dir = excluded.parent_dir,
-    name = excluded.name,
-    is_dir = excluded.is_dir,
-    size = excluded.size,
-    mtime = excluded.mtime,
-    mode = excluded.mode,
-    uid = excluded.uid,
-    gid = excluded.gid,
-    deleted = 0,
-    last_seen_run_id = excluded.last_seen_run_id;`)
+	updateStmt, err := tx.PrepareContext(ctx, `UPDATE files
+SET
+    size = ?,
+    mtime = ?,
+    mode = ?,
+    uid = ?,
+    gid = ?,
+    is_dir = ?,
+    last_seen_run_id = ?
+WHERE storage_id = ?
+  AND real_path = ?
+  AND real_path != path;`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare update: %w", err)
+	}
+	defer func() { _ = updateStmt.Close() }()
+
+	upsertStmt, err := tx.PrepareContext(ctx, `INSERT INTO files (
+	    storage_id, path, real_path, parent_dir, name, is_dir,
+	    size, mtime, mode, uid, gid,
+	    deleted, last_seen_run_id,
+	    file_count, total_files, total_bytes
+	)
+	VALUES (
+	    ?, ?, ?, ?, ?, ?,
+	    ?, ?, ?, ?, ?,
+	    0, ?,
+	    0, 0, 0
+	)
+	ON CONFLICT (storage_id, path) DO UPDATE SET
+	    parent_dir = excluded.parent_dir,
+	    name = excluded.name,
+	    real_path = CASE
+	        WHEN files.real_path != '' AND files.real_path != files.path THEN files.real_path
+	        ELSE excluded.real_path
+	    END,
+	    is_dir = excluded.is_dir,
+	    size = excluded.size,
+	    mtime = excluded.mtime,
+	    mode = excluded.mode,
+	    uid = excluded.uid,
+	    gid = excluded.gid,
+	    deleted = CASE
+	        WHEN files.deleted = 1 THEN 1
+	        ELSE 0
+	    END,
+	    last_seen_run_id = excluded.last_seen_run_id;`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare upsert: %w", err)
 	}
-	defer func() { _ = stmt.Close() }()
+	defer func() { _ = upsertStmt.Close() }()
 
 	for _, r := range rows {
 		var size any
@@ -520,7 +547,22 @@ ON CONFLICT (storage_id, path) DO UPDATE SET
 		if r.isDir {
 			isDir = 1
 		}
-		if _, err := stmt.ExecContext(ctx, storageID, r.path, r.parentDir, r.name, isDir, size, r.mtimeSec, r.mode, r.uid, r.gid, runID); err != nil {
+
+		res, err := updateStmt.ExecContext(ctx, size, r.mtimeSec, r.mode, r.uid, r.gid, isDir, runID, storageID, r.realPath)
+		if err != nil {
+			return fmt.Errorf("failed to update pending rename: %w", err)
+		}
+		n, _ := res.RowsAffected()
+		if n > 0 {
+			continue
+		}
+
+		if _, err := upsertStmt.ExecContext(
+			ctx,
+			storageID, r.path, r.realPath, r.parentDir, r.name, isDir,
+			size, r.mtimeSec, r.mode, r.uid, r.gid,
+			runID,
+		); err != nil {
 			return fmt.Errorf("failed to upsert file: %w", err)
 		}
 	}
@@ -534,9 +576,10 @@ ON CONFLICT (storage_id, path) DO UPDATE SET
 // tombstoneStale marks entries from older runs as deleted and returns how many were changed.
 func tombstoneStale(ctx context.Context, db *sql.DB, storageID string, runID int64) (int64, error) {
 	r, err := db.ExecContext(ctx, `UPDATE files
-SET deleted = 1
+SET deleted = 2
 WHERE storage_id = ?
-  AND deleted = 0
+  AND deleted != 1
+  AND (real_path = path OR real_path = '')
   AND (last_seen_run_id IS NULL OR last_seen_run_id < ?);`, storageID, runID)
 	if err != nil {
 		return 0, fmt.Errorf("failed to tombstone stale entries: %w", err)
@@ -554,7 +597,9 @@ func updateDirAggregates(ctx context.Context, db *sql.DB, storageID string, runI
 	defer func() { _ = tx.Rollback() }()
 
 	stmt, err := tx.PrepareContext(ctx, `UPDATE files
-SET file_count = ?, total_files = ?, total_bytes = ?, deleted = 0, last_seen_run_id = ?
+SET file_count = ?, total_files = ?, total_bytes = ?,
+    deleted = CASE WHEN deleted = 1 THEN 1 ELSE 0 END,
+    last_seen_run_id = ?
 WHERE storage_id = ? AND path = ? AND is_dir = 1;`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare dir aggregate update: %w", err)

@@ -75,3 +75,25 @@ mounts:
 	require.True(t, idxA < idxZ)
 	require.Contains(t, stdout, "6 issues.\n")
 }
+
+// TestDoctor_MultipleCatchAll_shouldReportIssue verifies config validation rejects multiple catch-all rules.
+func TestDoctor_MultipleCatchAll_shouldReportIssue(t *testing.T) {
+	cfg := writeTempConfig(t, `
+mounts:
+  media:
+    mountpoint: /mnt/pfs/media
+    storage_paths:
+      - id: ssd1
+        path: /mnt/ssd1/media
+    routing_rules:
+      - match: '**'
+        read_targets: [ssd1]
+      - match: '**'
+        read_targets: [ssd1]
+`)
+
+	code, stdout, stderr := runCLI(t, []string{"--config", cfg, "doctor"})
+	require.Equal(t, ExitDoctorFail, code)
+	require.Empty(t, stderr)
+	require.Contains(t, stdout, "config: mount \"media\": multiple catch-all rules '**'\n")
+}

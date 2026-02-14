@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strings"
 
 	"github.com/hieutdo/policyfs/internal/config"
 )
@@ -117,20 +118,37 @@ func validateConfigAll(c *config.RootConfig) []error {
 			errList = append(errList, fmt.Errorf("config: mount %q: routing_rules must not be empty", mountName))
 		}
 		if len(m.RoutingRules) > 0 {
-			foundCatchAll := false
+			normalizeMatch := func(p string) string {
+				p = strings.TrimSpace(p)
+				p = strings.TrimPrefix(p, "/")
+				p = strings.TrimSuffix(p, "/")
+				for strings.Contains(p, "//") {
+					p = strings.ReplaceAll(p, "//", "/")
+				}
+				return p
+			}
+			isCatchAll := func(match string) bool {
+				return normalizeMatch(match) == "**"
+			}
+
+			catchAllIdx := []int{}
 			for i, r := range m.RoutingRules {
 				if r.Match == "" {
 					errList = append(errList, fmt.Errorf("config: mount %q: routing_rules[%d].match is required", mountName, i))
 				}
-				if r.Match == "**" {
-					foundCatchAll = true
-					if i != len(m.RoutingRules)-1 {
-						errList = append(errList, errors.New("catch-all rule must be last"))
-					}
+				if isCatchAll(r.Match) {
+					catchAllIdx = append(catchAllIdx, i)
 				}
 			}
-			if !foundCatchAll {
-				errList = append(errList, errors.New("missing catch-all rule '**'"))
+			if len(catchAllIdx) == 0 {
+				errList = append(errList, fmt.Errorf("config: mount %q: missing catch-all rule '**'", mountName))
+			} else {
+				if len(catchAllIdx) > 1 {
+					errList = append(errList, fmt.Errorf("config: mount %q: multiple catch-all rules '**'", mountName))
+				}
+				if catchAllIdx[len(catchAllIdx)-1] != len(m.RoutingRules)-1 {
+					errList = append(errList, fmt.Errorf("config: mount %q: catch-all rule '**' must be last", mountName))
+				}
 			}
 		}
 

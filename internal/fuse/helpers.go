@@ -9,11 +9,12 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hieutdo/policyfs/internal/errkind"
+	"github.com/hieutdo/policyfs/internal/indexdb"
 	"github.com/hieutdo/policyfs/internal/router"
 )
 
 // openFirst opens a file by searching targets in the router-defined order.
-func openFirst(ctx context.Context, rt *router.Router, virtualPath string, flags int, write bool) (fs.FileHandle, uint32, syscall.Errno) {
+func openFirst(ctx context.Context, rt *router.Router, db *indexdb.DB, virtualPath string, flags int, write bool) (fs.FileHandle, uint32, syscall.Errno) {
 	if rt == nil {
 		return nil, 0, fs.ToErrno(&errkind.NilError{What: "router"})
 	}
@@ -36,8 +37,33 @@ func openFirst(ctx context.Context, rt *router.Router, virtualPath string, flags
 			continue
 		}
 		physicalPath := filepath.Join(t.Root, virtualPath)
+		if t.Indexed {
+			if db == nil {
+				return nil, 0, syscall.EIO
+			}
+			f, ok, err := db.GetEffectiveFile(ctx, t.ID, virtualPath)
+			if err != nil {
+				return nil, 0, fs.ToErrno(err)
+			}
+			if !ok || f.IsDir {
+				continue
+			}
+			physicalPath = filepath.Join(t.Root, f.RealPath)
+		}
 		fd, oerr := syscall.Open(physicalPath, flags, 0)
 		if oerr != nil {
+			// For indexed files, stale pending real_path can cause ENOENT after prune.
+			// Fallback to opening by the requested virtualPath when real_path no longer exists.
+			if t.Indexed && errors.Is(oerr, syscall.ENOENT) {
+				fallbackPath := filepath.Join(t.Root, virtualPath)
+				if fallbackPath != physicalPath {
+					if fd2, oerr2 := syscall.Open(fallbackPath, flags, 0); oerr2 == nil {
+						fh := &FileHandle{virtualPath: virtualPath, physicalPath: fallbackPath, storageID: t.ID, indexed: t.Indexed, fd: fd2, flags: uint32(flags)}
+						_ = ctx
+						return fh, 0, 0
+					}
+				}
+			}
 			if errors.Is(oerr, syscall.ENOENT) {
 				continue
 			}
@@ -54,8 +80,8 @@ func openFirst(ctx context.Context, rt *router.Router, virtualPath string, flags
 }
 
 // newChildInode creates a child inode with Node ops and stable mode derived from a stat mode.
-func newChildInode(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoot, rt *router.Router, stMode uint32) *fs.Inode {
-	child := &Node{LoopbackNode: &fs.LoopbackNode{RootData: rootData}, rt: rt}
+func newChildInode(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoot, mountName string, rt *router.Router, db *indexdb.DB, stMode uint32) *fs.Inode {
+	child := &Node{LoopbackNode: &fs.LoopbackNode{RootData: rootData}, mountName: mountName, rt: rt, db: db}
 	typeMode := uint32(stMode & syscall.S_IFMT)
 	ch := parent.NewInode(ctx, child, fs.StableAttr{Mode: typeMode, Gen: 1})
 	return ch

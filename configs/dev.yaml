@@ -2,7 +2,7 @@ fuse:
   allow_other: true
 
 log:
-  level: debug
+  level: info
   format: text
 
 mounts:
@@ -34,19 +34,13 @@ mounts:
       hdds: [hdd1, hdd2, hdd3]
     routing_rules:
       - match: 'downloads/**'
-        read_targets: [ssd2]
-        write_targets: [ssd2]
+        targets: [ssd2]
 
       - match: 'library/music/**'
-        read_targets: [ssd1]
-        write_targets: [ssd1]
+        targets: [ssd1]
 
-      - match: 'library/{movies,tv}/**'
+      - match: '**'
         read_targets: [ssds, hdds]
         write_targets: [ssd2]
         write_policy: first_found
         path_preserving: true
-
-      - match: '**'
-        read_targets: [ssd2]
-        write_targets: [ssd2]

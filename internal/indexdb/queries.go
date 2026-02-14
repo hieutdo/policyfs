@@ -15,6 +15,7 @@ import (
 type File struct {
 	StorageID string
 	Path      string
+	RealPath  string
 	IsDir     bool
 	Size      int64
 	MTimeSec  int64
@@ -35,7 +36,7 @@ func (d *DB) GetEffectiveFile(ctx context.Context, storageID string, path string
 		return File{}, false, &errkind.NilError{What: "index db"}
 	}
 	storageID = strings.TrimSpace(storageID)
-	path = strings.TrimSpace(path)
+	path = normalizeVirtualPath(path)
 	if storageID == "" {
 		return File{}, false, nil
 	}
@@ -43,6 +44,7 @@ func (d *DB) GetEffectiveFile(ctx context.Context, storageID string, path string
 	q := `SELECT
     f.storage_id,
     f.path,
+    f.real_path,
     f.is_dir,
     f.size,
     COALESCE(m.meta_mtime, f.mtime) AS mtime,
@@ -63,13 +65,16 @@ WHERE f.storage_id = ?
 	var mode int64
 	var uid int64
 	var gid int64
-	if err := row.Scan(&out.StorageID, &out.Path, &isDir, &size, &out.MTimeSec, &mode, &uid, &gid); err != nil {
+	if err := row.Scan(&out.StorageID, &out.Path, &out.RealPath, &isDir, &size, &out.MTimeSec, &mode, &uid, &gid); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return File{}, false, nil
 		}
 		return File{}, false, fmt.Errorf("failed to query file: %w", err)
 	}
 	out.IsDir = isDir != 0
+	if strings.TrimSpace(out.RealPath) == "" {
+		out.RealPath = out.Path
+	}
 	if size.Valid {
 		out.Size = size.Int64
 	} else {
@@ -87,7 +92,7 @@ func (d *DB) DirExists(ctx context.Context, storageID string, path string) (bool
 		return false, &errkind.NilError{What: "index db"}
 	}
 	storageID = strings.TrimSpace(storageID)
-	path = strings.TrimSpace(path)
+	path = normalizeVirtualPath(path)
 	if storageID == "" {
 		return false, nil
 	}
@@ -112,7 +117,7 @@ func (d *DB) ListDirEntries(ctx context.Context, storageID string, dirPath strin
 		return nil, false, &errkind.NilError{What: "index db"}
 	}
 	storageID = strings.TrimSpace(storageID)
-	dirPath = strings.TrimSpace(dirPath)
+	dirPath = normalizeVirtualPath(dirPath)
 	if storageID == "" {
 		return nil, false, nil
 	}

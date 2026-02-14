@@ -43,6 +43,22 @@ type compiledRule struct {
 	pat   *pathmatch.Pattern
 }
 
+// normalizeRuleMatch normalizes a routing rule match string for comparisons.
+func normalizeRuleMatch(p string) string {
+	p = strings.TrimSpace(p)
+	p = strings.TrimPrefix(p, "/")
+	p = strings.TrimSuffix(p, "/")
+	for strings.Contains(p, "//") {
+		p = strings.ReplaceAll(p, "//", "/")
+	}
+	return p
+}
+
+// isCatchAllMatch reports whether a routing match string is equivalent to the catch-all pattern "**".
+func isCatchAllMatch(match string) bool {
+	return normalizeRuleMatch(match) == "**"
+}
+
 // New builds a Router from a mount config.
 func New(m *config.MountConfig) (*Router, error) {
 	if m == nil {
@@ -53,6 +69,22 @@ func New(m *config.MountConfig) (*Router, error) {
 	}
 	if len(m.RoutingRules) == 0 {
 		return nil, &errkind.RequiredError{Msg: "config: routing_rules must not be empty"}
+	}
+
+	catchAllIdx := []int{}
+	for i, rr := range m.RoutingRules {
+		if isCatchAllMatch(rr.Match) {
+			catchAllIdx = append(catchAllIdx, i)
+		}
+	}
+	if len(catchAllIdx) == 0 {
+		return nil, &errkind.RequiredError{Msg: "config: missing catch-all rule '**'"}
+	}
+	if len(catchAllIdx) > 1 {
+		return nil, &errkind.InvalidError{Msg: "config: multiple catch-all rules '**'"}
+	}
+	if catchAllIdx[0] != len(m.RoutingRules)-1 {
+		return nil, &errkind.InvalidError{Msg: "config: catch-all rule '**' must be last"}
 	}
 
 	storageByID := make(map[string]config.StoragePath, len(m.StoragePaths))

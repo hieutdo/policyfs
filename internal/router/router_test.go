@@ -104,15 +104,24 @@ func TestRouter_MatchRule_GlobSyntax(t *testing.T) {
 	for _, tc := range tests {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			// Build a 1-rule router to exercise matchRule directly.
+			// Build a router that always has a valid catch-all rule.
+			rules := []config.RoutingRule{{Match: tc.pattern, Targets: []string{"ssd1"}}}
+			if tc.pattern != "**" {
+				rules = append(rules, config.RoutingRule{Match: "**", Targets: []string{"ssd1"}})
+			}
 			r, err := New(&config.MountConfig{
 				StoragePaths: []config.StoragePath{{ID: "ssd1", Path: "/mnt/ssd1"}},
-				RoutingRules: []config.RoutingRule{{Match: tc.pattern, Targets: []string{"ssd1"}}},
+				RoutingRules: rules,
 			})
 			require.NoError(t, err)
 
-			_, ok := r.matchRule(tc.path)
-			require.Equal(t, tc.match, ok)
+			got, ok := r.matchRule(tc.path)
+			require.True(t, ok)
+			if tc.match {
+				require.Equal(t, tc.pattern, got.rule.Match)
+			} else {
+				require.Equal(t, "**", got.rule.Match)
+			}
 		})
 	}
 }

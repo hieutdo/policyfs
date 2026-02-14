@@ -3,6 +3,7 @@
 CREATE TABLE IF NOT EXISTS files (
     storage_id          TEXT    NOT NULL,
     path                TEXT    NOT NULL,
+    real_path           TEXT    NOT NULL DEFAULT '',
     parent_dir          TEXT    NOT NULL,
     name                TEXT    NOT NULL,
     is_dir              INTEGER NOT NULL DEFAULT 0,
@@ -26,6 +27,7 @@ CREATE TABLE IF NOT EXISTS files (
 CREATE INDEX IF NOT EXISTS idx_files_parent_live ON files (storage_id, parent_dir) WHERE deleted = 0;
 CREATE INDEX IF NOT EXISTS idx_files_deleted ON files (storage_id, deleted) WHERE deleted = 1;
 CREATE INDEX IF NOT EXISTS idx_files_run_id ON files (storage_id, last_seen_run_id);
+CREATE INDEX IF NOT EXISTS idx_files_real_path_pending ON files (storage_id, real_path) WHERE real_path != path;
 
 CREATE TABLE IF NOT EXISTS file_meta (
     storage_id   TEXT    NOT NULL,
@@ -37,7 +39,9 @@ CREATE TABLE IF NOT EXISTS file_meta (
 
     PRIMARY KEY (storage_id, path),
     FOREIGN KEY (storage_id, path)
-        REFERENCES files(storage_id, path) ON DELETE CASCADE
+        REFERENCES files(storage_id, path)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS indexer_state (

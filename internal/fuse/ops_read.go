@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/hanwen/go-fuse/v2/fs"
@@ -16,7 +18,7 @@ import (
 )
 
 // lookupChild looks up a child by name using router read targets.
-func lookupChild(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoot, rt *router.Router, db *indexdb.DB, name string, out *gofuse.EntryOut) (*fs.Inode, syscall.Errno) {
+func lookupChild(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoot, mountName string, rt *router.Router, db *indexdb.DB, name string, out *gofuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	if parent == nil {
 		return nil, fs.ToErrno(&errkind.NilError{What: "parent inode"})
 	}
@@ -25,7 +27,13 @@ func lookupChild(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoo
 	}
 
 	parentPath := parent.Path(parent.Root())
-	childPath := filepath.Join(parentPath, name)
+	childPath := path.Clean(path.Join(parentPath, name))
+	if childPath == "." {
+		childPath = ""
+	}
+	if childPath == ".." || strings.HasPrefix(childPath, "../") {
+		childPath = ""
+	}
 
 	targets, err := rt.ResolveReadTargets(childPath)
 	if err != nil {
@@ -46,7 +54,7 @@ func lookupChild(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoo
 			out.FromStat(&st)
 
 			typeMode := uint32(st.Mode & syscall.S_IFMT)
-			child := &Node{LoopbackNode: &fs.LoopbackNode{RootData: rootData}, rt: rt, db: db}
+			child := &Node{LoopbackNode: &fs.LoopbackNode{RootData: rootData}, mountName: mountName, rt: rt, db: db}
 			ch := parent.NewInode(ctx, child, fs.StableAttr{Mode: typeMode, Gen: 1})
 			return ch, 0
 		}
@@ -69,7 +77,7 @@ func lookupChild(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoo
 			out.Gid = f.GID
 
 			typeMode := uint32(f.Mode & uint32(syscall.S_IFMT))
-			child := &Node{LoopbackNode: &fs.LoopbackNode{RootData: rootData}, rt: rt, db: db}
+			child := &Node{LoopbackNode: &fs.LoopbackNode{RootData: rootData}, mountName: mountName, rt: rt, db: db}
 			ch := parent.NewInode(ctx, child, fs.StableAttr{Mode: typeMode, Gen: 1})
 			return ch, 0
 		}
@@ -87,7 +95,7 @@ func lookupChild(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoo
 			out.Uid = 0
 			out.Gid = 0
 
-			child := &Node{LoopbackNode: &fs.LoopbackNode{RootData: rootData}, rt: rt, db: db}
+			child := &Node{LoopbackNode: &fs.LoopbackNode{RootData: rootData}, mountName: mountName, rt: rt, db: db}
 			ch := parent.NewInode(ctx, child, fs.StableAttr{Mode: uint32(syscall.S_IFDIR), Gen: 1})
 			return ch, 0
 		}
@@ -196,6 +204,9 @@ func listDirEntriesForVirtualPath(ctx context.Context, virtualPath string, rt *r
 		return nil, toErrno(err)
 	}
 
+	readTargetCache := map[string][]router.Target{}
+	listTargetCache := map[string][]router.Target{}
+
 	seen := map[string]struct{}{}
 	entries := []gofuse.DirEntry{}
 	foundAnyDir := false
@@ -213,14 +224,56 @@ func listDirEntriesForVirtualPath(ctx context.Context, virtualPath string, rt *r
 			foundAnyDir = true
 			for _, e := range list {
 				name := e.Name()
-				if _, ok := seen[name]; ok {
-					continue
-				}
-				seen[name] = struct{}{}
 				mode := uint32(gofuse.S_IFREG)
 				if e.IsDir() {
 					mode = uint32(gofuse.S_IFDIR)
 				}
+
+				childPath := path.Clean(path.Join(virtualPath, name))
+				if childPath == "." {
+					childPath = ""
+				}
+
+				allowed := false
+				if mode == uint32(gofuse.S_IFDIR) {
+					lt, ok := listTargetCache[childPath]
+					if !ok {
+						lt, err = rt.ResolveListTargets(childPath)
+						if err != nil {
+							return nil, toErrno(err)
+						}
+						listTargetCache[childPath] = lt
+					}
+					for _, cand := range lt {
+						if cand.ID == t.ID {
+							allowed = true
+							break
+						}
+					}
+				} else {
+					rtgt, ok := readTargetCache[childPath]
+					if !ok {
+						rtgt, err = rt.ResolveReadTargets(childPath)
+						if err != nil {
+							return nil, toErrno(err)
+						}
+						readTargetCache[childPath] = rtgt
+					}
+					for _, cand := range rtgt {
+						if cand.ID == t.ID {
+							allowed = true
+							break
+						}
+					}
+				}
+				if !allowed {
+					continue
+				}
+
+				if _, ok := seen[name]; ok {
+					continue
+				}
+				seen[name] = struct{}{}
 				entries = append(entries, gofuse.DirEntry{Name: name, Mode: mode})
 			}
 			continue
@@ -239,6 +292,48 @@ func listDirEntriesForVirtualPath(ctx context.Context, virtualPath string, rt *r
 		foundAnyDir = true
 		for _, e := range list {
 			name := e.Name
+
+			childPath := path.Clean(path.Join(virtualPath, name))
+			if childPath == "." {
+				childPath = ""
+			}
+
+			allowed := false
+			if e.Mode == uint32(gofuse.S_IFDIR) {
+				lt, ok := listTargetCache[childPath]
+				if !ok {
+					lt, err = rt.ResolveListTargets(childPath)
+					if err != nil {
+						return nil, toErrno(err)
+					}
+					listTargetCache[childPath] = lt
+				}
+				for _, cand := range lt {
+					if cand.ID == t.ID {
+						allowed = true
+						break
+					}
+				}
+			} else {
+				rtgt, ok := readTargetCache[childPath]
+				if !ok {
+					rtgt, err = rt.ResolveReadTargets(childPath)
+					if err != nil {
+						return nil, toErrno(err)
+					}
+					readTargetCache[childPath] = rtgt
+				}
+				for _, cand := range rtgt {
+					if cand.ID == t.ID {
+						allowed = true
+						break
+					}
+				}
+			}
+			if !allowed {
+				continue
+			}
+
 			if _, ok := seen[name]; ok {
 				continue
 			}
@@ -249,6 +344,17 @@ func listDirEntriesForVirtualPath(ctx context.Context, virtualPath string, rt *r
 	if !foundAnyDir {
 		return nil, syscall.ENOENT
 	}
+
+	// Add dot entries so `ls -al` shows `.` and `..`.
+	// Many tools expect these to exist and will display odd output when they are missing.
+	out := make([]gofuse.DirEntry, 0, len(entries)+2)
+	if _, ok := seen["."]; !ok {
+		out = append(out, gofuse.DirEntry{Name: ".", Mode: uint32(gofuse.S_IFDIR)})
+	}
+	if _, ok := seen[".."]; !ok {
+		out = append(out, gofuse.DirEntry{Name: "..", Mode: uint32(gofuse.S_IFDIR)})
+	}
+	out = append(out, entries...)
 	_ = ctx
-	return entries, 0
+	return out, 0
 }

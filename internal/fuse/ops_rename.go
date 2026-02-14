@@ -2,11 +2,16 @@ package fuse
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hieutdo/policyfs/internal/errkind"
+	"github.com/hieutdo/policyfs/internal/eventlog"
+	"github.com/hieutdo/policyfs/internal/router"
 )
 
 // Rename renames a child within the same underlying target.
@@ -36,13 +41,59 @@ func (n *Node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 	oldParentVirtualPath := n.Path(n.Root())
 	oldVirtualPath := filepath.Join(oldParentVirtualPath, name)
 
-	srcTarget, srcPhysicalPath, errno := firstExistingPhysical(n.rt, oldVirtualPath)
-	if errno != 0 {
-		return errno
-	}
-	// Indexed targets are not writable yet.
-	if srcTarget.Indexed {
-		return syscall.EROFS
+	srcTarget := router.Target{}
+	srcPhysicalPath := ""
+	srcWasIndexed := false
+	{
+		targets, err := n.rt.ResolveReadTargets(oldVirtualPath)
+		if err != nil {
+			return toErrno(err)
+		}
+		found := false
+		for _, t := range targets {
+			if !t.Indexed {
+				p := filepath.Join(t.Root, oldVirtualPath)
+				st := syscall.Stat_t{}
+				if err := syscall.Lstat(p, &st); err != nil {
+					if errors.Is(err, syscall.ENOENT) {
+						continue
+					}
+					return fs.ToErrno(err)
+				}
+				srcTarget = t
+				srcPhysicalPath = p
+				srcWasIndexed = false
+				found = true
+				break
+			}
+
+			if n.db == nil {
+				return syscall.EIO
+			}
+			_, ok, err := n.db.GetEffectiveFile(ctx, t.ID, oldVirtualPath)
+			if err != nil {
+				return fs.ToErrno(fmt.Errorf("failed to lookup indexed source: %w", err))
+			}
+			if ok {
+				srcTarget = t
+				srcWasIndexed = true
+				found = true
+				break
+			}
+			dirOK, err := n.db.DirExists(ctx, t.ID, oldVirtualPath)
+			if err != nil {
+				return fs.ToErrno(fmt.Errorf("failed to lookup indexed source dir: %w", err))
+			}
+			if dirOK {
+				srcTarget = t
+				srcWasIndexed = true
+				found = true
+				break
+			}
+		}
+		if !found {
+			return syscall.ENOENT
+		}
 	}
 
 	newParentVirtualPath := np.Path(np.Root())
@@ -62,6 +113,23 @@ func (n *Node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 	if !allowedSameTarget {
 		// Cross-target rename is not supported.
 		return syscall.EXDEV
+	}
+
+	if srcWasIndexed {
+		if n.db == nil {
+			return syscall.EIO
+		}
+		updated, err := n.db.RenamePath(ctx, srcTarget.ID, oldVirtualPath, newVirtualPath)
+		if err != nil {
+			return fs.ToErrno(err)
+		}
+		if !updated {
+			return syscall.ENOENT
+		}
+		if err := eventlog.Append(ctx, n.mountName, eventlog.RenameEvent{Type: eventlog.TypeRename, StorageID: srcTarget.ID, OldPath: oldVirtualPath, NewPath: newVirtualPath, TS: time.Now().Unix()}); err != nil {
+			return syscall.EIO
+		}
+		return 0
 	}
 
 	dstPhysicalPath := filepath.Join(srcTarget.Root, newVirtualPath)
