@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/hieutdo/policyfs/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -92,9 +93,9 @@ mounts:
         path: /tmp
 `), 0o644))
 
-	old := os.Getenv("PFS_LOG_FILE")
-	require.NoError(t, os.Setenv("PFS_LOG_FILE", logPath))
-	t.Cleanup(func() { _ = os.Setenv("PFS_LOG_FILE", old) })
+	old := os.Getenv(config.EnvLogFile)
+	require.NoError(t, os.Setenv(config.EnvLogFile, logPath))
+	t.Cleanup(func() { _ = os.Setenv(config.EnvLogFile, old) })
 
 	code, _, _ := runCLI(t, []string{"--config", cfgPath, "mount", "media"})
 	require.Equal(t, ExitFail, code)
@@ -120,9 +121,9 @@ mounts:
         path: /tmp
 `), 0o644))
 
-	old := os.Getenv("PFS_LOG_FILE")
-	require.NoError(t, os.Setenv("PFS_LOG_FILE", envPath))
-	t.Cleanup(func() { _ = os.Setenv("PFS_LOG_FILE", old) })
+	old := os.Getenv(config.EnvLogFile)
+	require.NoError(t, os.Setenv(config.EnvLogFile, envPath))
+	t.Cleanup(func() { _ = os.Setenv(config.EnvLogFile, old) })
 
 	code, _, _ := runCLI(t, []string{"--config", cfgPath, "mount", "media", "--log-file", flagPath})
 	require.Equal(t, ExitFail, code)
@@ -152,9 +153,9 @@ mounts:
         path: /tmp
 `), 0o644))
 
-	old := os.Getenv("PFS_LOG_FILE")
-	require.NoError(t, os.Setenv("PFS_LOG_FILE", logPath))
-	t.Cleanup(func() { _ = os.Setenv("PFS_LOG_FILE", old) })
+	old := os.Getenv(config.EnvLogFile)
+	require.NoError(t, os.Setenv(config.EnvLogFile, logPath))
+	t.Cleanup(func() { _ = os.Setenv(config.EnvLogFile, old) })
 
 	code, _, stderr := runCLI(t, []string{"--config", cfgPath, "mount", "media"})
 	require.Equal(t, ExitFail, code)

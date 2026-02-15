@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hieutdo/policyfs/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -25,10 +26,10 @@ func TestDoctorJSONSmoke(t *testing.T) {
 	withMountedFS(t, IntegrationConfig{}, func(fsEnv *MountedFS) {
 		cfg := fsEnv.ConfigPath
 		if strings.TrimSpace(cfg) == "" {
-			cfg = strings.TrimSpace(os.Getenv("PFS_INTEGRATION_CONFIG"))
+			cfg = strings.TrimSpace(os.Getenv(config.EnvIntegrationConfig))
 		}
 		if strings.TrimSpace(cfg) == "" {
-			t.Skip("missing config path; set PFS_INTEGRATION_CONFIG when using an existing mount")
+			t.Skip("missing config path; set " + config.EnvIntegrationConfig + " when using an existing mount")
 		}
 
 		cmd := exec.Command(pfsBin, "--config", cfg, "doctor", fsEnv.MountName, "--json")

@@ -5,13 +5,14 @@ import (
 	"time"
 
 	"github.com/hieutdo/policyfs/internal/cli"
+	"github.com/hieutdo/policyfs/internal/config"
 	"github.com/rs/zerolog"
 )
 
 // setupLogger configures zerolog global settings once for the whole process.
 func setupLogger() {
 	loc := time.Local
-	if tz := os.Getenv("TZ"); tz != "" {
+	if tz := os.Getenv(config.EnvTZ); tz != "" {
 		if l, err := time.LoadLocation(tz); err == nil {
 			loc = l
 		}

@@ -8,13 +8,14 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/hieutdo/policyfs/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
 // TestAppend_shouldCreateLogWith0600 verifies Append creates the NDJSON log with restricted perms.
 func TestAppend_shouldCreateLogWith0600(t *testing.T) {
 	base := t.TempDir()
-	t.Setenv("PFS_STATE_DIR", base)
+	t.Setenv(config.EnvStateDir, base)
 
 	err := Append(context.Background(), "media", DeleteEvent{Type: TypeDelete, StorageID: "hdd1", Path: "a", IsDir: false, TS: 1})
 	require.NoError(t, err)
@@ -28,7 +29,7 @@ func TestAppend_shouldCreateLogWith0600(t *testing.T) {
 // TestReader_shouldIgnorePartialLastLine verifies partial trailing lines are not returned.
 func TestReader_shouldIgnorePartialLastLine(t *testing.T) {
 	base := t.TempDir()
-	t.Setenv("PFS_STATE_DIR", base)
+	t.Setenv(config.EnvStateDir, base)
 
 	p := filepath.Join(base, "media", "events.ndjson")
 	require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
@@ -66,7 +67,7 @@ func TestParse_shouldRoundTrip(t *testing.T) {
 // TestOffset_shouldRoundTrip verifies offset read/write uses decimal integers and survives missing files.
 func TestOffset_shouldRoundTrip(t *testing.T) {
 	base := t.TempDir()
-	t.Setenv("PFS_STATE_DIR", base)
+	t.Setenv(config.EnvStateDir, base)
 
 	off, err := ReadOffset("media")
 	require.NoError(t, err)

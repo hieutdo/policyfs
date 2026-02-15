@@ -16,20 +16,20 @@ import (
 
 // Test_mountStateDir_shouldUseDefaultWhenEnvUnset verifies config.MountStateDir uses DefaultStateDir when PFS_STATE_DIR is unset.
 func Test_mountStateDir_shouldUseDefaultWhenEnvUnset(t *testing.T) {
-	t.Setenv("PFS_STATE_DIR", "")
+	t.Setenv(config.EnvStateDir, "")
 	require.Equal(t, filepath.Join(config.DefaultStateDir, "media"), config.MountStateDir("media"))
 }
 
 // Test_mountStateDir_shouldUseEnvOverride verifies config.MountStateDir uses PFS_STATE_DIR when provided.
 func Test_mountStateDir_shouldUseEnvOverride(t *testing.T) {
-	t.Setenv("PFS_STATE_DIR", "/tmp/pfs-state")
+	t.Setenv(config.EnvStateDir, "/tmp/pfs-state")
 	require.Equal(t, filepath.Join("/tmp/pfs-state", "media"), config.MountStateDir("media"))
 }
 
 // TestOpen_shouldCreateDBUnderStateDir verifies Open creates the DB under the PFS_STATE_DIR override.
 func TestOpen_shouldCreateDBUnderStateDir(t *testing.T) {
 	base := t.TempDir()
-	t.Setenv("PFS_STATE_DIR", base)
+	t.Setenv(config.EnvStateDir, base)
 
 	db, err := Open("media")
 	require.NoError(t, err)
@@ -44,7 +44,7 @@ func TestOpen_shouldCreateDBUnderStateDir(t *testing.T) {
 // TestOpen_shouldBackupAndRecreateWhenDBVersion2 verifies Open treats DB version 2 as incompatible.
 func TestOpen_shouldBackupAndRecreateWhenDBVersion2(t *testing.T) {
 	base := t.TempDir()
-	t.Setenv("PFS_STATE_DIR", base)
+	t.Setenv(config.EnvStateDir, base)
 
 	mountName := "media"
 	dbPath := filepath.Join(base, mountName, "index.db")

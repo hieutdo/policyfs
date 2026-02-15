@@ -14,16 +14,34 @@ import (
 const (
 	DefaultConfigFile     = "/etc/pfs/pfs.yaml"
 	DefaultLogFile        = "/var/log/pfs/pfs.log"
-	DefaultDaemonLockFile = "daemon.lock"
-	DefaultJobLockFile    = "job.lock"
 	DefaultStateDir       = "/var/lib/pfs"
 	DefaultRuntimeDir     = "/run/pfs"
+	DefaultDaemonLockFile = "daemon.lock"
+	DefaultJobLockFile    = "job.lock"
 	DefaultWritePolicy    = "first_found"
+)
+
+const (
+	EnvTZ                          = "TZ"
+	EnvConfigFile                  = "PFS_CONFIG_FILE"
+	EnvLogFile                     = "PFS_LOG_FILE"
+	EnvStateDir                    = "PFS_STATE_DIR"
+	EnvRuntimeDir                  = "PFS_RUNTIME_DIR"
+	EnvIntegrationCover            = "PFS_INTEGRATION_COVER"
+	EnvIntegrationDebugBuild       = "PFS_INTEGRATION_DEBUG_BUILD"
+	EnvIntegrationUseExistingMount = "PFS_INTEGRATION_USE_EXISTING_MOUNT"
+	EnvIntegrationConfig           = "PFS_INTEGRATION_CONFIG"
+	EnvIntegrationMountName        = "PFS_INTEGRATION_MOUNT_NAME"
+	EnvIntegrationMountpoint       = "PFS_INTEGRATION_MOUNTPOINT"
+	EnvIntegrationKeepArtifacts    = "PFS_INTEGRATION_KEEP_ARTIFACTS"
+	EnvTestHelper                  = "PFS_TEST_HELPER"
+	EnvTestMount                   = "PFS_TEST_MOUNT"
+	EnvTestLockFile                = "PFS_TEST_LOCK_FILE"
 )
 
 // ConfigFilePath returns the effective default config file path (PFS_CONFIG_FILE override).
 func ConfigFilePath() string {
-	p := strings.TrimSpace(os.Getenv("PFS_CONFIG_FILE"))
+	p := strings.TrimSpace(os.Getenv(EnvConfigFile))
 	if p == "" {
 		return DefaultConfigFile
 	}
@@ -32,7 +50,7 @@ func ConfigFilePath() string {
 
 // LogFilePath returns the effective default log file path (PFS_LOG_FILE override).
 func LogFilePath() string {
-	p := strings.TrimSpace(os.Getenv("PFS_LOG_FILE"))
+	p := strings.TrimSpace(os.Getenv(EnvLogFile))
 	if p == "" {
 		return DefaultLogFile
 	}
@@ -41,7 +59,7 @@ func LogFilePath() string {
 
 // StateDir returns the persistent state directory (PFS_STATE_DIR override).
 func StateDir() string {
-	base := strings.TrimSpace(os.Getenv("PFS_STATE_DIR"))
+	base := strings.TrimSpace(os.Getenv(EnvStateDir))
 	if base == "" {
 		return DefaultStateDir
 	}
@@ -50,7 +68,7 @@ func StateDir() string {
 
 // RuntimeDir returns the runtime directory (PFS_RUNTIME_DIR override).
 func RuntimeDir() string {
-	base := strings.TrimSpace(os.Getenv("PFS_RUNTIME_DIR"))
+	base := strings.TrimSpace(os.Getenv(EnvRuntimeDir))
 	if base == "" {
 		return DefaultRuntimeDir
 	}

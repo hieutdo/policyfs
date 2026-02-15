@@ -79,8 +79,8 @@ func TestPrintPruneSummary_Quiet_shouldPrintNothing(t *testing.T) {
 func TestPruneOneshot_Busy_shouldReturnExitBusy(t *testing.T) {
 	runtimeDir := filepath.Join(t.TempDir(), "runtime")
 	require.NoError(t, os.MkdirAll(runtimeDir, 0o755))
-	t.Setenv("PFS_RUNTIME_DIR", runtimeDir)
-	t.Setenv("PFS_STATE_DIR", filepath.Join(t.TempDir(), "state"))
+	t.Setenv(config.EnvRuntimeDir, runtimeDir)
+	t.Setenv(config.EnvStateDir, filepath.Join(t.TempDir(), "state"))
 
 	mount := "media"
 	lk, err := lock.AcquireMountLock(mount, config.DefaultJobLockFile)

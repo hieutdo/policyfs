@@ -10,6 +10,7 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/hieutdo/policyfs/internal/config"
 	"github.com/hieutdo/policyfs/internal/errkind"
 	pfsfuse "github.com/hieutdo/policyfs/internal/fuse"
 	"github.com/hieutdo/policyfs/internal/indexdb"
@@ -140,7 +141,7 @@ This command is typically managed by systemd as a service.`,
 	}
 
 	cmd.Flags().BoolVar(&debug, "debug", false, "enable FUSE debug logging")
-	cmd.Flags().StringVar(&logFile, "log-file", "", "path to log file (overrides PFS_LOG_FILE)")
+	cmd.Flags().StringVar(&logFile, "log-file", "", fmt.Sprintf("path to log file (overrides %s)", config.EnvLogFile))
 
 	return cmd
 }

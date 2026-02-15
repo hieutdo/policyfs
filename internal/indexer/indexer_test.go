@@ -19,7 +19,7 @@ import (
 func newTestDB(t *testing.T, mountName string) *indexdb.DB {
 	t.Helper()
 	stateDir := t.TempDir()
-	t.Setenv("PFS_STATE_DIR", stateDir)
+	t.Setenv(config.EnvStateDir, stateDir)
 	db, err := indexdb.Open(mountName)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })

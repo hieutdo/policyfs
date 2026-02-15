@@ -14,17 +14,17 @@ import (
 
 // TestIndex_Text_shouldPrintSummary verifies `pfs index <mount>` prints a short human-readable summary to stdout.
 func TestIndex_Text_shouldPrintSummary(t *testing.T) {
-	if os.Getenv("PFS_TEST_HELPER") == "1" {
+	if os.Getenv(config.EnvTestHelper) == "1" {
 		return
 	}
 
 	runtimeDir := filepath.Join(t.TempDir(), "runtime")
 	require.NoError(t, os.MkdirAll(runtimeDir, 0o755))
-	t.Setenv("PFS_RUNTIME_DIR", runtimeDir)
+	t.Setenv(config.EnvRuntimeDir, runtimeDir)
 
 	stateDir := filepath.Join(t.TempDir(), "state")
 	require.NoError(t, os.MkdirAll(stateDir, 0o755))
-	t.Setenv("PFS_STATE_DIR", stateDir)
+	t.Setenv(config.EnvStateDir, stateDir)
 
 	storageRoot := filepath.Join(t.TempDir(), "hdd1")
 	require.NoError(t, os.MkdirAll(filepath.Join(storageRoot, "library"), 0o755))
@@ -54,17 +54,17 @@ mounts:
 
 // TestIndex_Rebuild_shouldReplaceNonSQLiteDB verifies `pfs index --rebuild` deletes an existing DB file and recreates a fresh one.
 func TestIndex_Rebuild_shouldReplaceNonSQLiteDB(t *testing.T) {
-	if os.Getenv("PFS_TEST_HELPER") == "1" {
+	if os.Getenv(config.EnvTestHelper) == "1" {
 		return
 	}
 
 	runtimeDir := filepath.Join(t.TempDir(), "runtime")
 	require.NoError(t, os.MkdirAll(runtimeDir, 0o755))
-	t.Setenv("PFS_RUNTIME_DIR", runtimeDir)
+	t.Setenv(config.EnvRuntimeDir, runtimeDir)
 
 	stateDir := filepath.Join(t.TempDir(), "state")
 	require.NoError(t, os.MkdirAll(stateDir, 0o755))
-	t.Setenv("PFS_STATE_DIR", stateDir)
+	t.Setenv(config.EnvStateDir, stateDir)
 
 	storageRoot := filepath.Join(t.TempDir(), "hdd1")
 	require.NoError(t, os.MkdirAll(filepath.Join(storageRoot, "library"), 0o755))
@@ -98,17 +98,17 @@ mounts:
 
 // TestIndex_Progress_shouldPrintProgress verifies `pfs index --progress` prints progress output.
 func TestIndex_Progress_shouldPrintProgress(t *testing.T) {
-	if os.Getenv("PFS_TEST_HELPER") == "1" {
+	if os.Getenv(config.EnvTestHelper) == "1" {
 		return
 	}
 
 	runtimeDir := filepath.Join(t.TempDir(), "runtime")
 	require.NoError(t, os.MkdirAll(runtimeDir, 0o755))
-	t.Setenv("PFS_RUNTIME_DIR", runtimeDir)
+	t.Setenv(config.EnvRuntimeDir, runtimeDir)
 
 	stateDir := filepath.Join(t.TempDir(), "state")
 	require.NoError(t, os.MkdirAll(stateDir, 0o755))
-	t.Setenv("PFS_STATE_DIR", stateDir)
+	t.Setenv(config.EnvStateDir, stateDir)
 
 	storageRoot := filepath.Join(t.TempDir(), "hdd1")
 	require.NoError(t, os.MkdirAll(filepath.Join(storageRoot, "library"), 0o755))
@@ -134,17 +134,17 @@ mounts:
 
 // TestIndex_Quiet_shouldSuppressProgress verifies `pfs index --quiet` suppresses progress output.
 func TestIndex_Quiet_shouldSuppressProgress(t *testing.T) {
-	if os.Getenv("PFS_TEST_HELPER") == "1" {
+	if os.Getenv(config.EnvTestHelper) == "1" {
 		return
 	}
 
 	runtimeDir := filepath.Join(t.TempDir(), "runtime")
 	require.NoError(t, os.MkdirAll(runtimeDir, 0o755))
-	t.Setenv("PFS_RUNTIME_DIR", runtimeDir)
+	t.Setenv(config.EnvRuntimeDir, runtimeDir)
 
 	stateDir := filepath.Join(t.TempDir(), "state")
 	require.NoError(t, os.MkdirAll(stateDir, 0o755))
-	t.Setenv("PFS_STATE_DIR", stateDir)
+	t.Setenv(config.EnvStateDir, stateDir)
 
 	storageRoot := filepath.Join(t.TempDir(), "hdd1")
 	require.NoError(t, os.MkdirAll(filepath.Join(storageRoot, "library"), 0o755))
@@ -171,7 +171,7 @@ mounts:
 
 // TestIndex_InvalidArgs_shouldReturnUsage verifies missing mount arg returns ExitUsage.
 func TestIndex_InvalidArgs_shouldReturnUsage(t *testing.T) {
-	if os.Getenv("PFS_TEST_HELPER") == "1" {
+	if os.Getenv(config.EnvTestHelper) == "1" {
 		return
 	}
 
@@ -182,7 +182,7 @@ func TestIndex_InvalidArgs_shouldReturnUsage(t *testing.T) {
 
 // TestIndex_InvalidMountName_shouldReturnUsage verifies invalid mount names are rejected.
 func TestIndex_InvalidMountName_shouldReturnUsage(t *testing.T) {
-	if os.Getenv("PFS_TEST_HELPER") == "1" {
+	if os.Getenv(config.EnvTestHelper) == "1" {
 		return
 	}
 
@@ -194,7 +194,7 @@ func TestIndex_InvalidMountName_shouldReturnUsage(t *testing.T) {
 
 // TestIndex_UnknownMount_shouldReturnUsage verifies unknown mounts are reported as usage errors.
 func TestIndex_UnknownMount_shouldReturnUsage(t *testing.T) {
-	if os.Getenv("PFS_TEST_HELPER") == "1" {
+	if os.Getenv(config.EnvTestHelper) == "1" {
 		return
 	}
 
@@ -217,8 +217,8 @@ mounts:
 }
 
 // TestIndex_InvalidProgressValue_shouldReturnUsage verifies invalid --progress values are rejected.
-func TestIndex_InvalidProgressValue_shouldReturnUsage(t *testing.T) {
-	if os.Getenv("PFS_TEST_HELPER") == "1" {
+func TestIndex_InvalidProgressFile_shouldReturnUsage(t *testing.T) {
+	if os.Getenv(config.EnvTestHelper) == "1" {
 		return
 	}
 
@@ -242,7 +242,7 @@ mounts:
 
 // TestIndex_UnknownStorageID_shouldReturnUsage verifies --storage rejects unknown storage ids.
 func TestIndex_UnknownStorageID_shouldReturnUsage(t *testing.T) {
-	if os.Getenv("PFS_TEST_HELPER") == "1" {
+	if os.Getenv(config.EnvTestHelper) == "1" {
 		return
 	}
 
@@ -266,7 +266,7 @@ mounts:
 
 // TestIndex_StorageNotIndexed_shouldReturnUsage verifies --storage rejects non-indexed storage.
 func TestIndex_StorageNotIndexed_shouldReturnUsage(t *testing.T) {
-	if os.Getenv("PFS_TEST_HELPER") == "1" {
+	if os.Getenv(config.EnvTestHelper) == "1" {
 		return
 	}
 
@@ -289,18 +289,18 @@ mounts:
 }
 
 // TestIndex_JobLockBusy_shouldReturnExitBusy verifies index returns ExitBusy when job.lock is held.
-func TestIndex_JobLockBusy_shouldReturnExitBusy(t *testing.T) {
-	if os.Getenv("PFS_TEST_HELPER") == "1" {
+func TestIndex_Busy_shouldReturnExitBusy(t *testing.T) {
+	if os.Getenv(config.EnvTestHelper) == "1" {
 		return
 	}
 
 	runtimeDir := filepath.Join(t.TempDir(), "runtime")
 	require.NoError(t, os.MkdirAll(runtimeDir, 0o755))
-	t.Setenv("PFS_RUNTIME_DIR", runtimeDir)
+	t.Setenv(config.EnvRuntimeDir, runtimeDir)
 
 	stateDir := filepath.Join(t.TempDir(), "state")
 	require.NoError(t, os.MkdirAll(stateDir, 0o755))
-	t.Setenv("PFS_STATE_DIR", stateDir)
+	t.Setenv(config.EnvStateDir, stateDir)
 
 	storageRoot := filepath.Join(t.TempDir(), "hdd1")
 	require.NoError(t, os.MkdirAll(filepath.Join(storageRoot, "library"), 0o755))
@@ -322,10 +322,11 @@ mounts:
 	cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcessIndexHoldJobLock")
 	cmd.Env = append(
 		os.Environ(),
-		"PFS_TEST_HELPER=1",
-		"PFS_RUNTIME_DIR="+runtimeDir,
-		"PFS_TEST_MOUNT=media",
-		"PFS_TEST_LOCK_FILE="+config.DefaultJobLockFile,
+		config.EnvTestHelper+"=1",
+		config.EnvRuntimeDir+"="+runtimeDir,
+		config.EnvStateDir+"="+stateDir,
+		config.EnvTestMount+"=media",
+		config.EnvTestLockFile+"="+config.DefaultJobLockFile,
 	)
 	stdout, err := cmd.StdoutPipe()
 	require.NoError(t, err)
@@ -359,12 +360,12 @@ mounts:
 
 // TestHelperProcessIndexHoldJobLock holds job.lock until stdin closes.
 func TestHelperProcessIndexHoldJobLock(t *testing.T) {
-	if os.Getenv("PFS_TEST_HELPER") != "1" {
+	if os.Getenv(config.EnvTestHelper) != "1" {
 		return
 	}
 
-	mountName := os.Getenv("PFS_TEST_MOUNT")
-	lockFile := os.Getenv("PFS_TEST_LOCK_FILE")
+	mountName := os.Getenv(config.EnvTestMount)
+	lockFile := os.Getenv(config.EnvTestLockFile)
 
 	lk, err := lock.AcquireMountLock(mountName, lockFile)
 	if err != nil {

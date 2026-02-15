@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/hieutdo/policyfs/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -16,7 +17,7 @@ import (
 func mustOpenTestDB(t *testing.T) *DB {
 	// This helper intentionally does not use t.Parallel() because it relies on env overrides.
 	base := t.TempDir()
-	t.Setenv("PFS_STATE_DIR", base)
+	t.Setenv(config.EnvStateDir, base)
 	mountName := strings.ReplaceAll(strings.ToLower(t.Name()), "/", "_")
 
 	db, err := Open(mountName)

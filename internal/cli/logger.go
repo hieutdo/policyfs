@@ -12,16 +12,12 @@ import (
 	"github.com/rs/zerolog"
 )
 
-const (
-	logFileEnvVar = "PFS_LOG_FILE"
-)
-
 // effectiveLogFilePath resolves the log file path from the flag or environment.
 func effectiveLogFilePath(logFileFlag string) string {
 	if strings.TrimSpace(logFileFlag) != "" {
 		return strings.TrimSpace(logFileFlag)
 	}
-	if v := os.Getenv(logFileEnvVar); strings.TrimSpace(v) != "" {
+	if v := os.Getenv(config.EnvLogFile); strings.TrimSpace(v) != "" {
 		return strings.TrimSpace(v)
 	}
 	return ""

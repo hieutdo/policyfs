@@ -15,31 +15,31 @@ import (
 func runCLI(t *testing.T, args []string) (int, string, string) {
 	t.Helper()
 
-	if cur, ok := os.LookupEnv("PFS_RUNTIME_DIR"); !ok || cur == config.DefaultRuntimeDir || cur == "/workspace/tmp/pfs" || strings.HasPrefix(cur, "/workspace/tmp/pfs/") {
-		oldRuntime, hadRuntime := os.LookupEnv("PFS_RUNTIME_DIR")
+	if cur, ok := os.LookupEnv(config.EnvRuntimeDir); !ok || cur == config.DefaultRuntimeDir || cur == "/workspace/tmp/pfs" || strings.HasPrefix(cur, "/workspace/tmp/pfs/") {
+		oldRuntime, hadRuntime := os.LookupEnv(config.EnvRuntimeDir)
 		runtimeDir := filepath.Join(t.TempDir(), "runtime")
 		require.NoError(t, os.MkdirAll(runtimeDir, 0o755))
-		require.NoError(t, os.Setenv("PFS_RUNTIME_DIR", runtimeDir))
+		require.NoError(t, os.Setenv(config.EnvRuntimeDir, runtimeDir))
 		t.Cleanup(func() {
 			if hadRuntime {
-				_ = os.Setenv("PFS_RUNTIME_DIR", oldRuntime)
+				_ = os.Setenv(config.EnvRuntimeDir, oldRuntime)
 				return
 			}
-			_ = os.Unsetenv("PFS_RUNTIME_DIR")
+			_ = os.Unsetenv(config.EnvRuntimeDir)
 		})
 	}
 
-	if cur, ok := os.LookupEnv("PFS_STATE_DIR"); !ok || cur == config.DefaultStateDir || cur == "/workspace/tmp/pfs" || strings.HasPrefix(cur, "/workspace/tmp/pfs/") {
-		oldState, hadState := os.LookupEnv("PFS_STATE_DIR")
+	if cur, ok := os.LookupEnv(config.EnvStateDir); !ok || cur == config.DefaultStateDir || cur == "/workspace/tmp/pfs" || strings.HasPrefix(cur, "/workspace/tmp/pfs/") {
+		oldState, hadState := os.LookupEnv(config.EnvStateDir)
 		stateDir := filepath.Join(t.TempDir(), "state")
 		require.NoError(t, os.MkdirAll(stateDir, 0o755))
-		require.NoError(t, os.Setenv("PFS_STATE_DIR", stateDir))
+		require.NoError(t, os.Setenv(config.EnvStateDir, stateDir))
 		t.Cleanup(func() {
 			if hadState {
-				_ = os.Setenv("PFS_STATE_DIR", oldState)
+				_ = os.Setenv(config.EnvStateDir, oldState)
 				return
 			}
-			_ = os.Unsetenv("PFS_STATE_DIR")
+			_ = os.Unsetenv(config.EnvStateDir)
 		})
 	}
 

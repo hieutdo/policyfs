@@ -50,10 +50,10 @@ func run(m *testing.M) int {
 	}
 
 	buildArgs := []string{"build", "-o", pfsBin}
-	if strings.TrimSpace(os.Getenv("PFS_INTEGRATION_COVER")) != "" {
+	if strings.TrimSpace(os.Getenv(config.EnvIntegrationCover)) != "" {
 		buildArgs = append(buildArgs, "-tags=cover", "-cover", "-covermode=atomic", "-coverpkg=./cmd/...,./internal/...")
 	}
-	if strings.TrimSpace(os.Getenv("PFS_INTEGRATION_DEBUG_BUILD")) != "" {
+	if strings.TrimSpace(os.Getenv(config.EnvIntegrationDebugBuild)) != "" {
 		buildArgs = append(buildArgs, "-gcflags=all=-N -l")
 	}
 	buildArgs = append(buildArgs, pfsSrc)
@@ -95,12 +95,12 @@ func baseEnvWithoutKeys(keys ...string) []string {
 
 // pfsTestEnv builds a clean per-test environment for invoking the pfs binary.
 func pfsTestEnv(env *MountedFS, logFile string) []string {
-	base := baseEnvWithoutKeys("PFS_LOG_FILE", "PFS_RUNTIME_DIR", "PFS_STATE_DIR")
+	base := baseEnvWithoutKeys(config.EnvLogFile, config.EnvRuntimeDir, config.EnvStateDir)
 	if strings.TrimSpace(logFile) != "" {
-		base = append(base, "PFS_LOG_FILE="+logFile)
+		base = append(base, config.EnvLogFile+"="+logFile)
 	}
-	base = append(base, "PFS_RUNTIME_DIR="+env.RuntimeDir)
-	base = append(base, "PFS_STATE_DIR="+env.StateDir)
+	base = append(base, config.EnvRuntimeDir+"="+env.RuntimeDir)
+	base = append(base, config.EnvStateDir+"="+env.StateDir)
 	return base
 }
 
@@ -111,13 +111,13 @@ func withMountedFS(t *testing.T, cfg IntegrationConfig, fn func(env *MountedFS))
 	// Sanitize test name into a path-safe name.
 	name := sanitizeName(t.Name())
 
-	if strings.TrimSpace(os.Getenv("PFS_INTEGRATION_USE_EXISTING_MOUNT")) != "" {
-		configPath := strings.TrimSpace(os.Getenv("PFS_INTEGRATION_CONFIG"))
+	if strings.TrimSpace(os.Getenv(config.EnvIntegrationUseExistingMount)) != "" {
+		configPath := strings.TrimSpace(os.Getenv(config.EnvIntegrationConfig))
 		if configPath == "" {
-			t.Fatalf("missing PFS_INTEGRATION_CONFIG")
+			t.Fatalf("missing %s", config.EnvIntegrationConfig)
 		}
 
-		mountName := strings.TrimSpace(os.Getenv("PFS_INTEGRATION_MOUNT_NAME"))
+		mountName := strings.TrimSpace(os.Getenv(config.EnvIntegrationMountName))
 		if mountName == "" {
 			mountName = "integration"
 		}
@@ -131,12 +131,12 @@ func withMountedFS(t *testing.T, cfg IntegrationConfig, fn func(env *MountedFS))
 			t.Fatalf("failed to resolve mount: %v", err)
 		}
 
-		baseMountPoint := strings.TrimSpace(os.Getenv("PFS_INTEGRATION_MOUNTPOINT"))
+		baseMountPoint := strings.TrimSpace(os.Getenv(config.EnvIntegrationMountpoint))
 		if baseMountPoint == "" {
 			baseMountPoint = mountCfg.MountPoint
 		}
 		if strings.TrimSpace(baseMountPoint) == "" {
-			t.Fatalf("missing mountpoint (PFS_INTEGRATION_MOUNTPOINT or config mountpoint)")
+			t.Fatalf("missing mountpoint (%s or config mountpoint)", config.EnvIntegrationMountpoint)
 		}
 
 		mounted, err := isMountpointMounted(baseMountPoint)
@@ -163,7 +163,7 @@ func withMountedFS(t *testing.T, cfg IntegrationConfig, fn func(env *MountedFS))
 			if t.Failed() {
 				return
 			}
-			if strings.TrimSpace(os.Getenv("PFS_INTEGRATION_KEEP_ARTIFACTS")) != "" {
+			if strings.TrimSpace(os.Getenv(config.EnvIntegrationKeepArtifacts)) != "" {
 				return
 			}
 			for _, root := range env.StorageRoots {
@@ -259,7 +259,7 @@ func withMountedFS(t *testing.T, cfg IntegrationConfig, fn func(env *MountedFS))
 			return
 		}
 		// Opt-out: keep artifacts even on success, for debugging and manual inspection.
-		if strings.TrimSpace(os.Getenv("PFS_INTEGRATION_KEEP_ARTIFACTS")) != "" {
+		if strings.TrimSpace(os.Getenv(config.EnvIntegrationKeepArtifacts)) != "" {
 			return
 		}
 

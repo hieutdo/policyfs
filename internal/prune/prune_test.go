@@ -19,11 +19,11 @@ func setupPruneTestEnv(t *testing.T, mountName string) string {
 
 	runtimeDir := filepath.Join(t.TempDir(), "runtime")
 	require.NoError(t, os.MkdirAll(runtimeDir, 0o755))
-	t.Setenv("PFS_RUNTIME_DIR", runtimeDir)
+	t.Setenv(config.EnvRuntimeDir, runtimeDir)
 
 	stateDir := filepath.Join(t.TempDir(), "state")
 	require.NoError(t, os.MkdirAll(stateDir, 0o755))
-	t.Setenv("PFS_STATE_DIR", stateDir)
+	t.Setenv(config.EnvStateDir, stateDir)
 
 	return filepath.Join(stateDir, mountName)
 }

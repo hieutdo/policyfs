@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hieutdo/policyfs/internal/config"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/require"
 )
@@ -18,7 +19,7 @@ import (
 // TestIndex_shouldPopulateDB_andMountShouldExposeIndexedEntries verifies the oneshot index job populates the DB
 // and the running mount can serve directory listings/stat for indexed targets.
 func TestIndex_shouldPopulateDB_andMountShouldExposeIndexedEntries(t *testing.T) {
-	if os.Getenv("PFS_INTEGRATION_USE_EXISTING_MOUNT") != "" {
+	if os.Getenv(config.EnvIntegrationUseExistingMount) != "" {
 		t.Skip("skip index flow test when using an existing mount")
 	}
 
@@ -41,8 +42,8 @@ func TestIndex_shouldPopulateDB_andMountShouldExposeIndexedEntries(t *testing.T)
 		cmd := exec.Command(pfsBin, "--config", fsEnv.ConfigPath, "index", fsEnv.MountName)
 		cmd.Env = append(
 			os.Environ(),
-			"PFS_RUNTIME_DIR="+fsEnv.RuntimeDir,
-			"PFS_STATE_DIR="+fsEnv.StateDir,
+			config.EnvRuntimeDir+"="+fsEnv.RuntimeDir,
+			config.EnvStateDir+"="+fsEnv.StateDir,
 		)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr

@@ -3,7 +3,7 @@ fuse:
 
 log:
   level: info
-  format: text
+  format: json
 
 mounts:
   media:
@@ -44,3 +44,6 @@ mounts:
         write_targets: [ssd2]
         write_policy: first_found
         path_preserving: true
+    indexer:
+      ignore:
+        - '.DS_Store'
