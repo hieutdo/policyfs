@@ -42,9 +42,26 @@ func Test_statfsWriteTarget_shouldReturnWriteTargetStats(t *testing.T) {
 	ok := statfsWriteTarget(rt, "", got)
 	require.True(t, ok)
 
-	// The reported blocks should match the write target (root2).
-	require.Equal(t, want.Blocks, got.Blocks)
-	require.Equal(t, want.Bfree, got.Bfree)
+	// Statfs values can change between two consecutive syscalls (overlayfs, tmpfs,
+	// background writes), so allow a tiny delta.
+	{
+		var diff uint64
+		if want.Blocks > got.Blocks {
+			diff = want.Blocks - got.Blocks
+		} else {
+			diff = got.Blocks - want.Blocks
+		}
+		require.LessOrEqual(t, diff, uint64(1), "Blocks mismatch: want=%d got=%d", want.Blocks, got.Blocks)
+	}
+	{
+		var diff uint64
+		if want.Bfree > got.Bfree {
+			diff = want.Bfree - got.Bfree
+		} else {
+			diff = got.Bfree - want.Bfree
+		}
+		require.LessOrEqual(t, diff, uint64(1), "Bfree mismatch: want=%d got=%d", want.Bfree, got.Bfree)
+	}
 }
 
 // Test_statfsWriteTarget_nilRouter_shouldReturnFalse verifies that statfsWriteTarget

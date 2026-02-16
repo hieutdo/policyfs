@@ -225,7 +225,9 @@ func withMountedFS(t *testing.T, cfg IntegrationConfig, fn func(env *MountedFS))
 	// which prevents graceful shutdown and coverage flush.
 	ctx, cancel := context.WithCancel(context.Background())
 
-	mountCmd := exec.CommandContext(ctx, pfsBin, "--config", env.ConfigPath, "mount", env.MountName)
+	args := []string{"--config", env.ConfigPath, "mount", env.MountName}
+	args = append(args, cfg.MountArgs...)
+	mountCmd := exec.CommandContext(ctx, pfsBin, args...)
 	mountCmd.Env = pfsTestEnv(env, tmpDir+"/"+name+".log")
 	mountCmd.Stdout = os.Stdout
 	mountCmd.Stderr = os.Stderr

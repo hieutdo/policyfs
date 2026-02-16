@@ -15,10 +15,11 @@ import (
 	"github.com/hieutdo/policyfs/internal/errkind"
 	"github.com/hieutdo/policyfs/internal/indexdb"
 	"github.com/hieutdo/policyfs/internal/router"
+	"github.com/rs/zerolog"
 )
 
 // lookupChild looks up a child by name using router read targets.
-func lookupChild(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoot, mountName string, rt *router.Router, db *indexdb.DB, name string, out *gofuse.EntryOut) (*fs.Inode, syscall.Errno) {
+func lookupChild(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoot, mountName string, rt *router.Router, db *indexdb.DB, log zerolog.Logger, disk *diskAccessLogger, name string, out *gofuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	if parent == nil {
 		return nil, fs.ToErrno(&errkind.NilError{What: "parent inode"})
 	}
@@ -54,7 +55,7 @@ func lookupChild(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoo
 			out.FromStat(&st)
 
 			typeMode := uint32(st.Mode & syscall.S_IFMT)
-			child := &Node{LoopbackNode: &fs.LoopbackNode{RootData: rootData}, mountName: mountName, rt: rt, db: db}
+			child := &Node{LoopbackNode: &fs.LoopbackNode{RootData: rootData}, mountName: mountName, rt: rt, db: db, log: log, disk: disk}
 			ch := parent.NewInode(ctx, child, fs.StableAttr{Mode: typeMode, Gen: 1})
 			return ch, 0
 		}
@@ -77,7 +78,7 @@ func lookupChild(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoo
 			out.Gid = f.GID
 
 			typeMode := uint32(f.Mode & uint32(syscall.S_IFMT))
-			child := &Node{LoopbackNode: &fs.LoopbackNode{RootData: rootData}, mountName: mountName, rt: rt, db: db}
+			child := &Node{LoopbackNode: &fs.LoopbackNode{RootData: rootData}, mountName: mountName, rt: rt, db: db, log: log, disk: disk}
 			ch := parent.NewInode(ctx, child, fs.StableAttr{Mode: typeMode, Gen: 1})
 			return ch, 0
 		}
@@ -95,7 +96,7 @@ func lookupChild(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoo
 			out.Uid = 0
 			out.Gid = 0
 
-			child := &Node{LoopbackNode: &fs.LoopbackNode{RootData: rootData}, mountName: mountName, rt: rt, db: db}
+			child := &Node{LoopbackNode: &fs.LoopbackNode{RootData: rootData}, mountName: mountName, rt: rt, db: db, log: log, disk: disk}
 			ch := parent.NewInode(ctx, child, fs.StableAttr{Mode: uint32(syscall.S_IFDIR), Gen: 1})
 			return ch, 0
 		}

@@ -99,6 +99,41 @@ func (n *Node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 	newParentVirtualPath := np.Path(np.Root())
 	newVirtualPath := filepath.Join(newParentVirtualPath, newName)
 
+	if srcWasIndexed {
+		if n.db == nil {
+			return syscall.EIO
+		}
+		// For indexed targets, rename is a metadata update + deferred physical rename.
+		// We still reject renames that would move the entry outside of routing visibility.
+		readable, err := n.rt.ResolveReadTargets(newVirtualPath)
+		if err != nil {
+			return toErrno(err)
+		}
+		readableSameTarget := false
+		for _, t := range readable {
+			if t.ID == srcTarget.ID {
+				readableSameTarget = true
+				break
+			}
+		}
+		if !readableSameTarget {
+			// Treat moves out of the source target's routing domain as cross-device.
+			return syscall.EXDEV
+		}
+
+		updated, err := n.db.RenamePath(ctx, srcTarget.ID, oldVirtualPath, newVirtualPath)
+		if err != nil {
+			return fs.ToErrno(err)
+		}
+		if !updated {
+			return syscall.ENOENT
+		}
+		if err := eventlog.Append(ctx, n.mountName, eventlog.RenameEvent{Type: eventlog.TypeRename, StorageID: srcTarget.ID, OldPath: oldVirtualPath, NewPath: newVirtualPath, TS: time.Now().Unix()}); err != nil {
+			return syscall.EIO
+		}
+		return 0
+	}
+
 	allowed, err := n.rt.ResolveWriteTargets(newVirtualPath)
 	if err != nil {
 		return toErrno(err)
@@ -113,23 +148,6 @@ func (n *Node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 	if !allowedSameTarget {
 		// Cross-target rename is not supported.
 		return syscall.EXDEV
-	}
-
-	if srcWasIndexed {
-		if n.db == nil {
-			return syscall.EIO
-		}
-		updated, err := n.db.RenamePath(ctx, srcTarget.ID, oldVirtualPath, newVirtualPath)
-		if err != nil {
-			return fs.ToErrno(err)
-		}
-		if !updated {
-			return syscall.ENOENT
-		}
-		if err := eventlog.Append(ctx, n.mountName, eventlog.RenameEvent{Type: eventlog.TypeRename, StorageID: srcTarget.ID, OldPath: oldVirtualPath, NewPath: newVirtualPath, TS: time.Now().Unix()}); err != nil {
-			return syscall.EIO
-		}
-		return 0
 	}
 
 	dstPhysicalPath := filepath.Join(srcTarget.Root, newVirtualPath)

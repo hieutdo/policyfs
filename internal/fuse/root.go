@@ -10,6 +10,7 @@ import (
 	"github.com/hieutdo/policyfs/internal/config"
 	"github.com/hieutdo/policyfs/internal/indexdb"
 	"github.com/hieutdo/policyfs/internal/router"
+	"github.com/rs/zerolog"
 )
 
 // Node is a PolicyFS inode implementation (including the root inode).
@@ -18,17 +19,22 @@ type Node struct {
 	mountName string
 	rt        *router.Router
 	db        *indexdb.DB
+	log       zerolog.Logger
+	disk      *diskAccessLogger
 }
 
 // NewRoot creates the PolicyFS root node for mounting.
 //
 // Currently this is a thin wrapper around go-fuse's loopback root to keep behavior
 // identical while we incrementally add PolicyFS operations.
-func NewRoot(mountName string, m *config.MountConfig, primaryRootPath string, db *indexdb.DB) (fs.InodeEmbedder, error) {
+func NewRoot(mountName string, m *config.MountConfig, primaryRootPath string, db *indexdb.DB, baseLog zerolog.Logger, diskCfg DiskAccessConfig) (fs.InodeEmbedder, error) {
 	rt, err := router.New(m)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create router: %w", err)
 	}
+
+	fuseLog := baseLog.With().Str("component", "fuse").Str("mount", mountName).Logger()
+	diskLog := newDiskAccessLogger(fuseLog, diskCfg)
 
 	op, err := fs.NewLoopbackRoot(primaryRootPath)
 	if err != nil {
@@ -41,7 +47,7 @@ func NewRoot(mountName string, m *config.MountConfig, primaryRootPath string, db
 		return op, nil
 	}
 
-	n := &Node{LoopbackNode: lb, mountName: mountName, rt: rt, db: db}
+	n := &Node{LoopbackNode: lb, mountName: mountName, rt: rt, db: db, log: fuseLog, disk: diskLog}
 	if lb.RootData != nil {
 		lb.RootData.RootNode = n
 	}
@@ -54,12 +60,12 @@ func (n *Node) WrapChild(ctx context.Context, ops fs.InodeEmbedder) fs.InodeEmbe
 	if !ok {
 		return ops
 	}
-	return &Node{LoopbackNode: lb, mountName: n.mountName, rt: n.rt, db: n.db}
+	return &Node{LoopbackNode: lb, mountName: n.mountName, rt: n.rt, db: n.db, log: n.log, disk: n.disk}
 }
 
 // Lookup resolves a child entry using the router's read target order.
 func (n *Node) Lookup(ctx context.Context, name string, out *gofuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	return lookupChild(ctx, n.EmbeddedInode(), n.RootData, n.mountName, n.rt, n.db, name, out)
+	return lookupChild(ctx, n.EmbeddedInode(), n.RootData, n.mountName, n.rt, n.db, n.log, n.disk, name, out)
 }
 
 // Getattr reads attributes using the router's read target order.
@@ -85,10 +91,20 @@ func (n *Node) OpendirHandle(ctx context.Context, flags uint32) (fs.FileHandle, 
 func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
 	virtualPath := n.Path(n.Root())
 
+	var fh fs.FileHandle
+	var openFlags uint32
+	var errno syscall.Errno
 	if flags&gofuse.O_ANYWRITE != 0 {
-		return openFirst(ctx, n.rt, n.db, virtualPath, int(flags), true)
+		fh, openFlags, errno = openFirst(ctx, n.rt, n.db, virtualPath, int(flags), true)
+	} else {
+		fh, openFlags, errno = openFirst(ctx, n.rt, n.db, virtualPath, int(flags), false)
 	}
-	return openFirst(ctx, n.rt, n.db, virtualPath, int(flags), false)
+	if errno == 0 && n.disk != nil {
+		if h, ok := fh.(*FileHandle); ok {
+			n.disk.RecordOpen(ctx, h.storageID, virtualPath, h.indexed)
+		}
+	}
+	return fh, openFlags, errno
 }
 
 // Statfs returns filesystem stats based on the write target for the current path.

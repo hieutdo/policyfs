@@ -20,6 +20,11 @@ type IntegrationConfig struct {
 	// If empty, the harness defaults to 2 storages: ssd1 + ssd2.
 	Storages []IntegrationStorage
 
+	// MountArgs are extra arguments passed to `pfs mount <mount_name>`.
+	// Use this to enable optional debug features (e.g., disk access logging dedup/summary)
+	// in a test-specific way.
+	MountArgs []string
+
 	// AllowOther controls whether the mount enables FUSE allow_other.
 	AllowOther bool
 

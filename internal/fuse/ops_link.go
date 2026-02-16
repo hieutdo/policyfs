@@ -80,6 +80,6 @@ func (n *Node) Link(ctx context.Context, target fs.InodeEmbedder, name string, o
 	}
 	out.FromStat(&st)
 
-	ch := newChildInode(ctx, n.EmbeddedInode(), n.RootData, n.mountName, n.rt, n.db, uint32(st.Mode))
+	ch := newChildInode(ctx, n.EmbeddedInode(), n.RootData, n.mountName, n.rt, n.db, n.log, n.disk, uint32(st.Mode))
 	return ch, 0
 }

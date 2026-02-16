@@ -12,6 +12,7 @@ import (
 	"github.com/hieutdo/policyfs/internal/errkind"
 	"github.com/hieutdo/policyfs/internal/indexdb"
 	"github.com/hieutdo/policyfs/internal/router"
+	"github.com/rs/zerolog"
 )
 
 // openFirst opens a file by searching targets in the router-defined order.
@@ -81,8 +82,8 @@ func openFirst(ctx context.Context, rt *router.Router, db *indexdb.DB, virtualPa
 }
 
 // newChildInode creates a child inode with Node ops and stable mode derived from a stat mode.
-func newChildInode(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoot, mountName string, rt *router.Router, db *indexdb.DB, stMode uint32) *fs.Inode {
-	child := &Node{LoopbackNode: &fs.LoopbackNode{RootData: rootData}, mountName: mountName, rt: rt, db: db}
+func newChildInode(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoot, mountName string, rt *router.Router, db *indexdb.DB, log zerolog.Logger, disk *diskAccessLogger, stMode uint32) *fs.Inode {
+	child := &Node{LoopbackNode: &fs.LoopbackNode{RootData: rootData}, mountName: mountName, rt: rt, db: db, log: log, disk: disk}
 	typeMode := uint32(stMode & syscall.S_IFMT)
 	ch := parent.NewInode(ctx, child, fs.StableAttr{Mode: typeMode, Gen: 1})
 	return ch

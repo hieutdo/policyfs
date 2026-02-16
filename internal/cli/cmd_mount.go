@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
@@ -22,6 +24,9 @@ import (
 func newMountCmd(configPath *string) *cobra.Command {
 	var debug bool
 	var logFile string
+	var logDiskAccess bool
+	var dedupTTLSec int
+	var diskAccessSummarySec int
 
 	cmd := &cobra.Command{
 		Use:   "mount <mount>",
@@ -76,6 +81,45 @@ This command is typically managed by systemd as a service.`,
 			}
 			cmdLog := cfgLog.With().Str("component", "cli").Str("op", "mount").Logger()
 
+			dedupTTLChanged := false
+			if f := cmd.Flags().Lookup("dedup-ttl"); f != nil {
+				dedupTTLChanged = f.Changed
+			}
+			summaryChanged := false
+			if f := cmd.Flags().Lookup("disk-access-summary"); f != nil {
+				summaryChanged = f.Changed
+			}
+
+			if dedupTTLSec < 0 {
+				return &CLIError{Code: ExitUsage, Cmd: "mount", Headline: "invalid arguments", Cause: errors.New("--dedup-ttl must be >= 0"), Hint: "run 'pfs mount --help'"}
+			}
+			if diskAccessSummarySec < 0 {
+				return &CLIError{Code: ExitUsage, Cmd: "mount", Headline: "invalid arguments", Cause: errors.New("--disk-access-summary must be >= 0"), Hint: "run 'pfs mount --help'"}
+			}
+
+			envDiskAccess := strings.TrimSpace(os.Getenv(config.EnvLogDiskAccess))
+			diskAccessEnabled := logDiskAccess
+			if !diskAccessEnabled && envDiskAccess != "" {
+				switch strings.ToLower(envDiskAccess) {
+				case "0", "false", "no", "off":
+					// disabled
+				default:
+					diskAccessEnabled = true
+				}
+			}
+			if !diskAccessEnabled && (dedupTTLChanged || summaryChanged) {
+				cmdLog.Warn().
+					Int("dedup_ttl_sec", dedupTTLSec).
+					Int("disk_access_summary_sec", diskAccessSummarySec).
+					Msg("disk access logging disabled")
+			}
+
+			diskCfg := pfsfuse.DiskAccessConfig{
+				Enabled:         diskAccessEnabled,
+				DedupTTL:        time.Duration(dedupTTLSec) * time.Second,
+				SummaryInterval: time.Duration(diskAccessSummarySec) * time.Second,
+			}
+
 			var idxDB *indexdb.DB
 			for _, sp := range mountCfg.StoragePaths {
 				if sp.Indexed {
@@ -90,7 +134,7 @@ This command is typically managed by systemd as a service.`,
 				defer func() { _ = idxDB.Close() }()
 			}
 
-			root, err := pfsfuse.NewRoot(mountName, mountCfg, source, idxDB)
+			root, err := pfsfuse.NewRoot(mountName, mountCfg, source, idxDB, cfgLog, diskCfg)
 			if err != nil {
 				return &CLIError{Code: ExitFail, Cmd: "mount", Headline: fmt.Sprintf("invalid config: %s", *configPath), Cause: rootCause(err)}
 			}
@@ -113,6 +157,47 @@ This command is typically managed by systemd as a service.`,
 				}
 				return &CLIError{Code: ExitFail, Cmd: "mount", Headline: "unexpected error", Cause: rootCause(err)}
 			}
+
+			idxDBPath := ""
+			if idxDB != nil {
+				idxDBPath = idxDB.Path
+			}
+			storageIDs := make([]string, 0, len(mountCfg.StoragePaths))
+			indexedStorageIDs := make([]string, 0, len(mountCfg.StoragePaths))
+			for _, sp := range mountCfg.StoragePaths {
+				storageIDs = append(storageIDs, sp.ID)
+				if sp.Indexed {
+					indexedStorageIDs = append(indexedStorageIDs, sp.ID)
+				}
+			}
+
+			cmdLog.Debug().
+				Str("config_path", *configPath).
+				Str("mount", mountName).
+				Str("mountpoint", mountCfg.MountPoint).
+				Str("source_root", source).
+				Str("state_dir", config.StateDir()).
+				Str("runtime_dir", config.RuntimeDir()).
+				Str("mount_state_dir", config.MountStateDir(mountName)).
+				Str("mount_runtime_dir", config.MountRuntimeDir(mountName)).
+				Str("log_level", rootCfg.Log.Level).
+				Str("log_format", rootCfg.Log.Format).
+				Str("log_file", effectiveLogFilePath(logFile)).
+				Bool("disk_access_enabled", diskCfg.Enabled).
+				Int("disk_access_dedup_ttl_sec", dedupTTLSec).
+				Int("disk_access_summary_sec", diskAccessSummarySec).
+				Bool("index_db_enabled", idxDB != nil).
+				Str("index_db_path", idxDBPath).
+				Int("storage_count", len(storageIDs)).
+				Int("indexed_storage_count", len(indexedStorageIDs)).
+				Str("storage_ids", strings.Join(storageIDs, ",")).
+				Str("indexed_storage_ids", strings.Join(indexedStorageIDs, ",")).
+				Bool("fuse_allow_other", rootCfg.Fuse.AllowOther).
+				Bool("fuse_debug", debug).
+				Int("pid", os.Getpid()).
+				Int("uid", os.Getuid()).
+				Int("gid", os.Getgid()).
+				Msg("mount runtime")
 
 			cmdLog.Info().Str("mount", mountName).Str("mountpoint", mountCfg.MountPoint).Msg("mount ready")
 
@@ -142,6 +227,9 @@ This command is typically managed by systemd as a service.`,
 
 	cmd.Flags().BoolVar(&debug, "debug", false, "enable FUSE debug logging")
 	cmd.Flags().StringVar(&logFile, "log-file", "", fmt.Sprintf("path to log file (overrides %s)", config.EnvLogFile))
+	cmd.Flags().BoolVar(&logDiskAccess, "log-disk-access", false, fmt.Sprintf("enable disk access logging for indexed storage (debugging; can also set %s=1)", config.EnvLogDiskAccess))
+	cmd.Flags().IntVar(&dedupTTLSec, "dedup-ttl", 60, "disk access log dedup TTL in seconds (0=disabled)")
+	cmd.Flags().IntVar(&diskAccessSummarySec, "disk-access-summary", 60, "disk access summary interval in seconds (0=disabled)")
 
 	return cmd
 }

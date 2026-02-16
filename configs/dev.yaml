@@ -2,8 +2,8 @@ fuse:
   allow_other: true
 
 log:
-  level: info
-  format: json
+  level: debug
+  format: text
 
 mounts:
   media:

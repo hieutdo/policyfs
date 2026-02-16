@@ -28,6 +28,7 @@ const (
 	EnvTZ                          = "TZ"
 	EnvConfigFile                  = "PFS_CONFIG_FILE"
 	EnvLogFile                     = "PFS_LOG_FILE"
+	EnvLogDiskAccess               = "PFS_LOG_DISK_ACCESS"
 	EnvStateDir                    = "PFS_STATE_DIR"
 	EnvRuntimeDir                  = "PFS_RUNTIME_DIR"
 	EnvIntegrationCover            = "PFS_INTEGRATION_COVER"
