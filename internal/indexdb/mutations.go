@@ -51,6 +51,244 @@ func splitParentName(p string) (parentDir string, name string) {
 	return parentDir, name
 }
 
+// UpsertFile upserts a file/dir entry while preserving last_seen_run_id for existing rows.
+//
+// For new rows, it sets last_seen_run_id to the current indexer_state.current_run_id when available.
+// It never resurrects deleted=1 tombstones; such conflicts are returned as syscall.EBUSY.
+// It also ensures all parent directories exist as is_dir entries so the file becomes visible
+// immediately via DB-backed lookup/readdir.
+func (d *DB) UpsertFile(ctx context.Context, storageID string, p string, isDir bool, sizeBytes *int64, mtimeSec int64, mode uint32, uid uint32, gid uint32) error {
+	if d == nil || d.sqlDB == nil {
+		return &errkind.NilError{What: "index db"}
+	}
+	storageID = strings.TrimSpace(storageID)
+	p = normalizeVirtualPath(p)
+	if storageID == "" {
+		return &errkind.RequiredError{What: "storage id"}
+	}
+	if p == "" {
+		return syscall.EPERM
+	}
+
+	tx, err := d.sqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	lastSeenAny, err := currentRunIDForInsertTx(ctx, tx, storageID)
+	if err != nil {
+		return err
+	}
+
+	parentDir, name := splitParentName(p)
+	if parentDir != "" {
+		if err := ensureDirChainTx(ctx, tx, storageID, parentDir, mtimeSec, mode, uid, gid); err != nil {
+			return err
+		}
+	}
+
+	if err := rejectDeletedOrTypeMismatchTx(ctx, tx, storageID, p, isDir); err != nil {
+		return err
+	}
+
+	if err := upsertFileRowPreserveRunIDTx(ctx, tx, storageID, p, parentDir, name, isDir, sizeBytes, mtimeSec, mode, uid, gid, lastSeenAny); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit upsert: %w", err)
+	}
+	return nil
+}
+
+// currentRunIDForInsertTx returns the last_seen_run_id value to use when inserting a new row.
+func currentRunIDForInsertTx(ctx context.Context, tx *sql.Tx, storageID string) (any, error) {
+	if tx == nil {
+		return nil, &errkind.NilError{What: "tx"}
+	}
+	if strings.TrimSpace(storageID) == "" {
+		return nil, &errkind.RequiredError{What: "storage id"}
+	}
+
+	_, err := tx.ExecContext(ctx, `INSERT INTO indexer_state (storage_id, current_run_id) VALUES (?, 0)
+ON CONFLICT(storage_id) DO NOTHING;`, storageID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to ensure indexer_state row: %w", err)
+	}
+
+	var cur int64
+	if err := tx.QueryRowContext(ctx, `SELECT current_run_id FROM indexer_state WHERE storage_id = ?;`, storageID).Scan(&cur); err != nil {
+		return nil, fmt.Errorf("failed to read current run id: %w", err)
+	}
+	if cur <= 0 {
+		return nil, nil
+	}
+	return cur, nil
+}
+
+// ensureDirChainTx ensures a directory path and all its ancestors exist as live is_dir entries.
+func ensureDirChainTx(ctx context.Context, tx *sql.Tx, storageID string, dir string, mtimeSec int64, mode uint32, uid uint32, gid uint32) error {
+	dir = normalizeVirtualPath(dir)
+	if dir == "" {
+		return nil
+	}
+
+	dirMode := uint32(syscall.S_IFDIR | 0o755)
+
+	parts := strings.Split(dir, "/")
+	cur := ""
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if cur == "" {
+			cur = part
+		} else {
+			cur = cur + "/" + part
+		}
+
+		if err := rejectDeletedOrTypeMismatchTx(ctx, tx, storageID, cur, true); err != nil {
+			return err
+		}
+		parentDir, name := splitParentName(cur)
+		if err := upsertFileRowPreserveRunIDTx(ctx, tx, storageID, cur, parentDir, name, true, nil, mtimeSec, dirMode, uid, gid, nil); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// rejectDeletedOrTypeMismatchTx returns syscall.EBUSY for deleted=1 entries and ENOTDIR/EISDIR for type mismatches.
+func rejectDeletedOrTypeMismatchTx(ctx context.Context, tx *sql.Tx, storageID string, p string, wantDir bool) error {
+	if tx == nil {
+		return &errkind.NilError{What: "tx"}
+	}
+	storageID = strings.TrimSpace(storageID)
+	p = normalizeVirtualPath(p)
+	if storageID == "" {
+		return &errkind.RequiredError{What: "storage id"}
+	}
+	if p == "" {
+		return syscall.EPERM
+	}
+
+	row := tx.QueryRowContext(ctx, `SELECT is_dir, deleted FROM files WHERE storage_id = ? AND path = ? LIMIT 1;`, storageID, p)
+	var isDirInt int64
+	var deleted sql.NullInt64
+	if err := row.Scan(&isDirInt, &deleted); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return fmt.Errorf("failed to query entry: %w", err)
+	}
+	if deleted.Valid && deleted.Int64 == 1 {
+		return syscall.EBUSY
+	}
+	if deleted.Valid && deleted.Int64 == 0 {
+		isDir := isDirInt != 0
+		if wantDir && !isDir {
+			return syscall.ENOTDIR
+		}
+		if !wantDir && isDir {
+			return syscall.EISDIR
+		}
+	}
+	return nil
+}
+
+// upsertFileRowPreserveRunIDTx upserts one row while preserving last_seen_run_id for existing entries.
+func upsertFileRowPreserveRunIDTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	storageID string,
+	p string,
+	parentDir string,
+	name string,
+	isDir bool,
+	sizeBytes *int64,
+	mtimeSec int64,
+	mode uint32,
+	uid uint32,
+	gid uint32,
+	insertLastSeen any,
+) error {
+	if tx == nil {
+		return &errkind.NilError{What: "tx"}
+	}
+	storageID = strings.TrimSpace(storageID)
+	p = normalizeVirtualPath(p)
+	if storageID == "" {
+		return &errkind.RequiredError{What: "storage id"}
+	}
+	if p == "" {
+		return syscall.EPERM
+	}
+
+	var size any
+	if !isDir && sizeBytes != nil {
+		size = *sizeBytes
+	} else {
+		size = nil
+	}
+	isDirInt := 0
+	if isDir {
+		isDirInt = 1
+	}
+
+	_, err := tx.ExecContext(
+		ctx,
+		`INSERT INTO files (
+		    storage_id, path, real_path, parent_dir, name, is_dir,
+		    size, mtime, mode, uid, gid,
+		    deleted, last_seen_run_id,
+		    file_count, total_files, total_bytes
+		)
+		VALUES (
+		    ?, ?, ?, ?, ?, ?,
+		    ?, ?, ?, ?, ?,
+		    0, ?,
+		    0, 0, 0
+		)
+		ON CONFLICT (storage_id, path) DO UPDATE SET
+		    parent_dir = excluded.parent_dir,
+		    name = excluded.name,
+		    real_path = CASE
+		        WHEN files.real_path != '' AND files.real_path != files.path THEN files.real_path
+		        ELSE excluded.real_path
+		    END,
+		    is_dir = excluded.is_dir,
+		    size = excluded.size,
+		    mtime = excluded.mtime,
+		    mode = excluded.mode,
+		    uid = excluded.uid,
+		    gid = excluded.gid,
+		    deleted = CASE
+		        WHEN files.deleted = 1 THEN 1
+		        ELSE 0
+		    END,
+		    last_seen_run_id = files.last_seen_run_id;`,
+		storageID,
+		p,
+		p,
+		parentDir,
+		name,
+		isDirInt,
+		size,
+		mtimeSec,
+		mode,
+		uid,
+		gid,
+		insertLastSeen,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to upsert file: %w", err)
+	}
+	return nil
+}
+
 // MarkDeleted soft-deletes a file or directory (optionally its subtree) by setting deleted=1.
 // It enforces POSIX-ish semantics from the mounted view (ENOENT/ENOTEMPTY/ENOTDIR/EISDIR).
 func (d *DB) MarkDeleted(ctx context.Context, storageID string, p string, isDir bool) (bool, error) {

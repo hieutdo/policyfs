@@ -1,6 +1,7 @@
 package fuse
 
 import (
+	"context"
 	"errors"
 	"syscall"
 
@@ -13,9 +14,21 @@ const (
 )
 
 // toErrno maps domain errors to stable errno values per spec.
+//
+// This function handles context cancellation errors that fs.ToErrno cannot
+// convert (it only recognizes unwrapped syscall.Errno values). Without this,
+// wrapped context errors like "failed to lookup: ... context canceled" are
+// converted to ENOSYS ("function not implemented"), which is confusing and
+// causes flaky FUSE operations under DB connection contention.
 func toErrno(err error) syscall.Errno {
 	if err == nil {
 		return 0
+	}
+	if errors.Is(err, context.Canceled) {
+		return syscall.EINTR
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return syscall.ETIMEDOUT
 	}
 	if errors.Is(err, router.ErrNoRuleMatched) {
 		return syscall.EROFS

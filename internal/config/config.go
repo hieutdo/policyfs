@@ -19,6 +19,9 @@ const (
 	DefaultDaemonLockFile = "daemon.lock"
 	DefaultJobLockFile    = "job.lock"
 	DefaultWritePolicy    = "first_found"
+	DefaultMovePolicy     = "most_free"
+	DefaultMoveStartPct   = 80
+	DefaultMoveStopPct    = 70
 )
 
 const (
@@ -115,6 +118,63 @@ type MountConfig struct {
 	StorageGroups map[string][]string `yaml:"storage_groups"`
 	RoutingRules  []RoutingRule       `yaml:"routing_rules"`
 	Indexer       IndexerConfig       `yaml:"indexer"`
+	Mover         MoverConfig         `yaml:"mover"`
+}
+
+// MoverConfig controls mover jobs for a mount.
+type MoverConfig struct {
+	Enabled *bool            `yaml:"enabled"`
+	Jobs    []MoverJobConfig `yaml:"jobs"`
+}
+
+// MoverJobConfig defines a single move job.
+type MoverJobConfig struct {
+	Name          string                 `yaml:"name"`
+	Description   string                 `yaml:"description"`
+	Trigger       MoverTriggerConfig     `yaml:"trigger"`
+	AllowedWindow *MoverAllowedWindow    `yaml:"allowed_window"`
+	Source        MoverSourceConfig      `yaml:"source"`
+	Destination   MoverDestinationConfig `yaml:"destination"`
+	Conditions    MoverConditionsConfig  `yaml:"conditions"`
+	DeleteSource  *bool                  `yaml:"delete_source"`
+	Verify        *bool                  `yaml:"verify"`
+}
+
+// MoverTriggerConfig defines when a job should run.
+type MoverTriggerConfig struct {
+	Type           string              `yaml:"type"`
+	ThresholdStart int                 `yaml:"threshold_start"`
+	ThresholdStop  int                 `yaml:"threshold_stop"`
+	AllowedWindow  *MoverAllowedWindow `yaml:"allowed_window"`
+}
+
+// MoverAllowedWindow restricts usage-triggered runs to a time window.
+type MoverAllowedWindow struct {
+	Start         string `yaml:"start"`
+	End           string `yaml:"end"`
+	FinishCurrent *bool  `yaml:"finish_current"`
+}
+
+// MoverSourceConfig defines where candidates come from.
+type MoverSourceConfig struct {
+	Paths    []string `yaml:"paths"`
+	Groups   []string `yaml:"groups"`
+	Patterns []string `yaml:"patterns"`
+}
+
+// MoverDestinationConfig defines where candidates are moved to.
+type MoverDestinationConfig struct {
+	Paths          []string `yaml:"paths"`
+	Groups         []string `yaml:"groups"`
+	Policy         string   `yaml:"policy"`
+	PathPreserving bool     `yaml:"path_preserving"`
+}
+
+// MoverConditionsConfig filters candidates.
+type MoverConditionsConfig struct {
+	MinAge  string `yaml:"min_age"`
+	MinSize string `yaml:"min_size"`
+	MaxSize string `yaml:"max_size"`
 }
 
 // IndexerConfig controls the indexer behavior for indexed storage paths.
@@ -170,6 +230,43 @@ func (c *RootConfig) applyDefaults() {
 			wp := strings.TrimSpace(m.RoutingRules[i].WritePolicy)
 			if wp == "" {
 				m.RoutingRules[i].WritePolicy = DefaultWritePolicy
+			}
+		}
+
+		if m.Mover.Enabled == nil {
+			en := true
+			m.Mover.Enabled = &en
+		}
+		for i := range m.Mover.Jobs {
+			j := &m.Mover.Jobs[i]
+
+			if j.AllowedWindow == nil && j.Trigger.AllowedWindow != nil {
+				j.AllowedWindow = j.Trigger.AllowedWindow
+			}
+			if j.AllowedWindow != nil && j.AllowedWindow.FinishCurrent == nil {
+				fc := true
+				j.AllowedWindow.FinishCurrent = &fc
+			}
+			if strings.TrimSpace(j.Destination.Policy) == "" {
+				j.Destination.Policy = DefaultMovePolicy
+			}
+			if j.DeleteSource == nil {
+				ds := true
+				j.DeleteSource = &ds
+			}
+			if j.Verify == nil {
+				v := true
+				j.Verify = &v
+			}
+
+			tt := strings.TrimSpace(j.Trigger.Type)
+			if tt == "usage" {
+				if j.Trigger.ThresholdStart == 0 {
+					j.Trigger.ThresholdStart = DefaultMoveStartPct
+				}
+				if j.Trigger.ThresholdStop == 0 {
+					j.Trigger.ThresholdStop = DefaultMoveStopPct
+				}
 			}
 		}
 		c.Mounts[mountName] = m

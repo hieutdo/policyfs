@@ -3,6 +3,7 @@ module github.com/hieutdo/policyfs
 go 1.25
 
 require (
+	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/dustin/go-humanize v1.0.1
 	github.com/hanwen/go-fuse/v2 v2.9.0
 	github.com/mattn/go-sqlite3 v1.14.33

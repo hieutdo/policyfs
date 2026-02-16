@@ -43,7 +43,7 @@ func openFirst(ctx context.Context, rt *router.Router, db *indexdb.DB, virtualPa
 			}
 			f, ok, err := db.GetEffectiveFile(ctx, t.ID, virtualPath)
 			if err != nil {
-				return nil, 0, fs.ToErrno(err)
+				return nil, 0, toErrno(err)
 			}
 			if !ok || f.IsDir {
 				continue

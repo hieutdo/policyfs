@@ -72,7 +72,7 @@ func (n *Node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 			}
 			_, ok, err := n.db.GetEffectiveFile(ctx, t.ID, oldVirtualPath)
 			if err != nil {
-				return fs.ToErrno(fmt.Errorf("failed to lookup indexed source: %w", err))
+				return toErrno(fmt.Errorf("failed to lookup indexed source: %w", err))
 			}
 			if ok {
 				srcTarget = t
@@ -82,7 +82,7 @@ func (n *Node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 			}
 			dirOK, err := n.db.DirExists(ctx, t.ID, oldVirtualPath)
 			if err != nil {
-				return fs.ToErrno(fmt.Errorf("failed to lookup indexed source dir: %w", err))
+				return toErrno(fmt.Errorf("failed to lookup indexed source dir: %w", err))
 			}
 			if dirOK {
 				srcTarget = t

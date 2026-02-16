@@ -70,8 +70,9 @@ func newRootCmd() *cobra.Command {
 		Short: "PolicyFS (pfs) - rule based filesystem",
 		Long: `A FUSE filesystem that merges multiple storage roots using matching rules.
 Optional indexing reduces disk wake-ups during metadata reads.`,
-		SilenceUsage:  true,
-		SilenceErrors: true,
+		SilenceUsage:       true,
+		SilenceErrors:      true,
+		DisableSuggestions: true,
 	}
 
 	cmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
@@ -88,6 +89,7 @@ Optional indexing reduces disk wake-ups during metadata reads.`,
 
 	cmd.AddCommand(newMountCmd(&configPath))
 	cmd.AddCommand(newIndexCmd(&configPath))
+	cmd.AddCommand(newMoveCmd(&configPath))
 	cmd.AddCommand(newPruneCmd(&configPath))
 	cmd.AddCommand(newDoctorCmd(&configPath))
 	cmd.AddCommand(newVersionCmd())

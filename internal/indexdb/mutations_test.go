@@ -429,3 +429,59 @@ func TestFinalizeRename_shouldOverwriteTargetWhenRenamePathNotVisible(t *testing
 	err := db.SQL().QueryRow(`SELECT 1 FROM files WHERE storage_id = ? AND path = ?;`, "hdd1", "a/src.txt").Scan(&one)
 	require.ErrorIs(t, err, sql.ErrNoRows)
 }
+
+// TestUpsertFile_shouldCreateDirChain verifies UpsertFile creates parent directory rows so the file is visible.
+func TestUpsertFile_shouldCreateDirChain(t *testing.T) {
+	db := mustOpenTestDB(t)
+	ctx := context.Background()
+
+	sz := int64(123)
+	require.NoError(t, db.UpsertFile(ctx, "hdd1", "a/b/c.txt", false, &sz, 10, uint32(syscall.S_IFREG|0o644), 0, 0))
+
+	// Parents should exist.
+	for _, p := range []string{"a", "a/b"} {
+		var one int
+		err := db.SQL().QueryRow(`SELECT 1 FROM files WHERE storage_id = ? AND path = ? AND is_dir = 1 AND deleted = 0;`, "hdd1", p).Scan(&one)
+		require.NoError(t, err)
+	}
+
+	// File row should exist.
+	var one int
+	err := db.SQL().QueryRow(`SELECT 1 FROM files WHERE storage_id = ? AND path = ? AND is_dir = 0 AND deleted = 0;`, "hdd1", "a/b/c.txt").Scan(&one)
+	require.NoError(t, err)
+}
+
+// TestUpsertFile_shouldReturnBusyForDeletedTombstone verifies UpsertFile does not resurrect deleted=1.
+func TestUpsertFile_shouldReturnBusyForDeletedTombstone(t *testing.T) {
+	db := mustOpenTestDB(t)
+	ctx := context.Background()
+
+	mustInsertEntry(t, db, "hdd1", "a", true, 0)
+	mustInsertEntry(t, db, "hdd1", "a/f.txt", false, 1)
+
+	sz := int64(1)
+	err := db.UpsertFile(ctx, "hdd1", "a/f.txt", false, &sz, 10, uint32(syscall.S_IFREG|0o644), 0, 0)
+	require.ErrorIs(t, err, syscall.EBUSY)
+}
+
+// TestUpsertFile_shouldPreserveLastSeenRunID verifies UpsertFile keeps last_seen_run_id for existing rows.
+func TestUpsertFile_shouldPreserveLastSeenRunID(t *testing.T) {
+	db := mustOpenTestDB(t)
+	ctx := context.Background()
+
+	mustInsertEntry(t, db, "hdd1", "a", true, 0)
+	mustInsertEntry(t, db, "hdd1", "a/f.txt", false, 0)
+
+	// Set an initial last_seen_run_id.
+	_, err := db.SQL().Exec(`UPDATE files SET last_seen_run_id = 7 WHERE storage_id = ? AND path = ?;`, "hdd1", "a/f.txt")
+	require.NoError(t, err)
+
+	sz := int64(99)
+	require.NoError(t, db.UpsertFile(ctx, "hdd1", "a/f.txt", false, &sz, 11, uint32(syscall.S_IFREG|0o600), 1, 2))
+
+	var runID sql.NullInt64
+	err = db.SQL().QueryRow(`SELECT last_seen_run_id FROM files WHERE storage_id = ? AND path = ?;`, "hdd1", "a/f.txt").Scan(&runID)
+	require.NoError(t, err)
+	require.True(t, runID.Valid)
+	require.Equal(t, int64(7), runID.Int64)
+}

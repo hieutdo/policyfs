@@ -194,11 +194,17 @@ func schemaLooksMerged(db *sql.DB) (ok bool, retErr error) {
 	return true, nil
 }
 
-// Close closes the underlying SQL database.
+// Close checkpoints the WAL and closes the underlying SQL database.
+//
+// TRUNCATE checkpoint flushes all committed WAL frames to the main DB file
+// and resets the WAL to zero length. This ensures cross-process visibility
+// in environments where WAL-index (SHM) mmap sharing is unreliable
+// (e.g. Docker with VirtioFS bind mounts).
 func (d *DB) Close() error {
 	if d == nil || d.sqlDB == nil {
 		return nil
 	}
+	_, _ = d.sqlDB.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
 	err := d.sqlDB.Close()
 	if err != nil {
 		return fmt.Errorf("failed to close index db: %w", err)

@@ -65,7 +65,7 @@ func lookupChild(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoo
 
 		f, ok, err := db.GetEffectiveFile(ctx, t.ID, childPath)
 		if err != nil {
-			return nil, fs.ToErrno(fmt.Errorf("failed to lookup indexed file: %w", err))
+			return nil, toErrno(fmt.Errorf("failed to lookup indexed file: %w", err))
 		}
 		if ok {
 			out.Size = uint64(f.Size)
@@ -84,7 +84,7 @@ func lookupChild(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoo
 
 		dirOK, err := db.DirExists(ctx, t.ID, childPath)
 		if err != nil {
-			return nil, fs.ToErrno(fmt.Errorf("failed to lookup indexed dir: %w", err))
+			return nil, toErrno(fmt.Errorf("failed to lookup indexed dir: %w", err))
 		}
 		if dirOK {
 			out.Size = 0
@@ -140,7 +140,7 @@ func getattrPath(ctx context.Context, ino *fs.Inode, rt *router.Router, db *inde
 
 		f, ok, err := db.GetEffectiveFile(ctx, t.ID, virtualPath)
 		if err != nil {
-			return fs.ToErrno(fmt.Errorf("failed to getattr indexed file: %w", err))
+			return toErrno(fmt.Errorf("failed to getattr indexed file: %w", err))
 		}
 		if ok {
 			out.Size = uint64(f.Size)
@@ -155,7 +155,7 @@ func getattrPath(ctx context.Context, ino *fs.Inode, rt *router.Router, db *inde
 
 		dirOK, err := db.DirExists(ctx, t.ID, virtualPath)
 		if err != nil {
-			return fs.ToErrno(fmt.Errorf("failed to getattr indexed dir: %w", err))
+			return toErrno(fmt.Errorf("failed to getattr indexed dir: %w", err))
 		}
 		if dirOK {
 			out.Size = 0
@@ -284,7 +284,7 @@ func listDirEntriesForVirtualPath(ctx context.Context, virtualPath string, rt *r
 		}
 		list, ok, err := db.ListDirEntries(ctx, t.ID, virtualPath)
 		if err != nil {
-			return nil, fs.ToErrno(fmt.Errorf("failed to readdir indexed dir: %w", err))
+			return nil, toErrno(fmt.Errorf("failed to readdir indexed dir: %w", err))
 		}
 		if !ok {
 			continue

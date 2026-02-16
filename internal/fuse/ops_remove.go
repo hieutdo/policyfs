@@ -52,7 +52,7 @@ func (n *Node) Unlink(ctx context.Context, name string) syscall.Errno {
 		}
 		f, ok, err := n.db.GetEffectiveFile(ctx, t.ID, virtualPath)
 		if err != nil {
-			return fs.ToErrno(fmt.Errorf("failed to lookup indexed file: %w", err))
+			return toErrno(fmt.Errorf("failed to lookup indexed file: %w", err))
 		}
 		if !ok {
 			continue
@@ -115,7 +115,7 @@ func (n *Node) Rmdir(ctx context.Context, name string) syscall.Errno {
 		}
 		f, ok, err := n.db.GetEffectiveFile(ctx, t.ID, virtualPath)
 		if err != nil {
-			return fs.ToErrno(fmt.Errorf("failed to lookup indexed dir: %w", err))
+			return toErrno(fmt.Errorf("failed to lookup indexed dir: %w", err))
 		}
 		if !ok {
 			continue

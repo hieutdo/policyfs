@@ -21,8 +21,12 @@ import (
 const (
 	workspace = "/workspace"
 	pfsSrc    = "/workspace/cmd/pfs"
-	pfsBin    = "/workspace/tmp/pfs-integration/bin/pfs"
-	tmpDir    = "/workspace/tmp/pfs-integration"
+	pfsBin    = "/usr/local/bin/pfs"
+	// tmpDir holds per-test SQLite index databases and runtime state.
+	// It MUST be on a filesystem that supports mmap sharing across processes
+	// (ext4/overlay), NOT a VirtioFS bind mount where SQLite WAL SHM mmap
+	// does not propagate cross-process writes.
+	tmpDir    = "/tmp/pfs-integration"
 	mountBase = "/mnt/pfs/pfs-integration"
 )
 
@@ -430,15 +434,20 @@ func writeIntegrationConfig(path string, mountName string, mountPoint string, st
 		rules = []config.RoutingRule{{Match: "**", Targets: targets, ReadTargets: readTargets}}
 	}
 
+	mountCfg := config.MountConfig{
+		MountPoint:    mountPoint,
+		StoragePaths:  storagePaths,
+		StorageGroups: cfg.StorageGroups,
+		RoutingRules:  rules,
+	}
+	if cfg.Mover != nil {
+		mountCfg.Mover = *cfg.Mover
+	}
+
 	rootCfg := config.RootConfig{
 		Fuse: config.FuseConfig{AllowOther: cfg.AllowOther},
 		Mounts: map[string]config.MountConfig{
-			mountName: {
-				MountPoint:    mountPoint,
-				StoragePaths:  storagePaths,
-				StorageGroups: cfg.StorageGroups,
-				RoutingRules:  rules,
-			},
+			mountName: mountCfg,
 		},
 	}
 

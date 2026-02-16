@@ -35,6 +35,9 @@ type IntegrationConfig struct {
 
 	// ReadTargets controls the read target ordering for the catch-all rule.
 	ReadTargets []string
+
+	// Mover optionally configures mount.mover.
+	Mover *config.MoverConfig
 }
 
 // IntegrationStorage describes a single test storage backend.

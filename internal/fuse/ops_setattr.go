@@ -68,7 +68,7 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 			}
 			_, ok, err := n.db.GetEffectiveFile(ctx, t.ID, virtualPath)
 			if err != nil {
-				return fs.ToErrno(fmt.Errorf("failed to getattr indexed entry: %w", err))
+				return toErrno(fmt.Errorf("failed to getattr indexed entry: %w", err))
 			}
 			if ok {
 				indexed = true
@@ -78,7 +78,7 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 			}
 			dirOK, err := n.db.DirExists(ctx, t.ID, virtualPath)
 			if err != nil {
-				return fs.ToErrno(fmt.Errorf("failed to getattr indexed dir: %w", err))
+				return toErrno(fmt.Errorf("failed to getattr indexed dir: %w", err))
 			}
 			if dirOK {
 				indexed = true
@@ -98,7 +98,7 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 		}
 		cur, ok, err := n.db.GetEffectiveFile(ctx, indexedStorageID, virtualPath)
 		if err != nil {
-			return fs.ToErrno(fmt.Errorf("failed to getattr indexed file: %w", err))
+			return toErrno(fmt.Errorf("failed to getattr indexed file: %w", err))
 		}
 		if !ok {
 			return syscall.ENOENT
@@ -164,7 +164,7 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 
 		cur, ok, err = n.db.GetEffectiveFile(ctx, indexedStorageID, virtualPath)
 		if err != nil {
-			return fs.ToErrno(fmt.Errorf("failed to getattr indexed file: %w", err))
+			return toErrno(fmt.Errorf("failed to getattr indexed file: %w", err))
 		}
 		if !ok {
 			return syscall.ENOENT

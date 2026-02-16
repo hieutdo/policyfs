@@ -6,8 +6,10 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/hieutdo/policyfs/internal/config"
+	"github.com/hieutdo/policyfs/internal/humanfmt"
 )
 
 var mountNameRE = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
@@ -201,6 +203,15 @@ func validateConfigAll(c *config.RootConfig) []error {
 			return false
 		}
 
+		isStorageID := func(id string) bool {
+			_, ok := storageIDs[id]
+			return ok
+		}
+		isGroupID := func(id string) bool {
+			_, ok := groupIDs[id]
+			return ok
+		}
+
 		for i, r := range m.RoutingRules {
 			for _, t := range r.Targets {
 				if !isKnownTarget(t) {
@@ -222,6 +233,139 @@ func validateConfigAll(c *config.RootConfig) []error {
 				case "first_found", "most_free", "least_free":
 				default:
 					errList = append(errList, fmt.Errorf("config: mount %q: routing_rules[%d].write_policy is invalid", mountName, i))
+				}
+			}
+		}
+
+		enabled := true
+		if m.Mover.Enabled != nil {
+			enabled = *m.Mover.Enabled
+		}
+		if enabled {
+			seenJobs := map[string]struct{}{}
+			for ji, j := range m.Mover.Jobs {
+				if strings.TrimSpace(j.Name) == "" {
+					errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].name is required", mountName, ji))
+				} else {
+					if _, dup := seenJobs[j.Name]; dup {
+						errList = append(errList, fmt.Errorf("config: mount %q: duplicate mover job name %q", mountName, j.Name))
+					}
+					seenJobs[j.Name] = struct{}{}
+				}
+
+				tt := strings.TrimSpace(j.Trigger.Type)
+				switch tt {
+				case "usage", "manual":
+				default:
+					errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].trigger.type is required and must be 'usage' or 'manual'", mountName, ji))
+				}
+				if tt == "usage" {
+					if j.Trigger.ThresholdStart < 1 || j.Trigger.ThresholdStart > 100 {
+						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].trigger.threshold_start must be 1..100", mountName, ji))
+					}
+					if j.Trigger.ThresholdStop < 1 || j.Trigger.ThresholdStop > 100 {
+						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].trigger.threshold_stop must be 1..100", mountName, ji))
+					}
+					if j.Trigger.ThresholdStop >= j.Trigger.ThresholdStart {
+						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].trigger.threshold_stop must be < threshold_start", mountName, ji))
+					}
+				}
+
+				aw := j.AllowedWindow
+				taw := j.Trigger.AllowedWindow
+				if aw != nil && taw != nil {
+					if aw.Start != taw.Start || aw.End != taw.End {
+						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d] has both allowed_window and trigger.allowed_window with different values", mountName, ji))
+					}
+					if aw.FinishCurrent != nil && taw.FinishCurrent != nil && *aw.FinishCurrent != *taw.FinishCurrent {
+						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d] has both allowed_window and trigger.allowed_window with different finish_current values", mountName, ji))
+					}
+				}
+				if aw == nil {
+					aw = taw
+				}
+				if aw != nil {
+					if tt != "usage" {
+						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].allowed_window is only valid for trigger.type=usage", mountName, ji))
+					}
+					if strings.TrimSpace(aw.Start) == "" {
+						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].allowed_window.start is required", mountName, ji))
+					} else if _, err := time.Parse("15:04", aw.Start); err != nil {
+						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].allowed_window.start must be HH:MM", mountName, ji))
+					}
+					if strings.TrimSpace(aw.End) == "" {
+						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].allowed_window.end is required", mountName, ji))
+					} else if _, err := time.Parse("15:04", aw.End); err != nil {
+						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].allowed_window.end must be HH:MM", mountName, ji))
+					}
+				}
+
+				if len(j.Source.Paths) == 0 && len(j.Source.Groups) == 0 {
+					errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].source.paths or source.groups is required", mountName, ji))
+				}
+				for _, sid := range j.Source.Paths {
+					if !isStorageID(sid) {
+						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].source.paths references unknown id %q", mountName, ji, sid))
+					}
+				}
+				for _, gid := range j.Source.Groups {
+					if !isGroupID(gid) {
+						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].source.groups references unknown id %q", mountName, ji, gid))
+					}
+				}
+				if len(j.Source.Patterns) == 0 {
+					errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].source.patterns must not be empty", mountName, ji))
+				}
+				for pi, p := range j.Source.Patterns {
+					if strings.TrimSpace(p) == "" {
+						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].source.patterns[%d] must not be empty", mountName, ji, pi))
+					}
+				}
+
+				if len(j.Destination.Paths) == 0 && len(j.Destination.Groups) == 0 {
+					errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].destination.paths or destination.groups is required", mountName, ji))
+				}
+				for _, sid := range j.Destination.Paths {
+					if !isStorageID(sid) {
+						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].destination.paths references unknown id %q", mountName, ji, sid))
+					}
+				}
+				for _, gid := range j.Destination.Groups {
+					if !isGroupID(gid) {
+						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].destination.groups references unknown id %q", mountName, ji, gid))
+					}
+				}
+				switch strings.TrimSpace(j.Destination.Policy) {
+				case "", "first_found", "most_free", "least_free":
+				default:
+					errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].destination.policy is invalid", mountName, ji))
+				}
+
+				var minSizeBytes *int64
+				var maxSizeBytes *int64
+				if strings.TrimSpace(j.Conditions.MinAge) != "" {
+					if _, err := humanfmt.ParseDuration(j.Conditions.MinAge); err != nil {
+						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].conditions.min_age is invalid", mountName, ji))
+					}
+				}
+				if strings.TrimSpace(j.Conditions.MinSize) != "" {
+					v, err := humanfmt.ParseBytes(j.Conditions.MinSize)
+					if err != nil {
+						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].conditions.min_size is invalid", mountName, ji))
+					} else {
+						minSizeBytes = &v
+					}
+				}
+				if strings.TrimSpace(j.Conditions.MaxSize) != "" {
+					v, err := humanfmt.ParseBytes(j.Conditions.MaxSize)
+					if err != nil {
+						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].conditions.max_size is invalid", mountName, ji))
+					} else {
+						maxSizeBytes = &v
+					}
+				}
+				if minSizeBytes != nil && maxSizeBytes != nil && *minSizeBytes > *maxSizeBytes {
+					errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].conditions.min_size must be <= max_size", mountName, ji))
 				}
 			}
 		}
