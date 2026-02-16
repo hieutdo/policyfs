@@ -68,14 +68,14 @@ func (r *indexResponder) resetIndexDB(mountName string) error {
 	dlk, err := lock.AcquireMountLock(mountName, config.DefaultDaemonLockFile)
 	if err != nil {
 		if errors.Is(err, errkind.ErrBusy) {
-			return r.fail(ExitFail, "cannot reset while daemon is running", err, "stop 'pfs mount' and try again")
+			return r.fail(ExitFail, "cannot rebuild index db while daemon is running", err, "stop 'pfs mount' and try again")
 		}
 		return r.fail(ExitFail, "unexpected error", err, "")
 	}
 	defer func() { _ = dlk.Close() }()
 
 	if err := indexdb.Reset(mountName); err != nil {
-		return r.fail(ExitFail, "failed to reset index db", err, "")
+		return r.fail(ExitFail, "failed to rebuild index db", err, "")
 	}
 	return nil
 }

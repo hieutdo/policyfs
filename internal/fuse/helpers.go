@@ -8,6 +8,7 @@ import (
 	"syscall"
 
 	"github.com/hanwen/go-fuse/v2/fs"
+	gofuse "github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/hieutdo/policyfs/internal/errkind"
 	"github.com/hieutdo/policyfs/internal/indexdb"
 	"github.com/hieutdo/policyfs/internal/router"
@@ -85,6 +86,37 @@ func newChildInode(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackR
 	typeMode := uint32(stMode & syscall.S_IFMT)
 	ch := parent.NewInode(ctx, child, fs.StableAttr{Mode: typeMode, Gen: 1})
 	return ch
+}
+
+// statfsWriteTarget resolves write targets for a virtual path and populates out
+// with the filesystem stats of the first write target. Returns true if stats
+// were successfully populated, false if the caller should fall back.
+func statfsWriteTarget(rt *router.Router, virtualPath string, out *gofuse.StatfsOut) bool {
+	if rt == nil {
+		return false
+	}
+	// Prefer selecting the actual write target so Statfs matches create/mkdir routing
+	// (write_policy, path_preserving, min_free_gb filtering).
+	if t, err := rt.SelectWriteTarget(virtualPath); err == nil {
+		var st syscall.Statfs_t
+		if err := syscall.Statfs(t.Root, &st); err == nil {
+			out.FromStatfsT(&st)
+			return true
+		}
+	}
+
+	// Fallback: if write target selection fails for any reason, report the first
+	// resolved write target in routing order.
+	targets, err := rt.ResolveWriteTargets(virtualPath)
+	if err != nil || len(targets) == 0 {
+		return false
+	}
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(targets[0].Root, &st); err != nil {
+		return false
+	}
+	out.FromStatfsT(&st)
+	return true
 }
 
 // firstExistingPhysical resolves the first existing target and its physical path.

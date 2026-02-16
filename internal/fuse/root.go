@@ -91,6 +91,21 @@ func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 	return openFirst(ctx, n.rt, n.db, virtualPath, int(flags), false)
 }
 
+// Statfs returns filesystem stats based on the write target for the current path.
+//
+// The default loopback Statfs reports stats for the primaryRootPath filesystem,
+// which may differ from where writes actually land. This override resolves write
+// targets via the router so that tools like df and sabnzbd see the correct free
+// space for the filesystem that will receive writes at this path.
+func (n *Node) Statfs(ctx context.Context, out *gofuse.StatfsOut) syscall.Errno {
+	virtualPath := n.Path(n.Root())
+	if statfsWriteTarget(n.rt, virtualPath, out) {
+		return 0
+	}
+	// Fallback: delegate to loopback (uses primaryRootPath).
+	return n.LoopbackNode.Statfs(ctx, out)
+}
+
 // Release closes any file handles we created.
 func (n *Node) Release(ctx context.Context, f fs.FileHandle) syscall.Errno {
 	if r, ok := f.(interface {
