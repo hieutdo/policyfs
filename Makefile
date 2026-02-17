@@ -1,9 +1,10 @@
-.PHONY: dev dev-build dev-down dev-shell build build-local package-deb test test-unit test-integration coverage fmt fmt-staged lint lint-staged hooks clean
+.PHONY: dev dev-build dev-down dev-shell build build-local build-linux-amd64 package-deb test test-unit test-integration coverage fmt fmt-staged lint lint-staged hooks clean
 
 # Version info from git
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+ARCH    ?= amd64
 
 LDFLAGS := -X github.com/hieutdo/policyfs/internal/cli.Version=$(VERSION) \
            -X github.com/hieutdo/policyfs/internal/cli.Commit=$(COMMIT) \
@@ -64,8 +65,17 @@ build:
 build-local:
 	go build -ldflags "$(LDFLAGS)" -o bin/pfs ./cmd/pfs
 
-package-deb:
-	DOCKER_DEFAULT_PLATFORM=linux/amd64 $(DCD) run --rm --no-deps dev bash /workspace/scripts/package_deb.sh
+build-linux-amd64:
+	LDFLAGS="$(LDFLAGS)" \
+	DOCKER_DEFAULT_PLATFORM=linux/amd64 \
+	$(DCD) run --rm --no-deps -e LDFLAGS \
+		dev bash -lc 'GOOS=linux GOARCH=amd64 CGO_ENABLED=1 /usr/local/go/bin/go build -ldflags "$${LDFLAGS}" -o bin/pfs ./cmd/pfs'
+
+package-deb: build-linux-amd64
+	VERSION="$(VERSION)" ARCH="$(ARCH)" \
+	DOCKER_DEFAULT_PLATFORM=linux/amd64 \
+	$(DCD) run --rm --no-deps -e VERSION -e ARCH \
+		dev bash /workspace/scripts/package_deb.sh
 
 fmt:
 	$(DCD_EXEC_T) bash /workspace/scripts/fmt.sh all
