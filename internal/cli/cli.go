@@ -88,6 +88,7 @@ Optional indexing reduces disk wake-ups during metadata reads.`,
 	cmd.PersistentFlags().StringVarP(&configPath, "config", "c", defaultConfigPath, "path to config file")
 
 	cmd.AddCommand(newMountCmd(&configPath))
+	cmd.AddCommand(newUnmountCmd(&configPath))
 	cmd.AddCommand(newIndexCmd(&configPath))
 	cmd.AddCommand(newMoveCmd(&configPath))
 	cmd.AddCommand(newPruneCmd(&configPath))
