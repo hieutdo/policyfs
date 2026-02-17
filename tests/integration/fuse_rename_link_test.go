@@ -4,6 +4,7 @@ package integration
 
 import (
 	"os"
+	"os/exec"
 	"syscall"
 	"testing"
 
@@ -130,5 +131,39 @@ func TestFUSE_Link_crossTarget_returnsEXDEV(t *testing.T) {
 
 		// Verify: destination not created on ssd2.
 		require.NoFileExists(t, env.StoragePath("ssd2", dstRel))
+	})
+}
+
+// TestFUSE_Mv_crossTarget_shouldSucceedViaCopyFallback verifies that `mv` across targets
+// (indexed source -> non-indexed destination) succeeds via copy+unlink fallback.
+func TestFUSE_Mv_crossTarget_shouldSucceedViaCopyFallback(t *testing.T) {
+	withMountedFS(t, IntegrationConfig{
+		Storages: []IntegrationStorage{
+			{ID: "ssd1", Indexed: false, BasePath: "/mnt/ssd1/pfs-integration"},
+			{ID: "hdd1", Indexed: true, BasePath: "/mnt/hdd1/pfs-integration"},
+		},
+		RoutingRules: []config.RoutingRule{
+			{Match: "library/music/**", WriteTargets: []string{"ssd1"}, ReadTargets: []string{"ssd1"}},
+			{Match: "library/movies/**", WriteTargets: []string{"ssd1"}, ReadTargets: []string{"hdd1"}},
+			{Match: "**", WriteTargets: []string{"ssd1"}, ReadTargets: []string{"ssd1", "hdd1"}},
+		},
+	}, func(env *MountedFS) {
+		content := []byte("mv-cross-target")
+		srcRel := "library/movies/mv-src.txt"
+		dstDirRel := "library/music"
+		dstRel := dstDirRel + "/mv-src.txt"
+
+		env.MustCreateFileInStoragePath(t, content, "hdd1", srcRel)
+		mustRunPFS(t, env, "index", env.MountName)
+		require.True(t, env.FileExistsInMountPoint(srcRel))
+		env.MustMkdirInMountPoint(t, dstDirRel)
+
+		cmd := exec.Command("mv", env.MountPath(srcRel), env.MountPath(dstDirRel)+"/")
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "mv failed: %s", string(out))
+
+		require.False(t, env.FileExistsInMountPoint(srcRel))
+		require.True(t, env.FileExistsInMountPoint(dstRel))
+		require.Equal(t, content, env.MustReadFileInStoragePath(t, "ssd1", dstRel))
 	})
 }

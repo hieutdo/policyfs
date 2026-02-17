@@ -15,6 +15,36 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// stableIno returns a deterministic inode number for a (storageID, virtualPath) pair.
+//
+// This avoids flakiness and copy safety issues in tools like mv/cp when the kernel
+// decides not to cache directory entries and we end up recreating inodes frequently.
+func stableIno(storageID string, virtualPath string) uint64 {
+	const (
+		fnv64Offset = 14695981039346656037
+		fnv64Prime  = 1099511628211
+	)
+
+	h := uint64(fnv64Offset)
+	for i := 0; i < len(storageID); i++ {
+		h ^= uint64(storageID[i])
+		h *= fnv64Prime
+	}
+	// Delimiter.
+	h ^= uint64(0xff)
+	h *= fnv64Prime
+	for i := 0; i < len(virtualPath); i++ {
+		h ^= uint64(virtualPath[i])
+		h *= fnv64Prime
+	}
+
+	ino := h | (1 << 63)
+	if ino == 0 || ino == ^uint64(0) {
+		ino = (1 << 63) + 1
+	}
+	return ino
+}
+
 // openFirst opens a file by searching targets in the router-defined order.
 func openFirst(ctx context.Context, rt *router.Router, db *indexdb.DB, virtualPath string, flags int, write bool) (fs.FileHandle, uint32, syscall.Errno) {
 	if rt == nil {
@@ -60,7 +90,7 @@ func openFirst(ctx context.Context, rt *router.Router, db *indexdb.DB, virtualPa
 				fallbackPath := filepath.Join(t.Root, virtualPath)
 				if fallbackPath != physicalPath {
 					if fd2, oerr2 := syscall.Open(fallbackPath, flags, 0); oerr2 == nil {
-						fh := &FileHandle{virtualPath: virtualPath, physicalPath: fallbackPath, storageID: t.ID, indexed: t.Indexed, fd: fd2, flags: uint32(flags)}
+						fh := &FileHandle{virtualPath: virtualPath, physicalPath: fallbackPath, storageID: t.ID, indexed: t.Indexed, fallback: true, fd: fd2, flags: uint32(flags)}
 						_ = ctx
 						return fh, 0, 0
 					}
@@ -81,11 +111,11 @@ func openFirst(ctx context.Context, rt *router.Router, db *indexdb.DB, virtualPa
 	return nil, 0, syscall.ENOENT
 }
 
-// newChildInode creates a child inode with Node ops and stable mode derived from a stat mode.
-func newChildInode(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoot, mountName string, rt *router.Router, db *indexdb.DB, log zerolog.Logger, disk *diskAccessLogger, stMode uint32) *fs.Inode {
+// newChildInode creates a child inode with Node ops and a deterministic inode number.
+func newChildInode(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoot, mountName string, rt *router.Router, db *indexdb.DB, log zerolog.Logger, disk *diskAccessLogger, storageID string, virtualPath string, stMode uint32) *fs.Inode {
 	child := &Node{LoopbackNode: &fs.LoopbackNode{RootData: rootData}, mountName: mountName, rt: rt, db: db, log: log, disk: disk}
 	typeMode := uint32(stMode & syscall.S_IFMT)
-	ch := parent.NewInode(ctx, child, fs.StableAttr{Mode: typeMode, Gen: 1})
+	ch := parent.NewInode(ctx, child, fs.StableAttr{Mode: typeMode, Ino: stableIno(storageID, virtualPath), Gen: 1})
 	return ch
 }
 

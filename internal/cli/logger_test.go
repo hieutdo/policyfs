@@ -135,6 +135,74 @@ mounts:
 	require.True(t, os.IsNotExist(err))
 }
 
+// TestMount_LogFile_YAMLCreatesFile verifies log.file enables structured file output through the real CLI flow.
+func TestMount_LogFile_YAMLCreatesFile(t *testing.T) {
+	cfgDir := t.TempDir()
+	cfgPath := filepath.Join(cfgDir, "pfs.yaml")
+	mountpoint := filepath.Join(cfgDir, "missing-mount")
+	logPath := filepath.Join(cfgDir, "yaml.log")
+
+	oldEnv, hadEnv := os.LookupEnv(config.EnvLogFile)
+	_ = os.Unsetenv(config.EnvLogFile)
+	t.Cleanup(func() {
+		if hadEnv {
+			_ = os.Setenv(config.EnvLogFile, oldEnv)
+			return
+		}
+		_ = os.Unsetenv(config.EnvLogFile)
+	})
+
+	require.NoError(t, os.WriteFile(cfgPath, []byte(`
+log:
+  file: `+logPath+`
+mounts:
+  media:
+    mountpoint: `+mountpoint+`
+    storage_paths:
+      - id: ssd1
+        path: /tmp
+`), 0o644))
+
+	code, _, _ := runCLI(t, []string{"--config", cfgPath, "mount", "media"})
+	require.Equal(t, ExitFail, code)
+
+	_, err := os.Stat(logPath)
+	require.NoError(t, err)
+}
+
+// TestMount_LogFile_EnvOverridesYAML verifies PFS_LOG_FILE overrides log.file through the real CLI flow.
+func TestMount_LogFile_EnvOverridesYAML(t *testing.T) {
+	cfgDir := t.TempDir()
+	cfgPath := filepath.Join(cfgDir, "pfs.yaml")
+	mountpoint := filepath.Join(cfgDir, "missing-mount")
+	yamlPath := filepath.Join(cfgDir, "yaml.log")
+	envPath := filepath.Join(cfgDir, "env.log")
+
+	require.NoError(t, os.WriteFile(cfgPath, []byte(`
+log:
+  file: `+yamlPath+`
+mounts:
+  media:
+    mountpoint: `+mountpoint+`
+    storage_paths:
+      - id: ssd1
+        path: /tmp
+`), 0o644))
+
+	old := os.Getenv(config.EnvLogFile)
+	require.NoError(t, os.Setenv(config.EnvLogFile, envPath))
+	t.Cleanup(func() { _ = os.Setenv(config.EnvLogFile, old) })
+
+	code, _, _ := runCLI(t, []string{"--config", cfgPath, "mount", "media"})
+	require.Equal(t, ExitFail, code)
+
+	_, err := os.Stat(envPath)
+	require.NoError(t, err)
+
+	_, err = os.Stat(yamlPath)
+	require.True(t, os.IsNotExist(err))
+}
+
 // TestMount_LogLevelOff_IgnoresEnvLogFile verifies log.level=off disables all log file side effects.
 func TestMount_LogLevelOff_IgnoresEnvLogFile(t *testing.T) {
 	cfgDir := t.TempDir()

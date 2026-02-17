@@ -22,7 +22,8 @@ import (
 
 // newMountCmd creates `pfs mount`.
 func newMountCmd(configPath *string) *cobra.Command {
-	var debug bool
+	var fuseDebug bool
+	var debugDeprecated bool
 	var logFile string
 	var logDiskAccess bool
 	var dedupTTLSec int
@@ -36,7 +37,7 @@ func newMountCmd(configPath *string) *cobra.Command {
 The daemon will run in the foreground until terminated (SIGTERM/SIGINT).
 This command is typically managed by systemd as a service.`,
 		Example: `  pfs mount media
-  pfs mount media --debug
+  pfs mount media --fuse-debug
   pfs mount media -c /path/to/config.yaml`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
@@ -46,6 +47,12 @@ This command is typically managed by systemd as a service.`,
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			mountName := args[0]
+
+			// Handle deprecated --debug flag.
+			if debugDeprecated {
+				fuseDebug = true
+				fmt.Fprintln(os.Stderr, "pfs: --debug is deprecated, use --fuse-debug instead")
+			}
 
 			rootCfg, mountCfg, source, err := loadAndResolveMount(*configPath, mountName)
 			if err != nil {
@@ -146,7 +153,7 @@ This command is typically managed by systemd as a service.`,
 
 			server, err := fs.Mount(mountCfg.MountPoint, root, &fs.Options{
 				MountOptions: gofuse.MountOptions{
-					Debug:   debug,
+					Debug:   fuseDebug,
 					Name:    "policyfs",
 					Options: options,
 				},
@@ -182,7 +189,7 @@ This command is typically managed by systemd as a service.`,
 				Str("mount_runtime_dir", config.MountRuntimeDir(mountName)).
 				Str("log_level", rootCfg.Log.Level).
 				Str("log_format", rootCfg.Log.Format).
-				Str("log_file", effectiveLogFilePath(logFile)).
+				Str("log_file", effectiveLogFilePath(rootCfg.Log, logFile)).
 				Bool("disk_access_enabled", diskCfg.Enabled).
 				Int("disk_access_dedup_ttl_sec", dedupTTLSec).
 				Int("disk_access_summary_sec", diskAccessSummarySec).
@@ -193,7 +200,7 @@ This command is typically managed by systemd as a service.`,
 				Str("storage_ids", strings.Join(storageIDs, ",")).
 				Str("indexed_storage_ids", strings.Join(indexedStorageIDs, ",")).
 				Bool("fuse_allow_other", rootCfg.Fuse.AllowOther).
-				Bool("fuse_debug", debug).
+				Bool("fuse_debug", fuseDebug).
 				Int("pid", os.Getpid()).
 				Int("uid", os.Getuid()).
 				Int("gid", os.Getgid()).
@@ -225,7 +232,9 @@ This command is typically managed by systemd as a service.`,
 		},
 	}
 
-	cmd.Flags().BoolVar(&debug, "debug", false, "enable FUSE debug logging")
+	cmd.Flags().BoolVar(&fuseDebug, "fuse-debug", false, "enable go-fuse internal debug logging (raw FUSE request/response dump)")
+	cmd.Flags().BoolVar(&debugDeprecated, "debug", false, "deprecated: use --fuse-debug")
+	_ = cmd.Flags().MarkHidden("debug")
 	cmd.Flags().StringVar(&logFile, "log-file", "", fmt.Sprintf("path to log file (overrides %s)", config.EnvLogFile))
 	cmd.Flags().BoolVar(&logDiskAccess, "log-disk-access", false, fmt.Sprintf("enable disk access logging for indexed storage (debugging; can also set %s=1)", config.EnvLogDiskAccess))
 	cmd.Flags().IntVar(&dedupTTLSec, "dedup-ttl", 60, "disk access log dedup TTL in seconds (0=disabled)")

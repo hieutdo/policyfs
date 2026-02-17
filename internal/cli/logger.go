@@ -12,13 +12,18 @@ import (
 	"github.com/rs/zerolog"
 )
 
-// effectiveLogFilePath resolves the log file path from the flag or environment.
-func effectiveLogFilePath(logFileFlag string) string {
+// effectiveLogFilePath resolves the log file path.
+//
+// Priority: flag > env > YAML.
+func effectiveLogFilePath(cfg config.LogConfig, logFileFlag string) string {
 	if strings.TrimSpace(logFileFlag) != "" {
 		return strings.TrimSpace(logFileFlag)
 	}
 	if v := os.Getenv(config.EnvLogFile); strings.TrimSpace(v) != "" {
 		return strings.TrimSpace(v)
+	}
+	if strings.TrimSpace(cfg.File) != "" {
+		return strings.TrimSpace(cfg.File)
 	}
 	return ""
 }
@@ -53,7 +58,7 @@ func (e *OpenLogFileError) Unwrap() error {
 // Rules:
 // - log.format=json: structured logs to stdout.
 // - log.format=text: human-friendly logs to stderr.
-// - If --log-file or PFS_LOG_FILE is set, structured logs are also duplicated to that file.
+// - If --log-file, PFS_LOG_FILE, or log.file is set, structured logs are also duplicated to that file.
 func NewLogger(cfg config.LogConfig, logFileFlag string) (zerolog.Logger, func() error, error) {
 	return newLogger(cfg, logFileFlag, os.Stdout, os.Stderr)
 }
@@ -95,6 +100,27 @@ func newLogger(cfg config.LogConfig, logFileFlag string, jsonOut io.Writer, text
 	switch cfg.Format {
 	case "text":
 		cw := zerolog.ConsoleWriter{Out: textOut, TimeFormat: "2006-01-02 15:04:05"}
+		cw.FormatLevel = func(i interface{}) string {
+			v := strings.ToLower(fmt.Sprintf("%v", i))
+			switch v {
+			case "inf":
+				return "[info]"
+			case "dbg":
+				return "[debug]"
+			case "wrn":
+				return "[warn]"
+			case "err":
+				return "[error]"
+			case "ftl":
+				return "[fatal]"
+			case "pnk":
+				return "[panic]"
+			case "trc":
+				return "[trace]"
+			default:
+				return v
+			}
+		}
 		writers = append(writers, cw)
 	case "json", "":
 		// Default: json
@@ -104,7 +130,7 @@ func newLogger(cfg config.LogConfig, logFileFlag string, jsonOut io.Writer, text
 	}
 
 	// Optional structured file output.
-	logFilePath := effectiveLogFilePath(logFileFlag)
+	logFilePath := effectiveLogFilePath(cfg, logFileFlag)
 	if logFilePath != "" {
 		dir := filepath.Dir(logFilePath)
 		if dir != "." {

@@ -64,6 +64,7 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 			}
 
 			if n.db == nil {
+				n.log.Error().Str("op", "setattr").Str("path", virtualPath).Str("storage_id", t.ID).Msg("failed to setattr: db is nil for indexed target")
 				return syscall.EIO
 			}
 			_, ok, err := n.db.GetEffectiveFile(ctx, t.ID, virtualPath)
@@ -94,6 +95,7 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 	// Indexed targets use deferred SETATTR (no physical ops).
 	if indexed {
 		if n.db == nil {
+			n.log.Error().Str("op", "setattr").Str("path", virtualPath).Str("storage_id", indexedStorageID).Msg("failed to setattr: db is nil for indexed target")
 			return syscall.EIO
 		}
 		cur, ok, err := n.db.GetEffectiveFile(ctx, indexedStorageID, virtualPath)
@@ -105,6 +107,7 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 		}
 
 		if _, ok := in.GetSize(); ok {
+			n.log.Debug().Str("op", "setattr").Str("path", virtualPath).Str("storage_id", indexedStorageID).Msg("setattr blocked: truncate on indexed target")
 			return syscall.EROFS
 		}
 
@@ -157,6 +160,7 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 			}
 			if updated {
 				if err := eventlog.Append(ctx, n.mountName, eventlog.SetattrEvent{Type: eventlog.TypeSetattr, StorageID: indexedStorageID, Path: virtualPath, Mode: modePtr, UID: uidPtr, GID: gidPtr, MTime: mtimePtr, TS: time.Now().Unix()}); err != nil {
+					n.log.Error().Str("op", "setattr").Str("path", virtualPath).Str("storage_id", indexedStorageID).Err(err).Msg("failed to append eventlog")
 					return syscall.EIO
 				}
 			}
@@ -176,6 +180,17 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 		out.Nlink = 1
 		out.Uid = cur.UID
 		out.Gid = cur.GID
+		ev := n.log.Debug().Str("op", "setattr").Str("path", virtualPath).Str("storage_id", indexedStorageID).Bool("indexed", true)
+		if modePtr != nil {
+			ev = ev.Bool("chmod", true)
+		}
+		if uidPtr != nil || gidPtr != nil {
+			ev = ev.Bool("chown", true)
+		}
+		if mtimePtr != nil {
+			ev = ev.Bool("utimens", true)
+		}
+		ev.Msg("setattr")
 		return 0
 	}
 
@@ -304,6 +319,19 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 		return fs.ToErrno(err)
 	}
 	out.FromStat(&st)
-	_ = ctx
+	ev := n.log.Debug().Str("op", "setattr").Str("path", virtualPath).Bool("indexed", false)
+	if _, ok := in.GetMode(); ok {
+		ev = ev.Bool("chmod", true)
+	}
+	if uok || gok {
+		ev = ev.Bool("chown", true)
+	}
+	if mok || aok {
+		ev = ev.Bool("utimens", true)
+	}
+	if _, ok := in.GetSize(); ok {
+		ev = ev.Bool("truncate", true)
+	}
+	ev.Msg("setattr")
 	return 0
 }

@@ -17,6 +17,7 @@ type FileHandle struct {
 	physicalPath string
 	storageID    string
 	indexed      bool
+	fallback     bool // true when stale real_path triggered fallback to virtualPath
 	fd           int
 	flags        uint32
 }

@@ -208,7 +208,7 @@ func newIndexCmd(configPath *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "index <mount>",
 		Short: "Index metadata for indexed storage paths",
-		Long: `Index indexed storage paths and write metadata to the per-mount SQLite database.
+		Long: `Build an index of metadata for storage paths with indexed=true and write it to the per-mount SQLite database.
 
 This enables metadata operations (lookup/readdir/getattr) to avoid touching disks for indexed paths.`,
 		Example: `  pfs index media

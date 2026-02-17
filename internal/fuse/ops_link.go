@@ -46,6 +46,7 @@ func (n *Node) Link(ctx context.Context, target fs.InodeEmbedder, name string, o
 	}
 	// Indexed targets are not writable yet.
 	if srcTarget.Indexed {
+		n.log.Debug().Str("op", "link").Str("path", newVirtualPath).Str("storage_id", srcTarget.ID).Msg("link blocked: indexed target is read-only")
 		return nil, syscall.EROFS
 	}
 
@@ -62,6 +63,7 @@ func (n *Node) Link(ctx context.Context, target fs.InodeEmbedder, name string, o
 		}
 	}
 	if !allowedSameTarget {
+		n.log.Debug().Str("op", "link").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Msg("link blocked: cross-target")
 		return nil, syscall.EXDEV
 	}
 
@@ -71,6 +73,7 @@ func (n *Node) Link(ctx context.Context, target fs.InodeEmbedder, name string, o
 		return nil, fs.ToErrno(err)
 	}
 	if err := syscall.Link(srcPhysicalPath, dstPhysicalPath); err != nil {
+		n.log.Error().Str("op", "link").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Err(err).Msg("failed to link")
 		return nil, fs.ToErrno(err)
 	}
 
@@ -80,6 +83,7 @@ func (n *Node) Link(ctx context.Context, target fs.InodeEmbedder, name string, o
 	}
 	out.FromStat(&st)
 
-	ch := newChildInode(ctx, n.EmbeddedInode(), n.RootData, n.mountName, n.rt, n.db, n.log, n.disk, uint32(st.Mode))
+	ch := newChildInode(ctx, n.EmbeddedInode(), n.RootData, n.mountName, n.rt, n.db, n.log, n.disk, srcTarget.ID, newVirtualPath, uint32(st.Mode))
+	n.log.Debug().Str("op", "link").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Msg("link")
 	return ch, 0
 }

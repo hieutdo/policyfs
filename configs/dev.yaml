@@ -4,6 +4,7 @@ fuse:
 log:
   level: debug
   format: text
+  file: tmp/pfs/pfs.log
 
 mounts:
   media:

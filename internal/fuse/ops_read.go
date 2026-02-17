@@ -56,11 +56,12 @@ func lookupChild(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoo
 
 			typeMode := uint32(st.Mode & syscall.S_IFMT)
 			child := &Node{LoopbackNode: &fs.LoopbackNode{RootData: rootData}, mountName: mountName, rt: rt, db: db, log: log, disk: disk}
-			ch := parent.NewInode(ctx, child, fs.StableAttr{Mode: typeMode, Gen: 1})
+			ch := parent.NewInode(ctx, child, fs.StableAttr{Mode: typeMode, Ino: stableIno(t.ID, childPath), Gen: 1})
 			return ch, 0
 		}
 
 		if db == nil {
+			log.Error().Str("op", "lookup").Str("path", childPath).Str("storage_id", t.ID).Msg("failed to lookup: db is nil for indexed target")
 			return nil, syscall.EIO
 		}
 
@@ -79,7 +80,7 @@ func lookupChild(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoo
 
 			typeMode := uint32(f.Mode & uint32(syscall.S_IFMT))
 			child := &Node{LoopbackNode: &fs.LoopbackNode{RootData: rootData}, mountName: mountName, rt: rt, db: db, log: log, disk: disk}
-			ch := parent.NewInode(ctx, child, fs.StableAttr{Mode: typeMode, Gen: 1})
+			ch := parent.NewInode(ctx, child, fs.StableAttr{Mode: typeMode, Ino: stableIno(t.ID, childPath), Gen: 1})
 			return ch, 0
 		}
 
@@ -97,7 +98,7 @@ func lookupChild(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoo
 			out.Gid = 0
 
 			child := &Node{LoopbackNode: &fs.LoopbackNode{RootData: rootData}, mountName: mountName, rt: rt, db: db, log: log, disk: disk}
-			ch := parent.NewInode(ctx, child, fs.StableAttr{Mode: uint32(syscall.S_IFDIR), Gen: 1})
+			ch := parent.NewInode(ctx, child, fs.StableAttr{Mode: uint32(syscall.S_IFDIR), Ino: stableIno(t.ID, childPath), Gen: 1})
 			return ch, 0
 		}
 	}
@@ -275,7 +276,7 @@ func listDirEntriesForVirtualPath(ctx context.Context, virtualPath string, rt *r
 					continue
 				}
 				seen[name] = struct{}{}
-				entries = append(entries, gofuse.DirEntry{Name: name, Mode: mode})
+				entries = append(entries, gofuse.DirEntry{Name: name, Mode: mode, Ino: stableIno(t.ID, childPath)})
 			}
 			continue
 		}
@@ -339,7 +340,7 @@ func listDirEntriesForVirtualPath(ctx context.Context, virtualPath string, rt *r
 				continue
 			}
 			seen[name] = struct{}{}
-			entries = append(entries, gofuse.DirEntry{Name: name, Mode: e.Mode})
+			entries = append(entries, gofuse.DirEntry{Name: name, Mode: e.Mode, Ino: stableIno(t.ID, childPath)})
 		}
 	}
 	if !foundAnyDir {

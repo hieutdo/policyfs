@@ -68,6 +68,7 @@ func (n *Node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 			}
 
 			if n.db == nil {
+				n.log.Error().Str("op", "rename").Str("path", oldVirtualPath).Str("storage_id", t.ID).Msg("failed to rename: db is nil for indexed target")
 				return syscall.EIO
 			}
 			_, ok, err := n.db.GetEffectiveFile(ctx, t.ID, oldVirtualPath)
@@ -101,6 +102,7 @@ func (n *Node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 
 	if srcWasIndexed {
 		if n.db == nil {
+			n.log.Error().Str("op", "rename").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Msg("failed to rename: db is nil for indexed target")
 			return syscall.EIO
 		}
 		// For indexed targets, rename is a metadata update + deferred physical rename.
@@ -118,6 +120,7 @@ func (n *Node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 		}
 		if !readableSameTarget {
 			// Treat moves out of the source target's routing domain as cross-device.
+			n.log.Debug().Str("op", "rename").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Msg("rename blocked: cross-target")
 			return syscall.EXDEV
 		}
 
@@ -129,8 +132,10 @@ func (n *Node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 			return syscall.ENOENT
 		}
 		if err := eventlog.Append(ctx, n.mountName, eventlog.RenameEvent{Type: eventlog.TypeRename, StorageID: srcTarget.ID, OldPath: oldVirtualPath, NewPath: newVirtualPath, TS: time.Now().Unix()}); err != nil {
+			n.log.Error().Str("op", "rename").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Err(err).Msg("failed to append eventlog")
 			return syscall.EIO
 		}
+		n.log.Debug().Str("op", "rename").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Bool("indexed", true).Msg("rename")
 		return 0
 	}
 
@@ -147,14 +152,21 @@ func (n *Node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 	}
 	if !allowedSameTarget {
 		// Cross-target rename is not supported.
+		n.log.Debug().Str("op", "rename").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Msg("rename blocked: cross-target")
 		return syscall.EXDEV
 	}
 
 	dstPhysicalPath := filepath.Join(srcTarget.Root, newVirtualPath)
 	// Ensure destination parent dirs exist on the source target.
 	if err := materializeParentDirs(ctx, srcTarget.Root, newVirtualPath); err != nil {
+		n.log.Error().Str("op", "rename").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Err(err).Msg("failed to materialize parent dirs")
 		return fs.ToErrno(err)
 	}
-	_ = ctx
-	return fs.ToErrno(syscall.Rename(srcPhysicalPath, dstPhysicalPath))
+	errno := fs.ToErrno(syscall.Rename(srcPhysicalPath, dstPhysicalPath))
+	if errno != 0 {
+		n.log.Error().Str("op", "rename").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Err(errno).Msg("failed to rename")
+	} else {
+		n.log.Debug().Str("op", "rename").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Bool("indexed", false).Msg("rename")
+	}
+	return errno
 }

@@ -110,6 +110,7 @@ type FuseConfig struct {
 type LogConfig struct {
 	Level  string `yaml:"level"`
 	Format string `yaml:"format"`
+	File   string `yaml:"file"`
 }
 
 // MountConfig defines a single mount instance configuration.

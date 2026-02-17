@@ -3,7 +3,9 @@ package fuse
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
@@ -65,7 +67,11 @@ func (n *Node) WrapChild(ctx context.Context, ops fs.InodeEmbedder) fs.InodeEmbe
 
 // Lookup resolves a child entry using the router's read target order.
 func (n *Node) Lookup(ctx context.Context, name string, out *gofuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	return lookupChild(ctx, n.EmbeddedInode(), n.RootData, n.mountName, n.rt, n.db, n.log, n.disk, name, out)
+	ch, errno := lookupChild(ctx, n.EmbeddedInode(), n.RootData, n.mountName, n.rt, n.db, n.log, n.disk, name, out)
+	if errno != 0 && errno != syscall.ENOENT {
+		n.log.Error().Str("op", "lookup").Str("path", filepath.Join(n.Path(n.Root()), name)).Err(errno).Msg("failed to lookup")
+	}
+	return ch, errno
 }
 
 // Getattr reads attributes using the router's read target order.
@@ -75,32 +81,49 @@ func (n *Node) Getattr(ctx context.Context, f fs.FileHandle, out *gofuse.AttrOut
 
 // Readdir returns a union of directory entries across read targets, deduped by name.
 func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
-	return readdirPath(ctx, n.EmbeddedInode(), n.rt, n.db)
+	start := time.Now()
+	ds, errno := readdirPath(ctx, n.EmbeddedInode(), n.rt, n.db)
+	if errno != 0 {
+		n.log.Error().Str("op", "readdir").Str("path", n.Path(n.Root())).Err(errno).Msg("failed to readdir")
+	} else {
+		n.log.Debug().Str("op", "readdir").Str("path", n.Path(n.Root())).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("readdir")
+	}
+	return ds, errno
 }
 
 // OpendirHandle returns a directory handle that merges entries across read targets.
 func (n *Node) OpendirHandle(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
+	start := time.Now()
 	entries, errno := listDirEntries(ctx, n.EmbeddedInode(), n.rt, n.db)
 	if errno != 0 {
+		n.log.Error().Str("op", "opendir").Str("path", n.Path(n.Root())).Err(errno).Msg("failed to opendir")
 		return nil, 0, errno
 	}
+	n.log.Debug().Str("op", "opendir").Str("path", n.Path(n.Root())).Int("entries", len(entries)).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("opendir")
 	return &DirHandle{entries: entries}, 0, 0
 }
 
 // Open opens a file and returns a cached FileHandle.
 func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
 	virtualPath := n.Path(n.Root())
+	write := flags&gofuse.O_ANYWRITE != 0
 
-	var fh fs.FileHandle
-	var openFlags uint32
-	var errno syscall.Errno
-	if flags&gofuse.O_ANYWRITE != 0 {
-		fh, openFlags, errno = openFirst(ctx, n.rt, n.db, virtualPath, int(flags), true)
-	} else {
-		fh, openFlags, errno = openFirst(ctx, n.rt, n.db, virtualPath, int(flags), false)
+	start := time.Now()
+	fh, openFlags, errno := openFirst(ctx, n.rt, n.db, virtualPath, int(flags), write)
+	if errno != 0 {
+		if errno == syscall.EROFS {
+			n.log.Debug().Str("op", "open").Str("path", virtualPath).Bool("write", write).Msg("open blocked: indexed target is read-only")
+		} else if errno != syscall.ENOENT {
+			n.log.Error().Str("op", "open").Str("path", virtualPath).Bool("write", write).Err(errno).Msg("failed to open")
+		}
+		return nil, 0, errno
 	}
-	if errno == 0 && n.disk != nil {
-		if h, ok := fh.(*FileHandle); ok {
+	if h, ok := fh.(*FileHandle); ok {
+		if h.fallback {
+			n.log.Warn().Str("op", "open").Str("path", virtualPath).Str("storage_id", h.storageID).Msg("open: stale real_path fallback triggered")
+		}
+		n.log.Debug().Str("op", "open").Str("path", virtualPath).Str("storage_id", h.storageID).Bool("indexed", h.indexed).Bool("write", write).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("open")
+		if n.disk != nil {
 			n.disk.RecordOpen(ctx, h.storageID, virtualPath, h.indexed)
 		}
 	}
