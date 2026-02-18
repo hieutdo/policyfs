@@ -113,10 +113,11 @@ func TestPlanner_selectDestinations_pathPreserving_shouldPreferExistingParent(t 
 	p.freeSpaceGB = func(_ string) (float64, error) { return 100, nil }
 
 	j := config.MoverJobConfig{Destination: config.MoverDestinationConfig{PathPreserving: true, Policy: "first_found"}}
-	dsts, err := p.selectDestinations(j, []string{"hdd1", "hdd2"}, candidate{RelPath: rel})
+	dr, err := p.selectDestinations(j, []string{"hdd1", "hdd2"}, candidate{RelPath: rel})
 	require.NoError(t, err)
-	require.Len(t, dsts, 1)
-	require.Equal(t, "hdd1", dsts[0].id)
+	require.Len(t, dr.choices, 1)
+	require.Equal(t, "hdd1", dr.choices[0].id)
+	require.Equal(t, []string{"hdd1"}, dr.pathPreservingKept)
 }
 
 // TestPlanner_selectDestinations_policyMostFree_shouldSort verifies most_free sorts by free space descending.
@@ -135,9 +136,9 @@ func TestPlanner_selectDestinations_policyMostFree_shouldSort(t *testing.T) {
 	}
 
 	j := config.MoverJobConfig{Destination: config.MoverDestinationConfig{Policy: "most_free"}}
-	dsts, err := p.selectDestinations(j, []string{"hdd1", "hdd2"}, candidate{RelPath: "a.txt"})
+	dr, err := p.selectDestinations(j, []string{"hdd1", "hdd2"}, candidate{RelPath: "a.txt"})
 	require.NoError(t, err)
-	require.Equal(t, "hdd2", dsts[0].id)
+	require.Equal(t, "hdd2", dr.choices[0].id)
 }
 
 // TestDiscoverCandidatesOneSource_shouldFilterByMinAgeAndSort verifies min_age filtering uses planner.now and candidates are sorted by size desc then mtime asc.
@@ -506,10 +507,10 @@ func TestSelectDestinations_destFull_shouldFilterByMinFreeGB(t *testing.T) {
 	}
 
 	j := config.MoverJobConfig{Destination: config.MoverDestinationConfig{Policy: "first_found"}}
-	dsts, err := p.selectDestinations(j, []string{"hdd1", "hdd2"}, candidate{RelPath: "a.txt"})
+	dr, err := p.selectDestinations(j, []string{"hdd1", "hdd2"}, candidate{RelPath: "a.txt"})
 	require.NoError(t, err)
-	require.Len(t, dsts, 1)
-	require.Equal(t, "hdd2", dsts[0].id, "hdd1 should be excluded (below min_free_gb)")
+	require.Len(t, dr.choices, 1)
+	require.Equal(t, "hdd2", dr.choices[0].id, "hdd1 should be excluded (below min_free_gb)")
 }
 
 // TestSelectDestinations_allFull_shouldReturnError verifies all destinations below min_free_gb returns error.
@@ -576,11 +577,11 @@ func TestSelectDestinations_policyLeastFree_shouldSort(t *testing.T) {
 	}
 
 	j := config.MoverJobConfig{Destination: config.MoverDestinationConfig{Policy: "least_free"}}
-	dsts, err := p.selectDestinations(j, []string{"hdd1", "hdd2"}, candidate{RelPath: "a.txt"})
+	dr, err := p.selectDestinations(j, []string{"hdd1", "hdd2"}, candidate{RelPath: "a.txt"})
 	require.NoError(t, err)
-	require.Len(t, dsts, 2)
-	require.Equal(t, "hdd2", dsts[0].id, "least_free should prefer hdd2 (10 GB) over hdd1 (20 GB)")
-	require.Equal(t, "hdd1", dsts[1].id)
+	require.Len(t, dr.choices, 2)
+	require.Equal(t, "hdd2", dr.choices[0].id, "least_free should prefer hdd2 (10 GB) over hdd1 (20 GB)")
+	require.Equal(t, "hdd1", dr.choices[1].id)
 }
 
 // TestCount_shouldReturnCandidateCount verifies Count counts discovered candidates.

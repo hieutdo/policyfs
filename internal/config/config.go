@@ -263,7 +263,7 @@ func (c *RootConfig) applyDefaults() {
 				j.DeleteEmptyDir = &ded
 			}
 			if j.Verify == nil {
-				v := true
+				v := false
 				j.Verify = &v
 			}
 

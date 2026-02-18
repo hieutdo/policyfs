@@ -1,9 +1,6 @@
 package humanfmt
 
-import (
-	"fmt"
-	"strings"
-)
+import "fmt"
 
 // BytesUnitSystem selects whether to use IEC (binary, 1024) or SI (decimal, 1000) units.
 type BytesUnitSystem int
@@ -70,24 +67,5 @@ func formatBytes(totalBytes int64, base int64, units []string, decimals int) str
 		return fmt.Sprintf("%d B", totalBytes)
 	}
 
-	out := fmt.Sprintf("%.*f %s", decimals, scaled, units[idx])
-	return trimTrailingZeros(out)
-}
-
-// trimTrailingZeros removes redundant trailing zeros and a trailing decimal point.
-func trimTrailingZeros(s string) string {
-	parts := strings.SplitN(s, " ", 2)
-	if len(parts) != 2 {
-		return s
-	}
-
-	num := parts[0]
-	unit := parts[1]
-	if !strings.Contains(num, ".") {
-		return s
-	}
-
-	num = strings.TrimRight(num, "0")
-	num = strings.TrimRight(num, ".")
-	return num + " " + unit
+	return fmt.Sprintf("%.*f %s", decimals, scaled, units[idx])
 }

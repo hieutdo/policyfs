@@ -165,8 +165,8 @@ func TestMove_deleteEmptyDir_nonIndexed_shouldRemoveEmptySourceDirs(t *testing.T
 	})
 }
 
-// TestMove_verbose_shouldPrintCandidates verifies --verbose prints the planned candidates list.
-func TestMove_verbose_shouldPrintCandidates(t *testing.T) {
+// TestMove_debug_shouldPrintCandidates verifies candidates are printed when --debug is enabled.
+func TestMove_debug_shouldPrintCandidates(t *testing.T) {
 	if os.Getenv(config.EnvIntegrationUseExistingMount) != "" {
 		t.Skip("skip move flow test when using an existing mount")
 	}
@@ -207,10 +207,11 @@ func TestMove_verbose_shouldPrintCandidates(t *testing.T) {
 	withMountedFS(t, cfg, func(env *MountedFS) {
 		env.MustCreateFileInStoragePath(t, []byte("data"), "ssd1", filepath.Join("library", "a.txt"))
 
-		out, err := runPFSOutput(t, env, "move", env.MountName, "--job", jobName, "--verbose", "--dry-run", "--progress=off")
-		require.NoError(t, err, "pfs move --verbose should succeed, output: %s", string(out))
+		out, err := runPFSOutput(t, env, "move", env.MountName, "--job", jobName, "--dry-run", "--debug", "--progress=off")
+		require.NoError(t, err, "pfs move should print candidates with --debug, output: %s", string(out))
 		require.Contains(t, string(out), "Candidates:")
-		require.Contains(t, string(out), "archive/ssd1: library/a.txt")
+		require.Contains(t, string(out), "library/a.txt")
+		require.Contains(t, string(out), "job=archive")
 	})
 }
 
@@ -428,6 +429,6 @@ func TestMove_limit_shouldMoveOnlyNFiles(t *testing.T) {
 		require.Equal(t, 2, moved, "exactly 2 files should be moved with --limit 2")
 
 		// Verify summary output mentions the move.
-		require.True(t, strings.Contains(string(out), "Summary:"), "output should contain summary")
+		require.True(t, strings.Contains(string(out), "Summary"), "output should contain summary")
 	})
 }

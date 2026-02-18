@@ -195,8 +195,14 @@ func (p *planner) debugDestinationsForJob(j config.MoverJobConfig) *JobDestinati
 		primary = orderedIDs[0]
 	}
 
+	note := ""
+	if j.Destination.PathPreserving {
+		note = "primary ignores path_preserving; actual dest chosen per file"
+	}
+
 	return &JobDestinationDebug{
 		JobName:         j.Name,
+		Note:            note,
 		Policy:          policy,
 		PathPreserving:  j.Destination.PathPreserving,
 		OrderedEligible: orderedIDs,

@@ -33,7 +33,7 @@ func Execute(args []string) int {
 	if err := root.ExecuteContext(ctx); err != nil {
 		if errors.Is(err, context.Canceled) {
 			if isInteractiveWriter(os.Stderr) {
-				fmt.Fprintln(os.Stderr, "canceled")
+				fmt.Fprintln(os.Stderr, "interrupted")
 			}
 			return ExitInterrupted
 		}

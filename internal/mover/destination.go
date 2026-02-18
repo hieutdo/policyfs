@@ -20,10 +20,16 @@ type destChoice struct {
 	free float64
 }
 
+// destResult is the result of selectDestinations.
+type destResult struct {
+	choices            []destChoice
+	pathPreservingKept []string // destinations that passed path_preserving filter (nil if not applicable)
+}
+
 // selectDestinations returns an ordered list of destination choices for a candidate.
-func (p *planner) selectDestinations(j config.MoverJobConfig, dstIDs []string, c candidate) ([]destChoice, error) {
+func (p *planner) selectDestinations(j config.MoverJobConfig, dstIDs []string, c candidate) (destResult, error) {
 	if p == nil {
-		return nil, &errkind.NilError{What: "planner"}
+		return destResult{}, &errkind.NilError{What: "planner"}
 	}
 
 	cands := append([]string{}, dstIDs...)
@@ -32,17 +38,18 @@ func (p *planner) selectDestinations(j config.MoverJobConfig, dstIDs []string, c
 		parentDir = ""
 	}
 
+	var ppKept []string
 	if j.Destination.PathPreserving && parentDir != "" {
-		kept := []string{}
+		ppKept = []string{} // non-nil: path_preserving was checked
 		for _, id := range cands {
 			root := p.storageByID[id].Path
 			physDir := filepath.Join(root, parentDir)
 			if _, err := os.Stat(physDir); err == nil {
-				kept = append(kept, id)
+				ppKept = append(ppKept, id)
 			}
 		}
-		if len(kept) > 0 {
-			cands = kept
+		if len(ppKept) > 0 {
+			cands = ppKept
 		}
 	}
 
@@ -61,7 +68,7 @@ func (p *planner) selectDestinations(j config.MoverJobConfig, dstIDs []string, c
 		filtered = append(filtered, destChoice{id: id, root: sp.Path, free: freeGB})
 	}
 	if len(filtered) == 0 {
-		return nil, errors.New("no destination available")
+		return destResult{}, errors.New("no destination available")
 	}
 
 	policy := strings.TrimSpace(j.Destination.Policy)
@@ -76,8 +83,8 @@ func (p *planner) selectDestinations(j config.MoverJobConfig, dstIDs []string, c
 	case "least_free":
 		sort.Slice(filtered, func(i, j int) bool { return filtered[i].free < filtered[j].free })
 	default:
-		return nil, fmt.Errorf("invalid destination policy: %s", policy)
+		return destResult{}, fmt.Errorf("invalid destination policy: %s", policy)
 	}
 
-	return filtered, nil
+	return destResult{choices: filtered, pathPreservingKept: ppKept}, nil
 }

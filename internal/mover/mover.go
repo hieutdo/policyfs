@@ -48,7 +48,9 @@ type Opts struct {
 
 // Hooks provides optional callbacks for progress reporting.
 type Hooks struct {
-	// Progress is called for each candidate right before it is processed.
+	// FileStart is called when a file begins processing, before any copy/verify.
+	FileStart func(jobName string, srcStorageID string, dstStorageID string, rel string, sizeBytes int64)
+	// Progress is called for each candidate after it has been successfully moved.
 	Progress     func(jobName string, storageID string, rel string)
 	CopyProgress func(jobName string, storageID string, rel string, phase string, doneBytes int64, totalBytes int64)
 	// Warn is called for non-fatal per-file issues.
@@ -64,10 +66,16 @@ type CountResult struct {
 type PlanCandidate struct {
 	JobName      string
 	SrcStorageID string
+	DstStorageID string // best-effort primary destination from planning
 	RelPath      string
 	SizeBytes    int64
 	MTimeSec     int64
 	WorkBytes    int64
+
+	// PathPreservingKept lists destinations that passed the path_preserving filter
+	// (i.e., already had the parent directory). Empty if path_preserving is off
+	// or parentDir is empty. Nil means not computed (path_preserving off).
+	PathPreservingKept []string
 }
 
 // PlanJob describes the planned candidates for one mover job.
@@ -145,19 +153,37 @@ func Plan(ctx context.Context, mountName string, mountCfg *config.MountConfig, o
 			mult = 2
 		}
 
+		// Best-effort destination resolution for display.
+		// This can be expensive (statfs/stat); only do it in debug mode.
+		dstIDs := []string(nil)
+		if opts.Debug {
+			dstIDs, _ = p.expandRefs(j.Destination.Paths, j.Destination.Groups)
+		}
+
 		pj := PlanJob{Name: j.Name}
 		for _, c := range cands {
 			if opts.Limit > 0 && out.TotalCandidates >= int64(opts.Limit) {
 				break
 			}
 			wb := c.SizeBytes * mult
+			dstID := ""
+			var ppKept []string
+			if len(dstIDs) > 0 {
+				dr, err := p.selectDestinations(j, dstIDs, c)
+				if err == nil && len(dr.choices) > 0 {
+					dstID = dr.choices[0].id
+				}
+				ppKept = dr.pathPreservingKept
+			}
 			pj.Candidates = append(pj.Candidates, PlanCandidate{
-				JobName:      j.Name,
-				SrcStorageID: c.SrcStorageID,
-				RelPath:      c.RelPath,
-				SizeBytes:    c.SizeBytes,
-				MTimeSec:     c.MTimeSec,
-				WorkBytes:    wb,
+				JobName:            j.Name,
+				SrcStorageID:       c.SrcStorageID,
+				DstStorageID:       dstID,
+				RelPath:            c.RelPath,
+				SizeBytes:          c.SizeBytes,
+				MTimeSec:           c.MTimeSec,
+				WorkBytes:          wb,
+				PathPreservingKept: ppKept,
 			})
 			pj.WorkBytes += wb
 			out.TotalCandidates++
@@ -244,16 +270,17 @@ func RunOneshot(ctx context.Context, mountName string, mountCfg *config.MountCon
 		}
 
 		jr, err := p.runJob(ctx, j, hooks, db, limit, moved)
-		if err != nil {
-			return out, err
-		}
-
+		// Always accumulate partial results, even on error.
 		out.Jobs = append(out.Jobs, jr)
 		out.TotalFilesMoved += jr.FilesMoved
 		out.TotalBytesMoved += jr.BytesMoved
 		out.TotalBytesFreed += jr.BytesFreed
 		moved += jr.FilesMoved
 		out.Warnings = append(out.Warnings, jrWarnings(jr)...)
+		if err != nil {
+			out.TotalDurationMS = time.Since(start).Milliseconds()
+			return out, err
+		}
 	}
 
 	out.TotalDurationMS = time.Since(start).Milliseconds()

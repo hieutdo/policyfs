@@ -116,7 +116,7 @@ func (p *planner) runJob(ctx context.Context, j config.MoverJobConfig, hooks Hoo
 			if limit > 0 && movedSoFar+jr.FilesMoved >= limit {
 				break
 			}
-			dests, err := p.selectDestinations(j, dstIDs, c)
+			dr, err := p.selectDestinations(j, dstIDs, c)
 			if err != nil {
 				jr.FilesErrored++
 				if hooks.Warn != nil {
@@ -124,17 +124,25 @@ func (p *planner) runJob(ctx context.Context, j config.MoverJobConfig, hooks Hoo
 				}
 				continue
 			}
+			dests := dr.choices
 
 			srcRoot := p.storageByID[c.SrcStorageID].Path
 			srcPhys := filepath.Join(srcRoot, c.RelPath)
 
 			if p.opts.DryRun {
+				if hooks.FileStart != nil && len(dests) > 0 {
+					hooks.FileStart(j.Name, c.SrcStorageID, dests[0].id, c.RelPath, c.SizeBytes)
+				}
 				jr.FilesMoved++
 				jr.BytesMoved += c.SizeBytes
 				if hooks.Progress != nil {
 					hooks.Progress(j.Name, dests[0].id, c.RelPath)
 				}
 				continue
+			}
+
+			if hooks.FileStart != nil && len(dests) > 0 {
+				hooks.FileStart(j.Name, c.SrcStorageID, dests[0].id, c.RelPath, c.SizeBytes)
 			}
 
 			movedThis := false
@@ -332,7 +340,7 @@ func (p *planner) runJob(ctx context.Context, j config.MoverJobConfig, hooks Hoo
 // jobVerifyEnabled returns the effective verify bool for a job.
 func jobVerifyEnabled(j config.MoverJobConfig) bool {
 	if j.Verify == nil {
-		return true
+		return false
 	}
 	return *j.Verify
 }

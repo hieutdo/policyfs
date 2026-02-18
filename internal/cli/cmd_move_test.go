@@ -13,20 +13,21 @@ import (
 // TestMove_printMoveHeader_shouldIncludeMountJobAndDryRun verifies the header includes mount, job name, and dry-run marker.
 func TestMove_printMoveHeader_shouldIncludeMountJobAndDryRun(t *testing.T) {
 	var sb strings.Builder
-	printMoveHeader(&sb, "media", "archive", true, false)
+	printMoveHeader(&sb, "media", mover.Opts{Job: "archive", DryRun: true})
 
 	out := sb.String()
-	require.Contains(t, out, "pfs move: mount=media\n")
-	require.Contains(t, out, "Job: archive\n")
-	require.Contains(t, out, "Mode: dry-run\n")
+	require.Contains(t, out, "pfs move: mount=media")
+	require.Contains(t, out, "job=archive")
+	require.Contains(t, out, "dry-run")
 }
 
 // TestMove_printMoveHeader_debug_shouldIncludeDebugMarker verifies the header includes a debug marker.
 func TestMove_printMoveHeader_debug_shouldIncludeDebugMarker(t *testing.T) {
 	var sb strings.Builder
-	printMoveHeader(&sb, "media", "", false, true)
+	printMoveHeader(&sb, "media", mover.Opts{Debug: true})
 	out := sb.String()
-	require.Contains(t, out, "pfs move: mount=media (debug mode ON)\n")
+	require.Contains(t, out, "pfs move: mount=media")
+	require.Contains(t, out, "debug=ON")
 }
 
 // TestMove_printMoveSummary_shouldIncludeTotalsAndWarnings verifies the summary prints per-job lines, totals, and warnings.
@@ -44,12 +45,13 @@ func TestMove_printMoveSummary_shouldIncludeTotalsAndWarnings(t *testing.T) {
 	printMoveSummary(&sb, res, []string{"archive/ssd1: boom"})
 	out := sb.String()
 
-	require.Contains(t, out, "Summary:\n")
-	require.Contains(t, out, "archive  moved")
-	require.Contains(t, out, "Total freed on sources:")
-	require.Contains(t, out, "Done:")
+	require.Contains(t, out, "Summary")
+	require.Contains(t, out, "archive")
+	require.Contains(t, out, "moved")
+	require.Contains(t, out, "Errors")
+	require.Contains(t, out, "Elapsed")
 	require.Contains(t, out, "Warnings (1):")
-	require.Contains(t, out, "- archive/ssd1: boom")
+	require.Contains(t, out, "archive/ssd1: boom")
 }
 
 // TestMove_invalidProgressValue_shouldReturnUsage verifies invalid --progress values are rejected.
@@ -152,8 +154,150 @@ mounts:
 	require.Equal(t, ExitOK, code)
 	require.Empty(t, stderr)
 	require.Contains(t, stdout, "pfs move: mount=media")
-	require.Contains(t, stdout, "Summary:")
-	require.Contains(t, stdout, "Total freed on sources:")
+	require.Contains(t, stdout, "Summary")
+	require.Contains(t, stdout, "Elapsed")
+
+	require.NoFileExists(t, filepath.Join(src, "library", "a.txt"))
+	require.FileExists(t, filepath.Join(dst, "library", "a.txt"))
+}
+
+// TestMove_progressPlain_shouldPrintCopyingAndDone verifies --progress=plain prints one Copying line and one Done line.
+func TestMove_progressPlain_shouldPrintCopyingAndDone(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+
+	rel := filepath.Join(src, "library", "a.txt")
+	require.NoError(t, os.MkdirAll(filepath.Dir(rel), 0o755))
+	require.NoError(t, os.WriteFile(rel, []byte("hello"), 0o644))
+
+	cfg := writeTempConfig(t, `
+mounts:
+  media:
+    mountpoint: "/mnt/pfs/media"
+    storage_paths:
+      - id: "ssd1"
+        path: "`+src+`"
+        indexed: false
+      - id: "hdd1"
+        path: "`+dst+`"
+        indexed: false
+    routing_rules:
+      - match: "**"
+        targets: ["ssd1"]
+    mover:
+      enabled: true
+      jobs:
+        - name: "archive"
+          trigger:
+            type: manual
+          source:
+            paths: ["ssd1"]
+            patterns: ["library/**"]
+          destination:
+            paths: ["hdd1"]
+            policy: first_found
+          delete_source: true
+          verify: false
+`)
+
+	code, stdout, stderr := runCLI(t, []string{"--config", cfg, "move", "media", "--job", "archive", "--limit", "1", "--force", "--progress=plain"})
+	require.Equal(t, ExitOK, code)
+	require.Empty(t, stderr)
+	require.Contains(t, stdout, "[1/1]  Copying  library/a.txt")
+	require.Contains(t, stdout, "[1/1]  Done  library/a.txt")
+}
+
+// TestMove_progressAuto_nonTTYShouldNotSpam verifies non-TTY auto progress does not emit carriage returns or TTY bars.
+func TestMove_progressAuto_nonTTYShouldNotSpam(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+
+	rel := filepath.Join(src, "library", "a.txt")
+	require.NoError(t, os.MkdirAll(filepath.Dir(rel), 0o755))
+	require.NoError(t, os.WriteFile(rel, []byte("hello"), 0o644))
+
+	cfg := writeTempConfig(t, `
+mounts:
+  media:
+    mountpoint: "/mnt/pfs/media"
+    storage_paths:
+      - id: "ssd1"
+        path: "`+src+`"
+        indexed: false
+      - id: "hdd1"
+        path: "`+dst+`"
+        indexed: false
+    routing_rules:
+      - match: "**"
+        targets: ["ssd1"]
+    mover:
+      enabled: true
+      jobs:
+        - name: "archive"
+          trigger:
+            type: manual
+          source:
+            paths: ["ssd1"]
+            patterns: ["library/**"]
+          destination:
+            paths: ["hdd1"]
+            policy: first_found
+          delete_source: true
+          verify: false
+`)
+
+	// Note: runCLI captures stdout via a pipe (non-TTY), so --progress=auto should use plain output.
+	code, stdout, stderr := runCLI(t, []string{"--config", cfg, "move", "media", "--job", "archive", "--limit", "1", "--force"})
+	require.Equal(t, ExitOK, code)
+	require.Empty(t, stderr)
+	require.NotContains(t, stdout, "\r")
+	require.Contains(t, stdout, "Copying")
+	require.Contains(t, stdout, "Done")
+}
+
+// TestMove_quiet_shouldSuppressAllOutput verifies --quiet suppresses all stdout output on success.
+func TestMove_quiet_shouldSuppressAllOutput(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+
+	rel := filepath.Join(src, "library", "a.txt")
+	require.NoError(t, os.MkdirAll(filepath.Dir(rel), 0o755))
+	require.NoError(t, os.WriteFile(rel, []byte("hello"), 0o644))
+
+	cfg := writeTempConfig(t, `
+mounts:
+  media:
+    mountpoint: "/mnt/pfs/media"
+    storage_paths:
+      - id: "ssd1"
+        path: "`+src+`"
+        indexed: false
+      - id: "hdd1"
+        path: "`+dst+`"
+        indexed: false
+    routing_rules:
+      - match: "**"
+        targets: ["ssd1"]
+    mover:
+      enabled: true
+      jobs:
+        - name: "archive"
+          trigger:
+            type: manual
+          source:
+            paths: ["ssd1"]
+            patterns: ["library/**"]
+          destination:
+            paths: ["hdd1"]
+            policy: first_found
+          delete_source: true
+          verify: false
+`)
+
+	code, stdout, stderr := runCLI(t, []string{"--config", cfg, "move", "media", "--job", "archive", "--quiet"})
+	require.Equal(t, ExitOK, code)
+	require.Empty(t, stderr)
+	require.Empty(t, stdout)
 
 	require.NoFileExists(t, filepath.Join(src, "library", "a.txt"))
 	require.FileExists(t, filepath.Join(dst, "library", "a.txt"))

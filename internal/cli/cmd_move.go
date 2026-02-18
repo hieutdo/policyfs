@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -22,7 +23,6 @@ func newMoveCmd(configPath *string) *cobra.Command {
 	var dryRun bool
 	var force bool
 	var limit int
-	var verbose bool
 	var debug bool
 	var debugMax int
 	var quiet bool
@@ -36,9 +36,8 @@ func newMoveCmd(configPath *string) *cobra.Command {
 This command is typically scheduled via systemd timers for usage-triggered jobs.`,
 		Example: `  pfs move media
   pfs move media --job archive-media
-  pfs move media --dry-run
-  pfs move media --force
-  pfs move media --limit 100
+  pfs move media --dry-run --force --debug --limit 5
+  pfs move media --quiet
   pfs move media --progress=plain`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
@@ -93,13 +92,19 @@ This command is typically scheduled via systemd timers for usage-triggered jobs.
 			defer func() { _ = lk.Close() }()
 
 			stdout := cmd.OutOrStdout()
-			printMoveHeader(stdout, mountName, job, dryRun, debug)
-
 			ctx := cmd.Context()
-
+			if quiet {
+				// Quiet mode suppresses all output; debug is ignored.
+				debug = false
+				debugMax = 0
+			}
 			opts := mover.Opts{Job: job, DryRun: dryRun, Force: force, Limit: limit, Debug: debug, DebugMax: debugMax}
+
+			if !quiet {
+				printMoveHeader(stdout, mountName, opts)
+			}
 			plan := mover.PlanResult{}
-			needPlan := verbose || debug || progressMode != "off"
+			needPlan := debug || progressMode != "off"
 			if needPlan {
 				pl, err := mover.Plan(ctx, mountName, mountCfg, opts)
 				if err != nil {
@@ -110,16 +115,20 @@ This command is typically scheduled via systemd timers for usage-triggered jobs.
 				}
 				plan = pl
 			}
-			if debug {
+			if debug && !quiet {
 				printMoveDebug(stdout, plan.Debug)
 			}
-			if verbose {
+			if debug && !quiet {
 				printMoveCandidates(stdout, plan)
 			}
 
 			warningsHuman := []string{}
+			sawCanceledCopy := false
 			hooks := mover.Hooks{}
 			hooks.Warn = func(jobName string, storageID string, rel string, err error) {
+				if errors.Is(err, context.Canceled) {
+					sawCanceledCopy = true
+				}
 				msg := simplifyError(err)
 				if strings.TrimSpace(rel) != "" {
 					msg = fmt.Sprintf("%s: %s", rel, msg)
@@ -128,19 +137,35 @@ This command is typically scheduled via systemd timers for usage-triggered jobs.
 				warningsHuman = append(warningsHuman, msg)
 			}
 
-			var progressUI *moveProgressUI
+			var progressUI moveProgressAdapter
 			if progressMode != "off" {
-				pui, err := startMoveProgress(ctx, stdout, opts, plan, progressMode)
-				if err != nil {
-					return &CLIError{Code: ExitFail, Cmd: "move", Headline: "unexpected error", Cause: rootCause(err)}
+				if isInteractiveWriter(stdout) && progressMode != "plain" {
+					progressUI = startMpbProgress(stdout, opts, plan)
+				} else {
+					progressUI = startPlainProgress(stdout, opts, plan)
 				}
-				progressUI = pui
+				hooks.FileStart = progressUI.OnFileStart
 				hooks.Progress = progressUI.OnProgress
 				hooks.CopyProgress = progressUI.OnCopyProgress
 			}
 
 			res, err := mover.RunOneshot(ctx, mountName, mountCfg, opts, hooks)
 			if err != nil {
+				if progressUI != nil {
+					progressUI.Cancel()
+				}
+				if errors.Is(err, context.Canceled) {
+					if !quiet {
+						totalCandidates := plan.TotalCandidates
+						if totalCandidates <= 0 {
+							for _, jr := range res.Jobs {
+								totalCandidates += jr.TotalCandidates
+							}
+						}
+						printMoveCancelSummary(stdout, res, totalCandidates, sawCanceledCopy)
+					}
+					return &CLIError{Code: ExitInterrupted, Silent: true}
+				}
 				if errors.Is(err, errkind.ErrNotFound) {
 					return &CLIError{Code: ExitUsage, Cmd: "move", Headline: "invalid arguments", Cause: rootCause(err), Hint: "run 'pfs move --help'"}
 				}
@@ -150,7 +175,9 @@ This command is typically scheduled via systemd timers for usage-triggered jobs.
 			if progressUI != nil {
 				progressUI.Finish()
 			}
-			printMoveSummary(stdout, res, warningsHuman)
+			if !quiet {
+				printMoveSummary(stdout, res, warningsHuman)
+			}
 			return nil
 		},
 	}
@@ -159,31 +186,40 @@ This command is typically scheduled via systemd timers for usage-triggered jobs.
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be moved without making changes")
 	cmd.Flags().BoolVar(&force, "force", false, "force run (ignore triggers)")
 	cmd.Flags().IntVar(&limit, "limit", 0, "limit number of files moved")
-	cmd.Flags().BoolVar(&verbose, "verbose", false, "print planned candidates before moving")
 	cmd.Flags().BoolVar(&debug, "debug", false, "print debug info about skipped entries")
 	cmd.Flags().IntVar(&debugMax, "debug-max", 20, "maximum number of debug entries to print")
-	cmd.Flags().BoolVar(&quiet, "quiet", false, "disable progress output")
+	cmd.Flags().BoolVar(&quiet, "quiet", false, "disable all output")
 	cmd.Flags().StringVar(&progress, "progress", "auto", "progress output: auto|tty|plain|off")
 
 	return cmd
 }
 
 // printMoveHeader prints a short human-readable header before moving.
-func printMoveHeader(w io.Writer, mountName string, jobName string, dryRun bool, debug bool) {
+func printMoveHeader(w io.Writer, mountName string, opts mover.Opts) {
 	if w == nil {
 		return
 	}
-	if debug {
-		fmt.Fprintf(w, "pfs move: mount=%s (debug mode ON)\n", mountName)
-	} else {
-		fmt.Fprintf(w, "pfs move: mount=%s\n", mountName)
+	flags := []string{}
+	if opts.Debug {
+		flags = append(flags, "debug=ON")
 	}
-	if strings.TrimSpace(jobName) != "" {
-		fmt.Fprintf(w, "Job: %s\n", strings.TrimSpace(jobName))
+	if opts.DryRun {
+		flags = append(flags, "dry-run")
 	}
-	if dryRun {
-		fmt.Fprintln(w, "Mode: dry-run")
+	if opts.Force {
+		flags = append(flags, "force=ON")
 	}
+	if opts.Limit > 0 {
+		flags = append(flags, fmt.Sprintf("limit=%d", opts.Limit))
+	}
+	if strings.TrimSpace(opts.Job) != "" {
+		flags = append(flags, fmt.Sprintf("job=%s", strings.TrimSpace(opts.Job)))
+	}
+	line := fmt.Sprintf("pfs move: mount=%s", mountName)
+	if len(flags) > 0 {
+		line += "  " + strings.Join(flags, "  ")
+	}
+	fmt.Fprintln(w, line)
 }
 
 // printMoveDebug prints best-effort debug entries produced during planning.
@@ -192,7 +228,7 @@ func printMoveDebug(w io.Writer, dbg *mover.PlanDebug) {
 		return
 	}
 	if dbg == nil {
-		fmt.Fprintln(w, "Debug:")
+		fmt.Fprintln(w, "\nDebug:")
 		fmt.Fprintln(w, "  (no debug output)")
 		return
 	}
@@ -200,7 +236,7 @@ func printMoveDebug(w io.Writer, dbg *mover.PlanDebug) {
 		return
 	}
 
-	fmt.Fprintf(w, "Debug (max=%d):\n", dbg.Max)
+	fmt.Fprintf(w, "\nDebug (max=%d entries):\n", dbg.Max)
 	if len(dbg.Entries) == 0 {
 		fmt.Fprintln(w, "  (no entries)")
 	} else {
@@ -213,7 +249,7 @@ func printMoveDebug(w io.Writer, dbg *mover.PlanDebug) {
 				loc = fmt.Sprintf("%s:%s", strings.TrimSpace(e.StorageID), loc)
 			}
 			if strings.TrimSpace(e.JobName) != "" {
-				loc = fmt.Sprintf("%s/%s", strings.TrimSpace(e.JobName), loc)
+				loc = fmt.Sprintf("job=%s, %s", strings.TrimSpace(e.JobName), loc)
 			}
 			if strings.TrimSpace(e.Detail) != "" {
 				fmt.Fprintf(w, "  %s  %s  (%s)\n", loc, e.Reason, e.Detail)
@@ -227,7 +263,6 @@ func printMoveDebug(w io.Writer, dbg *mover.PlanDebug) {
 	}
 
 	if len(dbg.Destinations) > 0 {
-		fmt.Fprintln(w, "Destinations:")
 		for _, j := range dbg.Destinations {
 			primary := j.PrimaryChoice
 			if strings.TrimSpace(primary) == "" {
@@ -235,14 +270,17 @@ func printMoveDebug(w io.Writer, dbg *mover.PlanDebug) {
 			}
 			note := strings.TrimSpace(j.Note)
 			if note != "" {
-				fmt.Fprintf(w, "  %s  policy=%s  path_preserving=%v  primary=%s  note=%s\n", j.JobName, j.Policy, j.PathPreserving, primary, note)
+				fmt.Fprintf(w, "\nDestinations: job=%s  policy=%s  path_preserving=%v  note=%s\n", j.JobName, j.Policy, j.PathPreserving, note)
 			} else {
-				fmt.Fprintf(w, "  %s  policy=%s  path_preserving=%v  primary=%s\n", j.JobName, j.Policy, j.PathPreserving, primary)
+				fmt.Fprintf(w, "\nDestinations: job=%s  policy=%s  path_preserving=%v\n", j.JobName, j.Policy, j.PathPreserving)
 			}
 			for _, d := range j.Destinations {
-				freePct := 0.0
-				if d.UsePct > 0 {
-					freePct = 100.0 - d.UsePct
+				freePct := 100.0 - d.UsePct
+				if freePct < 0 {
+					freePct = 0
+				}
+				if freePct > 100 {
+					freePct = 100
 				}
 				elig := "no"
 				if d.Eligible {
@@ -250,24 +288,24 @@ func printMoveDebug(w io.Writer, dbg *mover.PlanDebug) {
 				}
 				minFree := "-"
 				if d.MinFreeGB > 0 {
-					minFree = fmt.Sprintf("%.1fGiB", d.MinFreeGB)
+					minFree = fmt.Sprintf("%.1f GiB", d.MinFreeGB)
 				}
-				reason := strings.TrimSpace(d.Reason)
-				if reason == "" {
-					reason = "-"
+				primaryMark := ""
+				if d.StorageID == primary {
+					primaryMark = "  \u25C4 primary"
 				}
-				fmt.Fprintf(w, "    %s  eligible=%s  used=%.0f%%  free=%.1fGiB (%.0f%%)  min_free=%s  reason=%s\n",
+				fmt.Fprintf(w, "  %s  free=%.1f GiB (%.0f%%)  used=%.0f%%  min_free=%s  eligible=%s%s\n",
 					d.StorageID,
-					elig,
-					d.UsePct,
 					d.FreeGB,
 					freePct,
+					d.UsePct,
 					minFree,
-					reason,
+					elig,
+					primaryMark,
 				)
 			}
 			if len(j.OrderedEligible) > 0 {
-				fmt.Fprintf(w, "    ordered_eligible: %s\n", strings.Join(j.OrderedEligible, ", "))
+				fmt.Fprintf(w, "  ordered: %s\n", strings.Join(j.OrderedEligible, ", "))
 			}
 		}
 	}
@@ -279,22 +317,67 @@ func printMoveCandidates(w io.Writer, plan mover.PlanResult) {
 		return
 	}
 
-	fmt.Fprintln(w, "Candidates:")
+	totalBytes := int64(0)
+	for _, pj := range plan.Jobs {
+		for _, c := range pj.Candidates {
+			totalBytes += c.SizeBytes
+		}
+	}
+	totalSz := humanfmt.FormatBytesIEC(totalBytes, 1)
+	fmt.Fprintf(w, "\nCandidates: %d files  %s\n", plan.TotalCandidates, totalSz)
 	if plan.TotalCandidates == 0 {
 		fmt.Fprintln(w, "  (none)")
 		return
 	}
 
+	idx := 0
 	for _, pj := range plan.Jobs {
 		for _, c := range pj.Candidates {
+			idx++
 			sz := humanfmt.FormatBytesIEC(c.SizeBytes, 1)
-			mtime := "-"
-			if c.MTimeSec > 0 {
-				mtime = time.Unix(c.MTimeSec, 0).Local().Format(time.RFC3339)
+			dst := c.DstStorageID
+			if dst == "" {
+				dst = "-"
 			}
-			fmt.Fprintf(w, "  %s/%s: %s (%s, mtime=%s)\n", pj.Name, c.SrcStorageID, c.RelPath, sz, mtime)
+			fmt.Fprintf(w, "  [%d]  %s\n", idx, c.RelPath)
+			fmt.Fprintf(w, "       %s  job=%s  %s \u2500\u25BA %s\n", sz, pj.Name, c.SrcStorageID, dst)
+			if c.PathPreservingKept != nil {
+				if len(c.PathPreservingKept) == 0 {
+					fmt.Fprintf(w, "       path_preserving: parent dir not present on any destination\n")
+				} else {
+					fmt.Fprintf(w, "       path_preserving: %s\n", strings.Join(c.PathPreservingKept, ", "))
+				}
+			}
 		}
 	}
+}
+
+// printMoveCancelSummary prints a one-line summary when the move is interrupted by Ctrl+C.
+func printMoveCancelSummary(w io.Writer, res mover.Result, totalCandidates int64, partialCleaned bool) {
+	if w == nil {
+		return
+	}
+
+	moved := res.TotalFilesMoved
+	freed := humanfmt.FormatBytesIEC(res.TotalBytesFreed, 1)
+	remaining := totalCandidates - moved
+	if remaining < 0 {
+		remaining = 0
+	}
+
+	parts := []string{}
+	parts = append(parts, fmt.Sprintf("%d moved (%s freed)", moved, freed))
+
+	// At most 1 file was in-flight when interrupted; its temp file is auto-cleaned.
+	if remaining > 0 && partialCleaned {
+		parts = append(parts, "1 partial (cleaned up)")
+		remaining--
+	}
+	if remaining > 0 {
+		parts = append(parts, fmt.Sprintf("%d pending", remaining))
+	}
+
+	fmt.Fprintf(w, "\nStopped early: %s\n", strings.Join(parts, ", "))
 }
 
 // printMoveSummary prints the human summary (per-job + totals + warnings).
@@ -303,30 +386,28 @@ func printMoveSummary(w io.Writer, res mover.Result, warningsHuman []string) {
 		return
 	}
 
-	fmt.Fprintln(w, "Summary:")
+	totalDur := time.Duration(res.TotalDurationMS) * time.Millisecond
+
+	fmt.Fprintln(w, "\nSummary")
 	for _, jr := range res.Jobs {
-		dur := time.Duration(jr.DurationMS) * time.Millisecond
-		fmt.Fprintf(w, "  %s  moved  %s files  %s  errors %s  (%s)\n",
+		fmt.Fprintf(w, "  %-12s  moved %s files  %s  freed %s\n",
 			jr.Name,
 			humanize.Comma(jr.FilesMoved),
 			humanfmt.FormatBytesIEC(jr.BytesMoved, 1),
-			humanize.Comma(jr.FilesErrored),
-			dur.Round(100*time.Millisecond),
+			humanfmt.FormatBytesIEC(jr.BytesFreed, 1),
 		)
 	}
-
-	totalDur := time.Duration(res.TotalDurationMS) * time.Millisecond
-	fmt.Fprintf(w, "Total freed on sources: %s\n", humanfmt.FormatBytesIEC(res.TotalBytesFreed, 1))
-	fmt.Fprintf(w, "Done: %s files, %s in %s\n",
-		humanize.Comma(res.TotalFilesMoved),
-		humanfmt.FormatBytesIEC(res.TotalBytesMoved, 1),
-		totalDur.Round(100*time.Millisecond),
-	)
+	var totalErrors int64
+	for _, jr := range res.Jobs {
+		totalErrors += jr.FilesErrored
+	}
+	fmt.Fprintf(w, "  Errors   %s\n", humanize.Comma(totalErrors))
+	fmt.Fprintf(w, "  Elapsed  %s\n", totalDur.Round(100*time.Millisecond))
 
 	if len(warningsHuman) > 0 {
-		fmt.Fprintf(w, "\nWarnings (%d):\n\n", len(warningsHuman))
+		fmt.Fprintf(w, "\nWarnings (%d):\n", len(warningsHuman))
 		for _, warn := range warningsHuman {
-			fmt.Fprintf(w, "- %s\n", warn)
+			fmt.Fprintf(w, "  - %s\n", warn)
 		}
 	}
 }
