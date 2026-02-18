@@ -5,4 +5,10 @@ if command -v systemctl >/dev/null 2>&1; then
   systemctl stop 'pfs@*.service' >/dev/null 2>&1 || true
   systemctl stop 'pfs-index@*.service' >/dev/null 2>&1 || true
   systemctl stop 'pfs-index@*.timer' >/dev/null 2>&1 || true
+  systemctl stop 'pfs-move@*.service' >/dev/null 2>&1 || true
+  systemctl stop 'pfs-move@*.timer' >/dev/null 2>&1 || true
+  systemctl stop 'pfs-prune@*.service' >/dev/null 2>&1 || true
+  systemctl stop 'pfs-prune@*.timer' >/dev/null 2>&1 || true
+  systemctl stop 'pfs-maint@*.service' >/dev/null 2>&1 || true
+  systemctl stop 'pfs-maint@*.timer' >/dev/null 2>&1 || true
 fi

@@ -12,6 +12,7 @@ import (
 	"github.com/hieutdo/policyfs/internal/config"
 	"github.com/hieutdo/policyfs/internal/errkind"
 	"github.com/hieutdo/policyfs/internal/eventlog"
+	"github.com/hieutdo/policyfs/internal/lock"
 	"github.com/hieutdo/policyfs/internal/prune"
 	"github.com/spf13/cobra"
 )
@@ -89,7 +90,7 @@ This command executes physical mutations (unlink/rmdir/rename/chmod/chown/utimen
 					if err != nil {
 						anyFailed = true
 						if !quiet {
-							fmt.Fprintf(stdout, "pfs prune: mount=%s failed: %s\n", mountName, rootCause(err).Error())
+							fmt.Fprintf(stdout, "pfs prune: mount=%s failed: %s\n", mountName, simplifyError(err))
 						}
 						continue
 					}
@@ -113,6 +114,10 @@ This command executes physical mutations (unlink/rmdir/rename/chmod/chown/utimen
 
 			res, err := pruneOneshot(ctx, mountName, mountCfg, prune.Opts{DryRun: dryRun, Limit: limit}, actionHook(mountName))
 			if err != nil {
+				var ce *CLIError
+				if errors.As(err, &ce) {
+					return ce
+				}
 				return &CLIError{Code: ExitFail, Cmd: "prune", Headline: "unexpected error", Cause: rootCause(err)}
 			}
 			printPruneSummary(stdout, res, quiet)
@@ -194,11 +199,17 @@ func printPruneAction(w io.Writer, mountName string, e prune.VerboseEvent) {
 }
 
 func pruneOneshot(ctx context.Context, mountName string, mountCfg *config.MountConfig, opts prune.Opts, hooks prune.Hooks) (prune.Summary, error) {
-	res, err := prune.RunOneshot(ctx, mountName, mountCfg, opts, hooks)
+	lk, err := lock.AcquireMountLock(mountName, config.DefaultJobLockFile)
 	if err != nil {
 		if errors.Is(err, errkind.ErrBusy) {
-			return res, &CLIError{Code: ExitBusy, Cmd: "prune", Headline: "job already running", Cause: err}
+			return prune.Summary{Mount: mountName}, &CLIError{Code: ExitBusy, Cmd: "prune", Headline: "job already running", Cause: err}
 		}
+		return prune.Summary{Mount: mountName}, fmt.Errorf("failed to acquire job lock: %w", err)
+	}
+	defer func() { _ = lk.Close() }()
+
+	res, err := prune.RunOneshot(ctx, mountName, mountCfg, opts, hooks)
+	if err != nil {
 		return res, fmt.Errorf("failed to prune: %w", err)
 	}
 	return res, nil

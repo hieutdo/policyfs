@@ -15,7 +15,6 @@ import (
 	"github.com/hieutdo/policyfs/internal/errkind"
 	"github.com/hieutdo/policyfs/internal/eventlog"
 	"github.com/hieutdo/policyfs/internal/indexdb"
-	"github.com/hieutdo/policyfs/internal/lock"
 	"golang.org/x/sys/unix"
 )
 
@@ -64,13 +63,6 @@ type Hooks struct {
 func RunOneshot(ctx context.Context, mountName string, mountCfg *config.MountConfig, opts Opts, hooks Hooks) (Summary, error) {
 	start := time.Now()
 	out := Summary{Mount: mountName, ByType: map[eventlog.Type]int64{}}
-
-	// Lock to ensure only one prune job runs per mount.
-	lk, err := lock.AcquireMountLock(mountName, config.DefaultJobLockFile)
-	if err != nil {
-		return out, fmt.Errorf("failed to acquire job lock: %w", err)
-	}
-	defer func() { _ = lk.Close() }()
 
 	storageRoots := map[string]string{}
 	if mountCfg != nil {

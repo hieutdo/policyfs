@@ -271,32 +271,20 @@ func validateConfigAll(c *config.RootConfig) []error {
 					}
 				}
 
-				aw := j.AllowedWindow
-				taw := j.Trigger.AllowedWindow
-				if aw != nil && taw != nil {
-					if aw.Start != taw.Start || aw.End != taw.End {
-						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d] has both allowed_window and trigger.allowed_window with different values", mountName, ji))
-					}
-					if aw.FinishCurrent != nil && taw.FinishCurrent != nil && *aw.FinishCurrent != *taw.FinishCurrent {
-						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d] has both allowed_window and trigger.allowed_window with different finish_current values", mountName, ji))
-					}
-				}
-				if aw == nil {
-					aw = taw
-				}
+				aw := j.Trigger.AllowedWindow
 				if aw != nil {
 					if tt != "usage" {
-						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].allowed_window is only valid for trigger.type=usage", mountName, ji))
+						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].trigger.allowed_window is only valid for trigger.type=usage", mountName, ji))
 					}
 					if strings.TrimSpace(aw.Start) == "" {
-						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].allowed_window.start is required", mountName, ji))
+						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].trigger.allowed_window.start is required", mountName, ji))
 					} else if _, err := time.Parse("15:04", aw.Start); err != nil {
-						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].allowed_window.start must be HH:MM", mountName, ji))
+						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].trigger.allowed_window.start must be HH:MM", mountName, ji))
 					}
 					if strings.TrimSpace(aw.End) == "" {
-						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].allowed_window.end is required", mountName, ji))
+						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].trigger.allowed_window.end is required", mountName, ji))
 					} else if _, err := time.Parse("15:04", aw.End); err != nil {
-						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].allowed_window.end must be HH:MM", mountName, ji))
+						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].trigger.allowed_window.end must be HH:MM", mountName, ji))
 					}
 				}
 

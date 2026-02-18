@@ -24,7 +24,6 @@ import (
 // newMountCmd creates `pfs mount`.
 func newMountCmd(configPath *string) *cobra.Command {
 	var fuseDebug bool
-	var debugDeprecated bool
 	var logFile string
 	var logDiskAccess bool
 	var dedupTTLSec int
@@ -49,12 +48,6 @@ This command is typically managed by systemd as a service.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			mountName := args[0]
 
-			// Handle deprecated --debug flag.
-			if debugDeprecated {
-				fuseDebug = true
-				fmt.Fprintln(os.Stderr, "pfs: --debug is deprecated, use --fuse-debug instead")
-			}
-
 			rootCfg, mountCfg, source, err := loadAndResolveMount(*configPath, mountName)
 			if err != nil {
 				if isUsageError(err) {
@@ -66,7 +59,7 @@ This command is typically managed by systemd as a service.`,
 				return &CLIError{Code: ExitFail, Cmd: "mount", Headline: fmt.Sprintf("invalid config: %s", *configPath), Cause: rootCause(err)}
 			}
 
-			dlk, err := lock.AcquireMountLock(mountName, "daemon.lock")
+			dlk, err := lock.AcquireMountLock(mountName, config.DefaultDaemonLockFile)
 			if err != nil {
 				if errors.Is(err, errkind.ErrBusy) {
 					return &CLIError{Code: ExitBusy, Cmd: "mount", Headline: "daemon already running", Cause: err}
@@ -305,8 +298,6 @@ This command is typically managed by systemd as a service.`,
 	}
 
 	cmd.Flags().BoolVar(&fuseDebug, "fuse-debug", false, "enable go-fuse internal debug logging (raw FUSE request/response dump)")
-	cmd.Flags().BoolVar(&debugDeprecated, "debug", false, "deprecated: use --fuse-debug")
-	_ = cmd.Flags().MarkHidden("debug")
 	cmd.Flags().StringVar(&logFile, "log-file", "", fmt.Sprintf("path to log file (overrides %s)", config.EnvLogFile))
 	cmd.Flags().BoolVar(&logDiskAccess, "log-disk-access", false, fmt.Sprintf("enable disk access logging for indexed storage (debugging; can also set %s=1)", config.EnvLogDiskAccess))
 	cmd.Flags().IntVar(&dedupTTLSec, "dedup-ttl", 60, "disk access log dedup TTL in seconds (0=disabled)")

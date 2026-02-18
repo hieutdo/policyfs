@@ -1,0 +1,10 @@
+[Unit]
+Description=Run PolicyFS prune for mount %i
+
+[Timer]
+OnCalendar=*-*-* 04:15:00
+Persistent=true
+RandomizedDelaySec=10m
+
+[Install]
+WantedBy=timers.target

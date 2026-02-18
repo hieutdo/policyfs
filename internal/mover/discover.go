@@ -66,10 +66,7 @@ func parseConditions(c config.MoverConditionsConfig) (conditions, error) {
 // When dbg is provided, it collects best-effort debug entries for skip reasons.
 func (p *planner) discoverJobCandidatesWithDebug(ctx context.Context, j config.MoverJobConfig, dbg *debugCollector) ([]candidate, error) {
 	trigType := strings.TrimSpace(j.Trigger.Type)
-	aw := j.AllowedWindow
-	if aw == nil {
-		aw = j.Trigger.AllowedWindow
-	}
+	aw := j.Trigger.AllowedWindow
 	if aw != nil && trigType == "usage" && !p.opts.Force {
 		inside, _, err := inAllowedWindow(p.now(), aw.Start, aw.End)
 		if err != nil {

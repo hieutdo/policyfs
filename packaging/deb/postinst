@@ -24,5 +24,7 @@ fi
 
 if command -v systemctl >/dev/null 2>&1; then
   systemctl daemon-reload
-  echo "pfs: next: systemctl enable --now pfs-index@<mount>.timer" >&2
+  echo "pfs: next: systemctl enable --now pfs@<mount>.service" >&2
+  echo "pfs: next: systemctl enable --now pfs-maint@<mount>.timer" >&2
+  echo "pfs: hint: or enable individual timers (index/move/prune) instead of maint" >&2
 fi

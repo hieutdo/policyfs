@@ -5,5 +5,11 @@ if command -v systemctl >/dev/null 2>&1; then
   rm -f /etc/systemd/system/multi-user.target.wants/pfs@*.service
   rm -f /etc/systemd/system/multi-user.target.wants/pfs-index@*.service
   rm -f /etc/systemd/system/timers.target.wants/pfs-index@*.timer
+  rm -f /etc/systemd/system/multi-user.target.wants/pfs-move@*.service
+  rm -f /etc/systemd/system/timers.target.wants/pfs-move@*.timer
+  rm -f /etc/systemd/system/multi-user.target.wants/pfs-prune@*.service
+  rm -f /etc/systemd/system/timers.target.wants/pfs-prune@*.timer
+  rm -f /etc/systemd/system/multi-user.target.wants/pfs-maint@*.service
+  rm -f /etc/systemd/system/timers.target.wants/pfs-maint@*.timer
   systemctl daemon-reload
 fi

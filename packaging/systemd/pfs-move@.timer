@@ -1,0 +1,10 @@
+[Unit]
+Description=Run PolicyFS mover for mount %i
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=5m
+
+[Install]
+WantedBy=timers.target

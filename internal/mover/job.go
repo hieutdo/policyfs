@@ -33,10 +33,7 @@ func (p *planner) runJob(ctx context.Context, j config.MoverJobConfig, hooks Hoo
 		return jr, &errkind.RequiredError{Msg: "config: mover job trigger.type is required"}
 	}
 
-	aw := j.AllowedWindow
-	if aw == nil {
-		aw = j.Trigger.AllowedWindow
-	}
+	aw := j.Trigger.AllowedWindow
 	var winEnd time.Time
 	finishCurrent := true
 	if aw != nil && aw.FinishCurrent != nil {

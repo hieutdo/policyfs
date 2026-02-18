@@ -13,13 +13,47 @@ mounts:
   media:
     mountpoint: /mnt/pfs/media
     storage_paths:
+      - id: ssd1
+        path: /mnt/ssd1/media
+        indexed: false
       - id: hdd1
         path: /mnt/hdd1/media
         indexed: true
 
     storage_groups:
+      ssds: [ssd1]
       hdds: [hdd1]
 
     routing_rules:
       - match: '**'
-        targets: [hdds]
+        read_targets: [ssds, hdds]
+        write_targets: [ssds]
+        write_policy: first_found
+        path_preserving: true
+
+    mover:
+      enabled: true
+      jobs:
+        - name: archive
+          trigger:
+            type: usage
+            threshold_start: 80
+            threshold_stop: 70
+            allowed_window:
+              start: '23:00'
+              end: '06:00'
+              finish_current: true
+          source:
+            groups: [ssds]
+            patterns: ['library/**']
+            ignore: ['**/.DS_Store']
+          destination:
+            groups: [hdds]
+            policy: most_free
+            path_preserving: true
+          conditions:
+            min_age: 7d
+            min_size: 100MB
+          delete_source: true
+          delete_empty_dir: true
+          verify: false

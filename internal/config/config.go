@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -134,7 +135,6 @@ type MoverJobConfig struct {
 	Name           string                 `yaml:"name"`
 	Description    string                 `yaml:"description"`
 	Trigger        MoverTriggerConfig     `yaml:"trigger"`
-	AllowedWindow  *MoverAllowedWindow    `yaml:"allowed_window"`
 	Source         MoverSourceConfig      `yaml:"source"`
 	Destination    MoverDestinationConfig `yaml:"destination"`
 	Conditions     MoverConditionsConfig  `yaml:"conditions"`
@@ -212,7 +212,9 @@ func Load(path string) (*RootConfig, error) {
 	}
 
 	var cfg RootConfig
-	if err := yaml.Unmarshal(b, &cfg); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(b))
+	dec.KnownFields(true)
+	if err := dec.Decode(&cfg); err != nil {
 		return nil, fmt.Errorf("parse config %q: %w", path, err)
 	}
 
@@ -244,12 +246,9 @@ func (c *RootConfig) applyDefaults() {
 		for i := range m.Mover.Jobs {
 			j := &m.Mover.Jobs[i]
 
-			if j.AllowedWindow == nil && j.Trigger.AllowedWindow != nil {
-				j.AllowedWindow = j.Trigger.AllowedWindow
-			}
-			if j.AllowedWindow != nil && j.AllowedWindow.FinishCurrent == nil {
+			if j.Trigger.AllowedWindow != nil && j.Trigger.AllowedWindow.FinishCurrent == nil {
 				fc := true
-				j.AllowedWindow.FinishCurrent = &fc
+				j.Trigger.AllowedWindow.FinishCurrent = &fc
 			}
 			if strings.TrimSpace(j.Destination.Policy) == "" {
 				j.Destination.Policy = DefaultMovePolicy
