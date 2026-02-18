@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -75,6 +76,10 @@ func (p *planner) runJob(ctx context.Context, j config.MoverJobConfig, hooks Hoo
 	if err != nil {
 		return jr, fmt.Errorf("failed to compile patterns: %w", err)
 	}
+	ignore, err := pathmatch.NewMatcher(j.Source.Ignore)
+	if err != nil {
+		return jr, fmt.Errorf("failed to compile ignore patterns: %w", err)
+	}
 
 	conds, err := parseConditions(j.Conditions)
 	if err != nil {
@@ -89,12 +94,15 @@ func (p *planner) runJob(ctx context.Context, j config.MoverJobConfig, hooks Hoo
 			break
 		}
 
-		cands, err := p.discoverCandidatesOneSource(ctx, srcID, matcher, conds)
+		cands, err := p.discoverCandidatesOneSource(ctx, j.Name, srcID, matcher, ignore, conds, nil)
 		if err != nil {
 			return jr, err
 		}
 		jr.TotalCandidates += int64(len(cands))
 		for _, c := range cands {
+			if err := ctx.Err(); err != nil {
+				return jr, fmt.Errorf("move canceled: %w", err)
+			}
 			if stopJob {
 				break
 			}
@@ -108,10 +116,6 @@ func (p *planner) runJob(ctx context.Context, j config.MoverJobConfig, hooks Hoo
 			if limit > 0 && movedSoFar+jr.FilesMoved >= limit {
 				break
 			}
-			if hooks.Progress != nil {
-				hooks.Progress(j.Name, c.SrcStorageID, c.RelPath)
-			}
-
 			dests, err := p.selectDestinations(j, dstIDs, c)
 			if err != nil {
 				jr.FilesErrored++
@@ -127,6 +131,9 @@ func (p *planner) runJob(ctx context.Context, j config.MoverJobConfig, hooks Hoo
 			if p.opts.DryRun {
 				jr.FilesMoved++
 				jr.BytesMoved += c.SizeBytes
+				if hooks.Progress != nil {
+					hooks.Progress(j.Name, dests[0].id, c.RelPath)
+				}
 				continue
 			}
 
@@ -144,7 +151,13 @@ func (p *planner) runJob(ctx context.Context, j config.MoverJobConfig, hooks Hoo
 				if aw != nil && trigType == "usage" && !p.opts.Force && !finishCurrent && !winEnd.IsZero() {
 					fileCtx, cancel = context.WithDeadline(ctx, winEnd)
 				}
-				err := copyFileWithVerifyRetry(fileCtx, srcPhys, dstPhys, c, jobVerifyEnabled(j), defaultCopyRetries)
+				var copyProgress func(phase string, doneBytes int64, totalBytes int64)
+				if hooks.CopyProgress != nil {
+					copyProgress = func(phase string, doneBytes int64, totalBytes int64) {
+						hooks.CopyProgress(j.Name, dstID, c.RelPath, phase, doneBytes, totalBytes)
+					}
+				}
+				err := copyFileWithVerifyRetry(fileCtx, srcPhys, dstPhys, c, jobVerifyEnabled(j), defaultCopyRetries, copyProgress)
 				if cancel != nil {
 					cancel()
 				}
@@ -223,8 +236,10 @@ func (p *planner) runJob(ctx context.Context, j config.MoverJobConfig, hooks Hoo
 			}
 
 			// Delete source if configured.
+			deletedSourcePhysical := false
+			deletedSourceDeferred := false
+			srcSP := p.storageByID[c.SrcStorageID]
 			if jobDeleteSourceEnabled(j) {
-				srcSP := p.storageByID[c.SrcStorageID]
 				if srcSP.Indexed {
 					if db == nil {
 						return jr, &errkind.NilError{What: "index db"}
@@ -246,6 +261,7 @@ func (p *planner) runJob(ctx context.Context, j config.MoverJobConfig, hooks Hoo
 							}
 							continue
 						}
+						deletedSourceDeferred = true
 						// Space will be freed when prune runs.
 						jr.BytesFreed += c.SizeBytes
 					}
@@ -259,13 +275,40 @@ func (p *planner) runJob(ctx context.Context, j config.MoverJobConfig, hooks Hoo
 							continue
 						}
 					} else {
+						deletedSourcePhysical = true
 						jr.BytesFreed += c.SizeBytes
+					}
+				}
+			}
+
+			if jobDeleteSourceEnabled(j) && jobDeleteEmptyDirEnabled(j) {
+				if srcSP.Indexed {
+					if deletedSourceDeferred {
+						if db == nil {
+							return jr, &errkind.NilError{What: "index db"}
+						}
+						if err := deleteEmptyDirsIndexed(ctx, db, p.mountName, c.SrcStorageID, c.RelPath, p.now); err != nil {
+							if hooks.Warn != nil {
+								hooks.Warn(j.Name, c.SrcStorageID, c.RelPath, err)
+							}
+						}
+					}
+				} else {
+					if deletedSourcePhysical {
+						if err := deleteEmptyDirsNonIndexed(srcSP.Path, filepath.Dir(srcPhys)); err != nil {
+							if hooks.Warn != nil {
+								hooks.Warn(j.Name, c.SrcStorageID, c.RelPath, err)
+							}
+						}
 					}
 				}
 			}
 
 			jr.FilesMoved++
 			jr.BytesMoved += c.SizeBytes
+			if hooks.Progress != nil {
+				hooks.Progress(j.Name, dstID, c.RelPath)
+			}
 
 			// Hysteresis stop check: for usage triggers, stop moving from this source once it drops <= threshold_stop.
 			if trigType == "usage" && !p.opts.Force {
@@ -300,6 +343,96 @@ func jobDeleteSourceEnabled(j config.MoverJobConfig) bool {
 		return true
 	}
 	return *j.DeleteSource
+}
+
+// jobDeleteEmptyDirEnabled returns the effective delete_empty_dir bool for a job.
+func jobDeleteEmptyDirEnabled(j config.MoverJobConfig) bool {
+	if j.DeleteEmptyDir == nil {
+		return true
+	}
+	return *j.DeleteEmptyDir
+}
+
+// deleteEmptyDirsNonIndexed removes empty directories upward from startDir until root.
+// It is best-effort: ENOTEMPTY/ENOENT stop traversal without error.
+func deleteEmptyDirsNonIndexed(root string, startDir string) error {
+	root = filepath.Clean(strings.TrimSpace(root))
+	startDir = filepath.Clean(strings.TrimSpace(startDir))
+	if root == "" || startDir == "" {
+		return nil
+	}
+	if root == startDir {
+		return nil
+	}
+
+	for {
+		if startDir == root {
+			return nil
+		}
+		if !strings.HasPrefix(startDir, root+string(filepath.Separator)) {
+			return nil
+		}
+		err := syscall.Rmdir(startDir)
+		if err == nil {
+			startDir = filepath.Dir(startDir)
+			continue
+		}
+		if errors.Is(err, syscall.ENOENT) {
+			startDir = filepath.Dir(startDir)
+			continue
+		}
+		if errors.Is(err, syscall.ENOTEMPTY) {
+			return nil
+		}
+		if errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES) {
+			return fmt.Errorf("failed to rmdir empty dir: %w", err)
+		}
+		return fmt.Errorf("failed to rmdir empty dir: %w", err)
+	}
+}
+
+// deleteEmptyDirsIndexed marks empty dirs as deleted in indexdb and appends DELETE events (IsDir=true)
+// so prune can remove them physically later.
+func deleteEmptyDirsIndexed(ctx context.Context, db *indexdb.DB, mountName string, storageID string, relFilePath string, now func() time.Time) error {
+	if db == nil {
+		return &errkind.NilError{What: "index db"}
+	}
+	storageID = strings.TrimSpace(storageID)
+	if storageID == "" {
+		return &errkind.RequiredError{What: "storage id"}
+	}
+
+	// relFilePath uses '/' separators.
+	dir := path.Dir(strings.TrimPrefix(strings.TrimSpace(relFilePath), "/"))
+	if dir == "." || dir == "/" {
+		dir = ""
+	}
+	for strings.TrimSpace(dir) != "" {
+		updated, err := db.MarkDeleted(ctx, storageID, dir, true)
+		if err != nil {
+			if errors.Is(err, syscall.ENOTEMPTY) {
+				return nil
+			}
+			return fmt.Errorf("failed to mark dir deleted: %w", err)
+		}
+		if !updated {
+			return nil
+		}
+		ts := time.Now().Unix()
+		if now != nil {
+			ts = now().Unix()
+		}
+		if err := eventlog.Append(ctx, mountName, eventlog.DeleteEvent{Type: eventlog.TypeDelete, StorageID: storageID, Path: dir, IsDir: true, TS: ts}); err != nil {
+			return fmt.Errorf("failed to append eventlog: %w", err)
+		}
+
+		parent := path.Dir(dir)
+		if parent == "." || parent == "/" {
+			parent = ""
+		}
+		dir = parent
+	}
+	return nil
 }
 
 // activeSourcesForJob returns the ordered set of sources to process given trigger mode.

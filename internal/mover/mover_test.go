@@ -165,7 +165,7 @@ func TestDiscoverCandidatesOneSource_shouldFilterByMinAgeAndSort(t *testing.T) {
 	require.NoError(t, err)
 
 	conds := conditions{MinAge: durPtr(24 * time.Hour)}
-	cands, err := pl.discoverCandidatesOneSource(context.Background(), "ssd1", m, conds)
+	cands, err := pl.discoverCandidatesOneSource(context.Background(), "job", "ssd1", m, nil, conds, nil)
 	require.NoError(t, err)
 
 	require.Len(t, cands, 1)
@@ -178,7 +178,7 @@ func TestCopyWithContext_canceled_shouldReturnContextError(t *testing.T) {
 	cancel()
 
 	var dst bytes.Buffer
-	err := copyWithContext(ctx, &dst, bytes.NewReader([]byte("hello")))
+	err := copyWithContext(ctx, &dst, bytes.NewReader([]byte("hello")), nil)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, context.Canceled))
 }
@@ -195,7 +195,7 @@ func TestCopyFileWithVerify_destinationExists_shouldReturnSkip(t *testing.T) {
 	require.NoError(t, err)
 
 	c := candidate{Mode: uint32(st.Mode()), MTimeSec: st.ModTime().Unix()}
-	err = copyFileWithVerify(context.Background(), src, dst, c, false)
+	err = copyFileWithVerify(context.Background(), src, dst, c, false, nil)
 	require.Error(t, err)
 	var skip *skipError
 	require.True(t, errors.As(err, &skip))
@@ -211,7 +211,7 @@ func TestCopyFileWithVerify_verifyMismatch_shouldReturnSkipAndNotCreateDest(t *t
 
 	old := hashXX64Func
 	// hashXX64Func is only called for the dest temp file (source hash is streamed during copy).
-	hashXX64Func = func(_ context.Context, _ string) (uint64, error) {
+	hashXX64Func = func(_ context.Context, _ string, _ copyProgressFunc) (uint64, error) {
 		return 999, nil // deliberately wrong hash to trigger mismatch
 	}
 	t.Cleanup(func() { hashXX64Func = old })
@@ -220,7 +220,7 @@ func TestCopyFileWithVerify_verifyMismatch_shouldReturnSkipAndNotCreateDest(t *t
 	require.NoError(t, err)
 
 	c := candidate{Mode: uint32(st.Mode()), MTimeSec: st.ModTime().Unix()}
-	err = copyFileWithVerify(context.Background(), src, dst, c, true)
+	err = copyFileWithVerify(context.Background(), src, dst, c, true, nil)
 	require.Error(t, err)
 
 	var skip *skipError
@@ -240,7 +240,7 @@ func TestCopyFileWithVerify_success_shouldCopyContent(t *testing.T) {
 	require.NoError(t, err)
 
 	c := candidate{Mode: uint32(st.Mode()), MTimeSec: st.ModTime().Unix()}
-	err = copyFileWithVerify(context.Background(), src, dst, c, false)
+	err = copyFileWithVerify(context.Background(), src, dst, c, false, nil)
 	require.NoError(t, err)
 
 	got, err := os.ReadFile(dst)
@@ -335,7 +335,7 @@ func TestDiscoverCandidatesOneSource_shouldFilterByMinSizeAndMaxSize(t *testing.
 	require.NoError(t, err)
 
 	conds := conditions{MinSize: int64Ptr(5), MaxSize: int64Ptr(50)}
-	cands, err := pl.discoverCandidatesOneSource(context.Background(), "s1", m, conds)
+	cands, err := pl.discoverCandidatesOneSource(context.Background(), "job", "s1", m, nil, conds, nil)
 	require.NoError(t, err)
 
 	require.Len(t, cands, 1, "only mid.txt (10 bytes) should match min_size=5, max_size=50")
@@ -359,16 +359,16 @@ func TestCopyFileWithVerifyRetry_shouldRetryOnTransientError(t *testing.T) {
 	oldHash := hashXX64Func
 	// hashXX64Func is called once per attempt for the dest hash (source hash is streamed).
 	// First 2 attempts fail; 3rd succeeds.
-	hashXX64Func = func(ctx context.Context, p string) (uint64, error) {
+	hashXX64Func = func(ctx context.Context, p string, _ copyProgressFunc) (uint64, error) {
 		callCount++
 		if callCount <= 2 {
 			return 0, errors.New("transient IO error")
 		}
-		return oldHash(ctx, p)
+		return oldHash(ctx, p, nil)
 	}
 	t.Cleanup(func() { hashXX64Func = oldHash })
 
-	err = copyFileWithVerifyRetry(context.Background(), src, dst, c, true, 3)
+	err = copyFileWithVerifyRetry(context.Background(), src, dst, c, true, 3, nil)
 	require.NoError(t, err, "should succeed on 3rd attempt")
 	require.FileExists(t, dst)
 }
@@ -392,13 +392,13 @@ func TestCopyFileWithVerifyRetry_shouldNotRetryOnENOSPC(t *testing.T) {
 	callCount := 0
 	oldHash := hashXX64Func
 	// Inject ENOSPC on the dest hash call (simulating disk full during verify).
-	hashXX64Func = func(_ context.Context, _ string) (uint64, error) {
+	hashXX64Func = func(_ context.Context, _ string, _ copyProgressFunc) (uint64, error) {
 		callCount++
 		return 0, syscall.ENOSPC
 	}
 	t.Cleanup(func() { hashXX64Func = oldHash })
 
-	err = copyFileWithVerifyRetry(context.Background(), src, dst, c, true, 3)
+	err = copyFileWithVerifyRetry(context.Background(), src, dst, c, true, 3, nil)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, syscall.ENOSPC))
 	// Hash func called only once for dest hash — ENOSPC should not retry.
@@ -419,13 +419,13 @@ func TestCopyFileWithVerifyRetry_verifyMismatch_shouldNotRetry(t *testing.T) {
 	callCount := 0
 	oldHash := hashXX64Func
 	// hashXX64Func is only called for dest hash (source hash streamed during copy).
-	hashXX64Func = func(_ context.Context, _ string) (uint64, error) {
+	hashXX64Func = func(_ context.Context, _ string, _ copyProgressFunc) (uint64, error) {
 		callCount++
 		return 999, nil // deliberately wrong to trigger mismatch
 	}
 	t.Cleanup(func() { hashXX64Func = oldHash })
 
-	err = copyFileWithVerifyRetry(context.Background(), src, dst, c, true, 3)
+	err = copyFileWithVerifyRetry(context.Background(), src, dst, c, true, 3, nil)
 	require.Error(t, err)
 	var skip *skipError
 	require.True(t, errors.As(err, &skip), "verify mismatch should be skipError")
@@ -442,7 +442,7 @@ func TestCopyFileWithVerify_sourceDisappeared_shouldReturnNotExist(t *testing.T)
 	dst := filepath.Join(dir, "dst.txt")
 
 	c := candidate{Mode: 0o644, MTimeSec: time.Now().Unix()}
-	err := copyFileWithVerify(context.Background(), src, dst, c, false)
+	err := copyFileWithVerify(context.Background(), src, dst, c, false, nil)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, os.ErrNotExist), "source disappeared should wrap os.ErrNotExist, got: %v", err)
 }
@@ -468,7 +468,7 @@ func TestCopyFileWithVerify_destDirPermissionDenied_shouldReturnError(t *testing
 	require.NoError(t, err)
 	c := candidate{Mode: uint32(st.Mode()), MTimeSec: st.ModTime().Unix()}
 
-	err = copyFileWithVerify(context.Background(), src, dst, c, false)
+	err = copyFileWithVerify(context.Background(), src, dst, c, false, nil)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, syscall.EACCES), "permission denied on dest should wrap EACCES, got: %v", err)
 }
@@ -541,13 +541,13 @@ func TestCopyFileWithVerifyRetry_copyFailed_shouldRetryAndFail(t *testing.T) {
 	callCount := 0
 	oldHash := hashXX64Func
 	// Every attempt fails with a transient error on dest hash.
-	hashXX64Func = func(_ context.Context, _ string) (uint64, error) {
+	hashXX64Func = func(_ context.Context, _ string, _ copyProgressFunc) (uint64, error) {
 		callCount++
 		return 0, errors.New("transient IO")
 	}
 	t.Cleanup(func() { hashXX64Func = oldHash })
 
-	err = copyFileWithVerifyRetry(context.Background(), src, dst, c, true, 3)
+	err = copyFileWithVerifyRetry(context.Background(), src, dst, c, true, 3, nil)
 	require.Error(t, err)
 	// Each attempt calls hashXX64Func once for dest hash before failing.
 	require.Equal(t, 3, callCount, "should retry exactly 3 times")

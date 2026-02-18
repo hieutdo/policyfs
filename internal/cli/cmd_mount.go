@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -208,25 +209,96 @@ This command is typically managed by systemd as a service.`,
 
 			cmdLog.Info().Str("mount", mountName).Str("mountpoint", mountCfg.MountPoint).Msg("mount ready")
 
+			waitDone := make(chan struct{})
+			go func() {
+				server.Wait()
+				close(waitDone)
+			}()
+
+			var shutdownOnce sync.Once
+			reqShutdown := func() {
+				shutdownOnce.Do(func() {
+					cmdLog.Info().Str("mount", mountName).Str("mountpoint", mountCfg.MountPoint).Msg("unmount requested")
+
+					// Do not block on Unmount(): go-fuse can hang here in some failure modes.
+					go func() { _ = server.Unmount() }()
+
+					// Fail-safe: if go-fuse does not return from Wait() in time, exit before
+					// systemd has to SIGKILL us (which leaves ugly logs and a failed Result=timeout).
+					go func() {
+						ctx := context.Background()
+						ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+						defer cancel()
+
+						select {
+						case <-waitDone:
+							return
+						case <-ctx.Done():
+						}
+
+						mounted, supported, err := isMountpointMounted(mountCfg.MountPoint)
+						if err != nil {
+							cmdLog.Error().Err(err).Str("mount", mountName).Str("mountpoint", mountCfg.MountPoint).Msg("shutdown timeout")
+							flushCoverageIfEnabled(mountName, mountCfg.MountPoint)
+							os.Exit(1)
+						}
+						if supported && mounted {
+							cmdLog.Error().Str("mount", mountName).Str("mountpoint", mountCfg.MountPoint).Msg("shutdown timeout")
+							flushCoverageIfEnabled(mountName, mountCfg.MountPoint)
+							os.Exit(1)
+						}
+						cmdLog.Warn().Str("mount", mountName).Str("mountpoint", mountCfg.MountPoint).Msg("shutdown timeout but mountpoint already unmounted")
+						flushCoverageIfEnabled(mountName, mountCfg.MountPoint)
+						os.Exit(0)
+					}()
+				})
+			}
+
 			sigCh := make(chan os.Signal, 2)
 			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 			defer signal.Stop(sigCh)
-
-			var unmountOnce sync.Once
 			go func() {
-				<-sigCh
-				cmdLog.Info().Str("mount", mountName).Str("mountpoint", mountCfg.MountPoint).Msg("unmount requested")
-				unmountOnce.Do(func() {
-					_ = server.Unmount()
-				})
-
-				<-sigCh
-				cmdLog.Info().Str("mount", mountName).Str("mountpoint", mountCfg.MountPoint).Msg("force exit requested")
-				flushCoverageIfEnabled(mountName, mountCfg.MountPoint)
-				os.Exit(1)
+				sigCount := 0
+				for range sigCh {
+					sigCount++
+					if sigCount == 1 {
+						reqShutdown()
+						continue
+					}
+					cmdLog.Info().Str("mount", mountName).Str("mountpoint", mountCfg.MountPoint).Msg("force exit requested")
+					flushCoverageIfEnabled(mountName, mountCfg.MountPoint)
+					os.Exit(1)
+				}
 			}()
 
-			server.Wait()
+			go func() {
+				<-cmd.Context().Done()
+				reqShutdown()
+			}()
+
+			// If the mount is torn down externally (e.g., ExecStop `pfs unmount`), ensure
+			// the daemon exits even if go-fuse Wait() fails to return.
+			go func() {
+				t := time.NewTicker(500 * time.Millisecond)
+				defer t.Stop()
+				for {
+					select {
+					case <-waitDone:
+						return
+					case <-t.C:
+						mounted, supported, err := isMountpointMounted(mountCfg.MountPoint)
+						if err != nil {
+							continue
+						}
+						if supported && !mounted {
+							reqShutdown()
+							return
+						}
+					}
+				}
+			}()
+
+			<-waitDone
 			flushCoverageIfEnabled(mountName, mountCfg.MountPoint)
 			return nil
 		},

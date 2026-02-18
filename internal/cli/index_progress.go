@@ -52,6 +52,7 @@ func startIndexProgress(ctx context.Context, w io.Writer, mountName string, moun
 		Writer:     w,
 		Label:      "Indexing",
 		Total:      cr.TotalEntries,
+		TotalUnits: 0,
 		MinUpdates: 4,
 		Mode:       mode,
 	})

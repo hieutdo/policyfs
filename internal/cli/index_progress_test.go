@@ -25,7 +25,7 @@ func TestIndexProgressUI_Finish_shouldFlushFinal100Percent(t *testing.T) {
 
 	out := buf.String()
 	require.Contains(t, out, "100% 3/3")
-	require.Contains(t, out, "Current: hdd3: media/text3.txt")
+	require.Contains(t, out, "File: hdd3: media/text3.txt")
 }
 
 // TestIndexProgressUI_TTY_shouldRewriteMultiLineRegion verifies the interactive renderer

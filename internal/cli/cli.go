@@ -1,21 +1,25 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/hieutdo/policyfs/internal/config"
 	"github.com/spf13/cobra"
 )
 
 const (
-	ExitOK         = 0
-	ExitFail       = 1
-	ExitUsage      = 2
-	ExitBusy       = 75
-	ExitDoctorFail = 78
+	ExitOK          = 0
+	ExitFail        = 1
+	ExitUsage       = 2
+	ExitBusy        = 75
+	ExitDoctorFail  = 78
+	ExitInterrupted = 130
 )
 
 // Execute runs the CLI with the given args and returns a process exit code.
@@ -23,7 +27,17 @@ func Execute(args []string) int {
 	root := newRootCmd()
 	root.SetArgs(args)
 
-	if err := root.Execute(); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := root.ExecuteContext(ctx); err != nil {
+		if errors.Is(err, context.Canceled) {
+			if isInteractiveWriter(os.Stderr) {
+				fmt.Fprintln(os.Stderr, "canceled")
+			}
+			return ExitInterrupted
+		}
+
 		var ce *CLIError
 		if errors.As(err, &ce) {
 			code := ce.Code

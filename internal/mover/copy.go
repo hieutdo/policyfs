@@ -19,9 +19,16 @@ const defaultCopyRetries = 3
 // hashXX64Func is a test seam for hashXX64.
 var hashXX64Func = hashXX64
 
+// copyProgressFunc is an optional callback for byte-level progress.
+//
+// doneBytes is monotonically increasing for a given copy/hash operation.
+type copyProgressFunc func(doneBytes int64)
+
 // copyWithContext copies from src to dst while honoring ctx cancellation.
-func copyWithContext(ctx context.Context, dst io.Writer, src io.Reader) error {
+func copyWithContext(ctx context.Context, dst io.Writer, src io.Reader, progress copyProgressFunc) error {
 	buf := make([]byte, 256*1024)
+	done := int64(0)
+	lastProgress := time.Now()
 	for {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("copy canceled: %w", err)
@@ -31,9 +38,20 @@ func copyWithContext(ctx context.Context, dst io.Writer, src io.Reader) error {
 			if _, werr := dst.Write(buf[:n]); werr != nil {
 				return fmt.Errorf("failed to write: %w", werr)
 			}
+			done += int64(n)
+			if progress != nil {
+				now := time.Now()
+				if now.Sub(lastProgress) >= 200*time.Millisecond {
+					lastProgress = now
+					progress(done)
+				}
+			}
 		}
 		if rerr != nil {
 			if errors.Is(rerr, io.EOF) {
+				if progress != nil {
+					progress(done)
+				}
 				return nil
 			}
 			return fmt.Errorf("failed to read: %w", rerr)
@@ -67,7 +85,7 @@ func (e *skipError) Unwrap() error {
 // When verify is true, the source hash is computed in a single streaming pass during
 // the copy (via io.MultiWriter) to avoid re-reading the source. Only the destination
 // temp file is read a second time for the verification hash.
-func copyFileWithVerify(ctx context.Context, srcPhys string, dstPhys string, c candidate, verify bool) error {
+func copyFileWithVerify(ctx context.Context, srcPhys string, dstPhys string, c candidate, verify bool, progress func(phase string, doneBytes int64, totalBytes int64)) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("copy canceled: %w", err)
 	}
@@ -107,7 +125,14 @@ func copyFileWithVerify(ctx context.Context, srcPhys string, dstPhys string, c c
 		dst = io.MultiWriter(tmp, srcHasher)
 	}
 
-	if err := copyWithContext(ctx, dst, src); err != nil {
+	var copyProgress copyProgressFunc
+	if progress != nil {
+		total := c.SizeBytes
+		copyProgress = func(done int64) {
+			progress("copy", done, total)
+		}
+	}
+	if err := copyWithContext(ctx, dst, src, copyProgress); err != nil {
 		return fmt.Errorf("failed to copy: %w", err)
 	}
 	if verify {
@@ -127,7 +152,14 @@ func copyFileWithVerify(ctx context.Context, srcPhys string, dstPhys string, c c
 	_ = os.Chmod(tmpPath, perm)
 
 	if verify {
-		dstHash, err := hashXX64Func(ctx, tmpPath)
+		var verifyProgress copyProgressFunc
+		if progress != nil {
+			total := c.SizeBytes
+			verifyProgress = func(done int64) {
+				progress("verify", done, total)
+			}
+		}
+		dstHash, err := hashXX64Func(ctx, tmpPath, verifyProgress)
 		if err != nil {
 			return err
 		}
@@ -149,13 +181,13 @@ func copyFileWithVerify(ctx context.Context, srcPhys string, dstPhys string, c c
 }
 
 // copyFileWithVerifyRetry retries copy/verify a few times for transient errors.
-func copyFileWithVerifyRetry(ctx context.Context, srcPhys string, dstPhys string, c candidate, verify bool, attempts int) error {
+func copyFileWithVerifyRetry(ctx context.Context, srcPhys string, dstPhys string, c candidate, verify bool, attempts int, progress func(phase string, doneBytes int64, totalBytes int64)) error {
 	if attempts < 1 {
 		attempts = 1
 	}
 	var last error
 	for i := 0; i < attempts; i++ {
-		err := copyFileWithVerify(ctx, srcPhys, dstPhys, c, verify)
+		err := copyFileWithVerify(ctx, srcPhys, dstPhys, c, verify, progress)
 		if err == nil {
 			return nil
 		}
@@ -182,7 +214,7 @@ func copyFileWithVerifyRetry(ctx context.Context, srcPhys string, dstPhys string
 }
 
 // hashXX64 computes xxhash64 for a file path.
-func hashXX64(ctx context.Context, p string) (uint64, error) {
+func hashXX64(ctx context.Context, p string, progress copyProgressFunc) (uint64, error) {
 	f, err := os.Open(p)
 	if err != nil {
 		return 0, fmt.Errorf("failed to open file for hash: %w", err)
@@ -190,7 +222,7 @@ func hashXX64(ctx context.Context, p string) (uint64, error) {
 	defer func() { _ = f.Close() }()
 
 	h := xxhash.New()
-	if err := copyWithContext(ctx, h, f); err != nil {
+	if err := copyWithContext(ctx, h, f, progress); err != nil {
 		return 0, fmt.Errorf("failed to hash file: %w", err)
 	}
 	return h.Sum64(), nil

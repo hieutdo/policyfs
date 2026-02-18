@@ -111,6 +111,109 @@ func TestMove_shouldMoveFromNonIndexedToIndexed_andMountShouldExposeWithoutIndex
 	})
 }
 
+// TestMove_deleteEmptyDir_nonIndexed_shouldRemoveEmptySourceDirs verifies delete_empty_dir removes empty
+// source directory chains after successful move when source is non-indexed.
+func TestMove_deleteEmptyDir_nonIndexed_shouldRemoveEmptySourceDirs(t *testing.T) {
+	if os.Getenv(config.EnvIntegrationUseExistingMount) != "" {
+		t.Skip("skip move flow test when using an existing mount")
+	}
+
+	jobName := "archive"
+	rel := filepath.Join("library", "a", "b", "c", "x.txt")
+
+	mv := &config.MoverConfig{
+		Enabled: boolPtr(true),
+		Jobs: []config.MoverJobConfig{
+			{
+				Name:        jobName,
+				Description: "delete empty dir test",
+				Trigger:     config.MoverTriggerConfig{Type: "manual"},
+				Source: config.MoverSourceConfig{
+					Paths:    []string{"ssd1"},
+					Patterns: []string{"library/**"},
+				},
+				Destination: config.MoverDestinationConfig{
+					Paths:  []string{"hdd1"},
+					Policy: "first_found",
+				},
+				DeleteSource:   boolPtr(true),
+				DeleteEmptyDir: boolPtr(true),
+				Verify:         boolPtr(false),
+			},
+		},
+	}
+
+	cfg := IntegrationConfig{
+		Storages: []IntegrationStorage{
+			{ID: "ssd1", Indexed: false, BasePath: "/mnt/ssd1/pfs-integration"},
+			{ID: "hdd1", Indexed: false, BasePath: "/mnt/hdd1/pfs-integration"},
+		},
+		Targets:     []string{"ssd1"},
+		ReadTargets: []string{"ssd1"},
+		Mover:       mv,
+	}
+
+	withMountedFS(t, cfg, func(env *MountedFS) {
+		env.MustCreateFileInStoragePath(t, []byte("hello"), "ssd1", rel)
+
+		mustRunPFS(t, env, "move", env.MountName, "--job", jobName, "--progress=off")
+
+		// The deep parent chain should be removed.
+		require.NoDirExists(t, env.StoragePath("ssd1", filepath.Join("library", "a", "b", "c")))
+		require.NoDirExists(t, env.StoragePath("ssd1", filepath.Join("library", "a", "b")))
+		require.NoDirExists(t, env.StoragePath("ssd1", filepath.Join("library", "a")))
+	})
+}
+
+// TestMove_verbose_shouldPrintCandidates verifies --verbose prints the planned candidates list.
+func TestMove_verbose_shouldPrintCandidates(t *testing.T) {
+	if os.Getenv(config.EnvIntegrationUseExistingMount) != "" {
+		t.Skip("skip move flow test when using an existing mount")
+	}
+
+	jobName := "archive"
+
+	mv := &config.MoverConfig{
+		Enabled: boolPtr(true),
+		Jobs: []config.MoverJobConfig{
+			{
+				Name:        jobName,
+				Description: "verbose test",
+				Trigger:     config.MoverTriggerConfig{Type: "manual"},
+				Source: config.MoverSourceConfig{
+					Paths:    []string{"ssd1"},
+					Patterns: []string{"library/**"},
+				},
+				Destination: config.MoverDestinationConfig{
+					Paths:  []string{"hdd1"},
+					Policy: "first_found",
+				},
+				DeleteSource: boolPtr(false),
+				Verify:       boolPtr(false),
+			},
+		},
+	}
+
+	cfg := IntegrationConfig{
+		Storages: []IntegrationStorage{
+			{ID: "ssd1", Indexed: false, BasePath: "/mnt/ssd1/pfs-integration"},
+			{ID: "hdd1", Indexed: false, BasePath: "/mnt/hdd1/pfs-integration"},
+		},
+		Targets:     []string{"ssd1"},
+		ReadTargets: []string{"ssd1"},
+		Mover:       mv,
+	}
+
+	withMountedFS(t, cfg, func(env *MountedFS) {
+		env.MustCreateFileInStoragePath(t, []byte("data"), "ssd1", filepath.Join("library", "a.txt"))
+
+		out, err := runPFSOutput(t, env, "move", env.MountName, "--job", jobName, "--verbose", "--dry-run", "--progress=off")
+		require.NoError(t, err, "pfs move --verbose should succeed, output: %s", string(out))
+		require.Contains(t, string(out), "Candidates:")
+		require.Contains(t, string(out), "archive/ssd1: library/a.txt")
+	})
+}
+
 // TestMove_dryRun_shouldNotChangeFilesystemOrDB verifies dry-run mode does not write the destination,
 // does not delete the source, and does not upsert indexdb entries.
 func TestMove_dryRun_shouldNotChangeFilesystemOrDB(t *testing.T) {

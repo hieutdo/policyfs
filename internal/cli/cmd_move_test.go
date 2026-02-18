@@ -13,12 +13,20 @@ import (
 // TestMove_printMoveHeader_shouldIncludeMountJobAndDryRun verifies the header includes mount, job name, and dry-run marker.
 func TestMove_printMoveHeader_shouldIncludeMountJobAndDryRun(t *testing.T) {
 	var sb strings.Builder
-	printMoveHeader(&sb, "media", "archive", true)
+	printMoveHeader(&sb, "media", "archive", true, false)
 
 	out := sb.String()
 	require.Contains(t, out, "pfs move: mount=media\n")
 	require.Contains(t, out, "Job: archive\n")
 	require.Contains(t, out, "Mode: dry-run\n")
+}
+
+// TestMove_printMoveHeader_debug_shouldIncludeDebugMarker verifies the header includes a debug marker.
+func TestMove_printMoveHeader_debug_shouldIncludeDebugMarker(t *testing.T) {
+	var sb strings.Builder
+	printMoveHeader(&sb, "media", "", false, true)
+	out := sb.String()
+	require.Contains(t, out, "pfs move: mount=media (debug mode ON)\n")
 }
 
 // TestMove_printMoveSummary_shouldIncludeTotalsAndWarnings verifies the summary prints per-job lines, totals, and warnings.

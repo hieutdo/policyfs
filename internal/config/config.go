@@ -131,15 +131,16 @@ type MoverConfig struct {
 
 // MoverJobConfig defines a single move job.
 type MoverJobConfig struct {
-	Name          string                 `yaml:"name"`
-	Description   string                 `yaml:"description"`
-	Trigger       MoverTriggerConfig     `yaml:"trigger"`
-	AllowedWindow *MoverAllowedWindow    `yaml:"allowed_window"`
-	Source        MoverSourceConfig      `yaml:"source"`
-	Destination   MoverDestinationConfig `yaml:"destination"`
-	Conditions    MoverConditionsConfig  `yaml:"conditions"`
-	DeleteSource  *bool                  `yaml:"delete_source"`
-	Verify        *bool                  `yaml:"verify"`
+	Name           string                 `yaml:"name"`
+	Description    string                 `yaml:"description"`
+	Trigger        MoverTriggerConfig     `yaml:"trigger"`
+	AllowedWindow  *MoverAllowedWindow    `yaml:"allowed_window"`
+	Source         MoverSourceConfig      `yaml:"source"`
+	Destination    MoverDestinationConfig `yaml:"destination"`
+	Conditions     MoverConditionsConfig  `yaml:"conditions"`
+	DeleteSource   *bool                  `yaml:"delete_source"`
+	DeleteEmptyDir *bool                  `yaml:"delete_empty_dir"`
+	Verify         *bool                  `yaml:"verify"`
 }
 
 // MoverTriggerConfig defines when a job should run.
@@ -162,6 +163,7 @@ type MoverSourceConfig struct {
 	Paths    []string `yaml:"paths"`
 	Groups   []string `yaml:"groups"`
 	Patterns []string `yaml:"patterns"`
+	Ignore   []string `yaml:"ignore"`
 }
 
 // MoverDestinationConfig defines where candidates are moved to.
@@ -255,6 +257,10 @@ func (c *RootConfig) applyDefaults() {
 			if j.DeleteSource == nil {
 				ds := true
 				j.DeleteSource = &ds
+			}
+			if j.DeleteEmptyDir == nil {
+				ded := true
+				j.DeleteEmptyDir = &ded
 			}
 			if j.Verify == nil {
 				v := true

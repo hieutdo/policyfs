@@ -40,12 +40,17 @@ type Opts struct {
 	DryRun bool
 	Force  bool
 	Limit  int
+	// Debug enables best-effort debug output during planning/discovery.
+	Debug bool
+	// DebugMax caps the number of debug entries collected during planning.
+	DebugMax int
 }
 
 // Hooks provides optional callbacks for progress reporting.
 type Hooks struct {
 	// Progress is called for each candidate right before it is processed.
-	Progress func(jobName string, storageID string, rel string)
+	Progress     func(jobName string, storageID string, rel string)
+	CopyProgress func(jobName string, storageID string, rel string, phase string, doneBytes int64, totalBytes int64)
 	// Warn is called for non-fatal per-file issues.
 	Warn func(jobName string, storageID string, rel string, err error)
 }
@@ -55,38 +60,127 @@ type CountResult struct {
 	TotalCandidates int64
 }
 
-// Count scans eligible jobs and counts move candidates.
-func Count(ctx context.Context, mountName string, mountCfg *config.MountConfig, opts Opts) (CountResult, error) {
+// PlanCandidate describes one planned move candidate.
+type PlanCandidate struct {
+	JobName      string
+	SrcStorageID string
+	RelPath      string
+	SizeBytes    int64
+	MTimeSec     int64
+	WorkBytes    int64
+}
+
+// PlanJob describes the planned candidates for one mover job.
+type PlanJob struct {
+	Name       string
+	Candidates []PlanCandidate
+	WorkBytes  int64
+}
+
+// PlanResult summarizes one planning pass used to seed progress/ETA and verbose output.
+type PlanResult struct {
+	Jobs            []PlanJob
+	TotalCandidates int64
+	TotalWorkBytes  int64
+	// Debug holds optional debug output produced during discovery.
+	Debug *PlanDebug
+}
+
+// Plan scans eligible jobs and discovers move candidates, capped by opts.Limit.
+// It estimates total work bytes as size*(verify?2:1) so the CLI can compute an overall ETA.
+func Plan(ctx context.Context, mountName string, mountCfg *config.MountConfig, opts Opts) (PlanResult, error) {
 	if strings.TrimSpace(mountName) == "" {
-		return CountResult{}, &errkind.RequiredError{What: "mount name"}
+		return PlanResult{}, &errkind.RequiredError{What: "mount name"}
 	}
 	if mountCfg == nil {
-		return CountResult{}, &errkind.NilError{What: "mount config"}
+		return PlanResult{}, &errkind.NilError{What: "mount config"}
 	}
 	if opts.Limit < 0 {
-		return CountResult{}, &errkind.InvalidError{Msg: "limit must be >= 0"}
+		return PlanResult{}, &errkind.InvalidError{Msg: "limit must be >= 0"}
+	}
+
+	enabled := true
+	if mountCfg.Mover.Enabled != nil {
+		enabled = *mountCfg.Mover.Enabled
+	}
+	if !enabled {
+		return PlanResult{}, nil
 	}
 
 	p := newPlanner(mountName, mountCfg, opts)
 	jobs, err := p.selectJobs()
 	if err != nil {
-		return CountResult{}, err
+		return PlanResult{}, err
 	}
 
-	var total int64
-	for _, j := range jobs {
-		cands, err := p.discoverJobCandidates(ctx, j)
-		if err != nil {
-			return CountResult{}, err
+	var dbg *debugCollector
+	if opts.Debug {
+		max := opts.DebugMax
+		if max <= 0 {
+			max = 20
 		}
-		total += int64(len(cands))
-		if opts.Limit > 0 && total >= int64(opts.Limit) {
-			total = int64(opts.Limit)
+		dbg = newDebugCollector(max)
+	}
+
+	out := PlanResult{}
+	for _, j := range jobs {
+		if opts.Limit > 0 && out.TotalCandidates >= int64(opts.Limit) {
 			break
 		}
+		if dbg != nil {
+			if dj := p.debugDestinationsForJob(j); dj != nil {
+				dbg.addDestinationDebug(*dj)
+			}
+		}
+		cands, err := p.discoverJobCandidatesWithDebug(ctx, j, dbg)
+		if err != nil {
+			return PlanResult{}, err
+		}
+		if len(cands) == 0 {
+			continue
+		}
+		verify := jobVerifyEnabled(j)
+		mult := int64(1)
+		if verify {
+			mult = 2
+		}
+
+		pj := PlanJob{Name: j.Name}
+		for _, c := range cands {
+			if opts.Limit > 0 && out.TotalCandidates >= int64(opts.Limit) {
+				break
+			}
+			wb := c.SizeBytes * mult
+			pj.Candidates = append(pj.Candidates, PlanCandidate{
+				JobName:      j.Name,
+				SrcStorageID: c.SrcStorageID,
+				RelPath:      c.RelPath,
+				SizeBytes:    c.SizeBytes,
+				MTimeSec:     c.MTimeSec,
+				WorkBytes:    wb,
+			})
+			pj.WorkBytes += wb
+			out.TotalCandidates++
+			out.TotalWorkBytes += wb
+		}
+		if len(pj.Candidates) > 0 {
+			out.Jobs = append(out.Jobs, pj)
+		}
+	}
+	if dbg != nil {
+		out.Debug = dbg.result()
 	}
 
-	return CountResult{TotalCandidates: total}, nil
+	return out, nil
+}
+
+// Count scans eligible jobs and counts move candidates.
+func Count(ctx context.Context, mountName string, mountCfg *config.MountConfig, opts Opts) (CountResult, error) {
+	pl, err := Plan(ctx, mountName, mountCfg, opts)
+	if err != nil {
+		return CountResult{}, err
+	}
+	return CountResult{TotalCandidates: pl.TotalCandidates}, nil
 }
 
 // RunOneshot executes mover jobs for one mount.

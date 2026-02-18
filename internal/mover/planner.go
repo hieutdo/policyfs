@@ -2,6 +2,7 @@ package mover
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -108,4 +109,98 @@ func (p *planner) expandRefs(paths []string, groups []string) ([]string, error) 
 		return nil, &errkind.NotFoundError{Msg: fmt.Sprintf("unknown storage id or group: %s", id)}
 	}
 	return out, nil
+}
+
+// debugDestinationsForJob collects job-level destination policy inputs.
+//
+// Note: path_preserving depends on each candidate path (parent existence), so this debug output does not
+// attempt to simulate that step. It only reports statfs-based eligibility and the policy ordering.
+func (p *planner) debugDestinationsForJob(j config.MoverJobConfig) *JobDestinationDebug {
+	if p == nil {
+		return nil
+	}
+
+	policy := strings.TrimSpace(j.Destination.Policy)
+	if policy == "" {
+		policy = config.DefaultMovePolicy
+	}
+
+	dstIDs, err := p.expandRefs(j.Destination.Paths, j.Destination.Groups)
+	if err != nil {
+		return &JobDestinationDebug{
+			JobName:        j.Name,
+			Note:           err.Error(),
+			Policy:         policy,
+			PathPreserving: j.Destination.PathPreserving,
+		}
+	}
+
+	entries := make([]DestinationDebugEntry, 0, len(dstIDs))
+	eligible := make([]DestinationDebugEntry, 0, len(dstIDs))
+	for _, id := range dstIDs {
+		sp := p.storageByID[id]
+		de := DestinationDebugEntry{StorageID: id, MinFreeGB: sp.MinFreeGB}
+
+		usePct, uerr := p.usagePct(sp.Path)
+		freeGB, ferr := p.freeSpaceGB(sp.Path)
+		if uerr == nil {
+			de.UsePct = usePct
+		}
+		if ferr == nil {
+			de.FreeGB = freeGB
+		}
+
+		if uerr != nil || ferr != nil {
+			de.Eligible = false
+			de.Reason = "statfs_failed"
+			entries = append(entries, de)
+			continue
+		}
+		if sp.MinFreeGB > 0 && freeGB < sp.MinFreeGB {
+			de.Eligible = false
+			de.Reason = "below_min_free_gb"
+			entries = append(entries, de)
+			continue
+		}
+
+		de.Eligible = true
+		entries = append(entries, de)
+		eligible = append(eligible, de)
+	}
+
+	ordered := append([]DestinationDebugEntry{}, eligible...)
+	switch policy {
+	case "first_found":
+		// Keep config order.
+	case "most_free":
+		sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].FreeGB > ordered[j].FreeGB })
+	case "least_free":
+		sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].FreeGB < ordered[j].FreeGB })
+	default:
+		return &JobDestinationDebug{
+			JobName:        j.Name,
+			Note:           fmt.Sprintf("invalid destination policy: %s", policy),
+			Policy:         policy,
+			PathPreserving: j.Destination.PathPreserving,
+			Destinations:   entries,
+		}
+	}
+
+	orderedIDs := make([]string, 0, len(ordered))
+	for _, e := range ordered {
+		orderedIDs = append(orderedIDs, e.StorageID)
+	}
+	primary := ""
+	if len(orderedIDs) > 0 {
+		primary = orderedIDs[0]
+	}
+
+	return &JobDestinationDebug{
+		JobName:         j.Name,
+		Policy:          policy,
+		PathPreserving:  j.Destination.PathPreserving,
+		OrderedEligible: orderedIDs,
+		PrimaryChoice:   primary,
+		Destinations:    entries,
+	}
 }
