@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -151,7 +152,7 @@ func printIndexHeader(w io.Writer, mountName string, mountCfg *config.MountConfi
 	}
 	sort.Strings(ids)
 	fmt.Fprintf(w, "pfs index: mount=%s\n", mountName)
-	fmt.Fprintf(w, "Scanning storages: %s\n", strings.Join(ids, ", "))
+	fmt.Fprintf(w, "Scanning: %s\n", strings.Join(ids, ", "))
 }
 
 // printIndexSummary prints the human summary (per-storage + totals + warnings).
@@ -160,29 +161,29 @@ func printIndexSummary(w io.Writer, res indexer.Result, warningsHuman []string) 
 		return
 	}
 
-	fmt.Fprintln(w, "Summary:")
+	fmt.Fprintln(w, "\nSummary:")
 
 	totalUpserts := int64(0)
 	totalDeletes := int64(0)
 	for _, sr := range res.StoragePaths {
 		dur := time.Duration(sr.DurationMS) * time.Millisecond
-		fmt.Fprintf(w, "  %s  scanned  %s dirs  %s files  (%s)\n",
+		fmt.Fprintf(w, "  %s: %s files, %s dirs (%s)\n",
 			sr.ID,
-			humanize.Comma(sr.DirsScanned),
 			humanize.Comma(sr.FilesScanned),
+			humanize.Comma(sr.DirsScanned),
 			dur.Round(100*time.Millisecond),
 		)
 		totalUpserts += sr.Upserts
 		totalDeletes += sr.StaleRemoved
 	}
 
-	fmt.Fprintf(w, "Index DB: updated (%s upserts, %s stale removals)\n",
+	fmt.Fprintf(w, "  DB: %s upserts, %s stale removed\n",
 		humanize.Comma(totalUpserts),
 		humanize.Comma(totalDeletes),
 	)
 
 	totalDur := time.Duration(res.TotalDurationMS) * time.Millisecond
-	fmt.Fprintf(w, "Done: %s files, %s dirs, %s in %s\n",
+	fmt.Fprintf(w, "Done: %s files, %s dirs, %s, in %s\n",
 		humanize.Comma(res.TotalFiles),
 		humanize.Comma(res.TotalDirs),
 		humanfmt.FormatBytesIEC(res.TotalBytes, 1),
@@ -190,9 +191,9 @@ func printIndexSummary(w io.Writer, res indexer.Result, warningsHuman []string) 
 	)
 
 	if len(warningsHuman) > 0 {
-		fmt.Fprintf(w, "\nWarnings (%d):\n\n", len(warningsHuman))
+		fmt.Fprintf(w, "\nWarnings (%d):\n", len(warningsHuman))
 		for _, warn := range warningsHuman {
-			fmt.Fprintf(w, "- %s\n", warn)
+			fmt.Fprintf(w, "  - %s\n", warn)
 		}
 	}
 }
@@ -292,7 +293,17 @@ This enables metadata operations (lookup/readdir/getattr) to avoid touching disk
 			printIndexHeader(stdout, mountName, mountCfg)
 
 			hooks := indexer.Hooks{}
-			var progressUI *indexProgressUI
+			var progressUI indexProgressAdapter
+			progressFinished := false
+			defer func() {
+				if progressUI == nil {
+					return
+				}
+				if progressFinished {
+					return
+				}
+				progressUI.Cancel()
+			}()
 			if progressMode != "off" {
 				p, err := startIndexProgress(ctx, stdout, mountName, mountCfg, progressMode)
 				if err != nil {
@@ -311,11 +322,19 @@ This enables metadata operations (lookup/readdir/getattr) to avoid touching disk
 
 			res, err := indexer.Run(ctx, mountName, mountCfg, idxDB.SQL(), hooks)
 			if err != nil {
+				if progressUI != nil {
+					progressUI.Cancel()
+					progressFinished = true
+				}
+				if errors.Is(err, context.Canceled) {
+					return &CLIError{Code: ExitInterrupted, Silent: true}
+				}
 				return r.fail(ExitFail, "unexpected error", err, "")
 			}
 
 			if progressUI != nil {
 				progressUI.Finish()
+				progressFinished = true
 			}
 			return r.writeSuccess(mountName, mountCfg, res, warningsHuman)
 		},

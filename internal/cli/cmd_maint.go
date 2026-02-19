@@ -151,6 +151,7 @@ This command is intended for systemd timers to reduce disk wake-ups by batching 
 			mvHooks := mover.Hooks{}
 			var mvPlan mover.PlanResult
 			var mvProgressUI moveProgressAdapter
+			sawCanceledCopy := false
 
 			baseFileStart := func(_ string, srcStorageID string, dstStorageID string, _ string, _ int64) {
 				touchStorageID(touched, srcStorageID)
@@ -162,6 +163,9 @@ This command is intended for systemd timers to reduce disk wake-ups by batching 
 
 			mvHooks.Warn = func(jobName string, storageID string, rel string, err error) {
 				touchStorageID(touched, storageID)
+				if errors.Is(err, context.Canceled) {
+					sawCanceledCopy = true
+				}
 				msg := simplifyError(err)
 				if strings.TrimSpace(rel) != "" {
 					msg = fmt.Sprintf("%s: %s", rel, msg)
@@ -196,6 +200,9 @@ This command is intended for systemd timers to reduce disk wake-ups by batching 
 			if !quiet {
 				pl, err := mover.Plan(ctx, mountName, mountCfg, mvOpts)
 				if err != nil {
+					if errors.Is(err, context.Canceled) {
+						return &CLIError{Code: ExitInterrupted, Silent: true}
+					}
 					if errors.Is(err, errkind.ErrNotFound) {
 						return &CLIError{Code: ExitUsage, Cmd: "maint", Headline: "invalid arguments", Cause: rootCause(err), Hint: "run 'pfs maint --help'"}
 					}
@@ -215,6 +222,15 @@ This command is intended for systemd timers to reduce disk wake-ups by batching 
 					mvProgressUI.Cancel()
 				}
 				if errors.Is(err, context.Canceled) {
+					if !quiet {
+						totalCandidates := mvPlan.TotalCandidates
+						if totalCandidates <= 0 {
+							for _, jr := range mvRes.Jobs {
+								totalCandidates += jr.TotalCandidates
+							}
+						}
+						printMoveCancelSummary(stdout, mvRes, totalCandidates, sawCanceledCopy)
+					}
 					return &CLIError{Code: ExitInterrupted, Silent: true}
 				}
 				if errors.Is(err, errkind.ErrNotFound) {
@@ -293,7 +309,7 @@ This command is intended for systemd timers to reduce disk wake-ups by batching 
 				printIndexHeader(stdout, mountName, idxMountCfg)
 			}
 
-			var idxProgressUI *indexProgressUI
+			var idxProgressUI indexProgressAdapter
 			if !quiet {
 				p, err := startIndexProgress(ctx, stdout, mountName, idxMountCfg, "auto")
 				if err != nil {
@@ -305,6 +321,9 @@ This command is intended for systemd timers to reduce disk wake-ups by batching 
 
 			idxRes, err := indexer.Run(ctx, mountName, idxMountCfg, idxDB.SQL(), idxHooks)
 			if err != nil {
+				if idxProgressUI != nil {
+					idxProgressUI.Cancel()
+				}
 				if errors.Is(err, context.Canceled) {
 					return &CLIError{Code: ExitInterrupted, Silent: true}
 				}
@@ -314,7 +333,6 @@ This command is intended for systemd timers to reduce disk wake-ups by batching 
 				idxProgressUI.Finish()
 			}
 			if !quiet {
-				fmt.Fprintln(stdout)
 				printIndexSummary(stdout, idxRes, idxWarnings)
 			}
 

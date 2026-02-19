@@ -58,6 +58,7 @@ type mpbMoveUI struct {
 	doneWorkBytes  int64
 	committedBytes int64 // cumulative work bytes from fully completed files
 	jobMult        map[string]int64
+	overallByBytes bool
 }
 
 const mpbBarWidth = 38
@@ -90,6 +91,9 @@ func startMpbProgress(w io.Writer, opts mover.Opts, plan mover.PlanResult) *mpbM
 		startTime:      time.Now(),
 		totalWorkBytes: totalWork,
 		jobMult:        jobMult,
+	}
+	if totalWork > 0 {
+		u.overallByBytes = true
 	}
 
 	cols := terminalWidth(w)
@@ -138,10 +142,7 @@ func startMpbProgress(w io.Writer, opts mover.Opts, plan mover.PlanResult) *mpbM
 		return fmt.Sprintf("            %s  %s \u2500\u25BA %s  done  %s", sz, u.completed.src, u.completed.dst, dur)
 	})
 
-	// Bar 3: blank line
-	addNop(func(_ decor.Statistics) string { return "" })
-
-	// Bar 4: current file line 1
+	// Bar 3: current file line 1
 	addNop(func(_ decor.Statistics) string {
 		u.mu.Lock()
 		defer u.mu.Unlock()
@@ -211,27 +212,44 @@ func startMpbProgress(w io.Writer, opts mover.Opts, plan mover.PlanResult) *mpbM
 	// Bar 7: bottom separator
 	addNop(func(_ decor.Statistics) string { return separator })
 
-	// Bar 8: overall progress (real bar — uses totalFiles as total so Increment triggers completion)
-	overallBar := p.New(totalFiles, mpb.NopStyle(),
+	// Bar 8: overall progress (real bar)
+	overallTotal := totalFiles
+	if u.overallByBytes {
+		overallTotal = u.totalWorkBytes
+	}
+	overallBar := p.New(overallTotal, mpb.NopStyle(),
 		mpb.PrependDecorators(
 			decor.Any(func(_ decor.Statistics) string {
 				u.mu.Lock()
 				defer u.mu.Unlock()
 
-				done := u.doneFiles
-				total := u.totalFiles
-				if done < 0 {
-					done = 0
+				doneFiles := u.doneFiles
+				totalFiles := u.totalFiles
+				if doneFiles < 0 {
+					doneFiles = 0
 				}
-				if total > 0 && done > total {
-					done = total
+				if totalFiles > 0 && doneFiles > totalFiles {
+					doneFiles = totalFiles
+				}
+
+				barDone := doneFiles
+				barTotal := totalFiles
+				if u.overallByBytes {
+					barDone = u.doneWorkBytes
+					barTotal = u.totalWorkBytes
+					if barDone < 0 {
+						barDone = 0
+					}
+					if barTotal > 0 && barDone > barTotal {
+						barDone = barTotal
+					}
 				}
 
 				pct := float64(0)
-				if total > 0 {
-					pct = float64(done) / float64(total) * 100
+				if barTotal > 0 {
+					pct = float64(barDone) / float64(barTotal) * 100
 				}
-				bar := renderProgressBar(mpbBarWidth, done, total)
+				bar := renderProgressBar(mpbBarWidth, barDone, barTotal)
 
 				eta := "  -"
 				if u.totalWorkBytes > 0 && u.doneWorkBytes > 0 {
@@ -249,7 +267,7 @@ func startMpbProgress(w io.Writer, opts mover.Opts, plan mover.PlanResult) *mpbM
 					}
 				}
 
-				return fmt.Sprintf("Overall     [%s]  %3.0f%%  %d/%d files  ETA: %s", bar, pct, done, total, eta)
+				return fmt.Sprintf("Overall     [%s]  %3.0f%%  %d/%d files  ETA: %s", bar, pct, doneFiles, totalFiles, eta)
 			}),
 		),
 	)
@@ -313,7 +331,6 @@ func (u *mpbMoveUI) OnCopyProgress(jobName string, storageID string, rel string,
 	}
 
 	u.mu.Lock()
-	defer u.mu.Unlock()
 
 	// Update phase.
 	if u.current.phase != verb {
@@ -335,6 +352,20 @@ func (u *mpbMoveUI) OnCopyProgress(jobName string, storageID string, rel string,
 		default:
 			u.doneWorkBytes = u.committedBytes + doneBytes
 		}
+	}
+	newWorkDone := u.doneWorkBytes
+	byBytes := u.overallByBytes
+	overallTotal := u.totalWorkBytes
+	u.mu.Unlock()
+
+	if byBytes && u.overallBar != nil {
+		if overallTotal > 0 && newWorkDone > overallTotal {
+			newWorkDone = overallTotal
+		}
+		if newWorkDone < 0 {
+			newWorkDone = 0
+		}
+		u.overallBar.SetCurrent(newWorkDone)
 	}
 }
 
@@ -372,7 +403,24 @@ func (u *mpbMoveUI) OnProgress(jobName string, storageID string, rel string) {
 	u.current.doneBytes = 0
 	u.current.sizeBytes = 0
 
+	newWorkDone := u.doneWorkBytes
+	byBytes := u.overallByBytes
+	totalWork := u.totalWorkBytes
 	u.mu.Unlock()
+
+	if u.overallBar == nil {
+		return
+	}
+	if byBytes {
+		if totalWork > 0 && newWorkDone > totalWork {
+			newWorkDone = totalWork
+		}
+		if newWorkDone < 0 {
+			newWorkDone = 0
+		}
+		u.overallBar.SetCurrent(newWorkDone)
+		return
+	}
 
 	u.overallBar.Increment()
 }
@@ -387,10 +435,16 @@ func (u *mpbMoveUI) Finish() {
 	u.doneFiles = u.totalFiles
 	u.doneWorkBytes = u.totalWorkBytes
 	u.current.exists = false
+	byBytes := u.overallByBytes
+	totalWork := u.totalWorkBytes
 	u.mu.Unlock()
 
-	if remaining > 0 {
-		u.overallBar.IncrBy(int(remaining))
+	if u.overallBar != nil {
+		if byBytes {
+			u.overallBar.SetCurrent(totalWork)
+		} else if remaining > 0 {
+			u.overallBar.IncrBy(int(remaining))
+		}
 	}
 	// Abort every bar so p.Wait() can return.
 	for _, b := range u.bars {

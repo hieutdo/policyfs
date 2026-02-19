@@ -49,7 +49,8 @@ func TestMove_printMoveSummary_shouldIncludeTotalsAndWarnings(t *testing.T) {
 	require.Contains(t, out, "archive")
 	require.Contains(t, out, "moved")
 	require.Contains(t, out, "Errors")
-	require.Contains(t, out, "Elapsed")
+	require.Contains(t, out, "Done:")
+	require.Contains(t, out, "freed")
 	require.Contains(t, out, "Warnings (1):")
 	require.Contains(t, out, "archive/ssd1: boom")
 }
@@ -155,7 +156,7 @@ mounts:
 	require.Empty(t, stderr)
 	require.Contains(t, stdout, "pfs move: mount=media")
 	require.Contains(t, stdout, "Summary")
-	require.Contains(t, stdout, "Elapsed")
+	require.Contains(t, stdout, "Done:")
 
 	require.NoFileExists(t, filepath.Join(src, "library", "a.txt"))
 	require.FileExists(t, filepath.Join(dst, "library", "a.txt"))

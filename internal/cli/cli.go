@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 
 	"github.com/hieutdo/policyfs/internal/config"
 	"github.com/spf13/cobra"
@@ -27,8 +29,49 @@ func Execute(args []string) int {
 	root := newRootCmd()
 	root.SetArgs(args)
 
+	done := make(chan struct{})
+	defer close(done)
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	var stopOnce sync.Once
+	stopNow := func() {
+		stopOnce.Do(func() { stop() })
+	}
+
+	sigCh := make(chan os.Signal, 2)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+	go func() {
+		sigCount := 0
+		for sig := range sigCh {
+			sigCount++
+			if sigCount == 1 {
+				stopNow()
+				if sig != os.Interrupt {
+					continue
+				}
+				go func() {
+					select {
+					case <-done:
+						return
+					case <-time.After(2 * time.Second):
+					}
+					if isInteractiveWriter(os.Stderr) {
+						fmt.Fprintln(os.Stderr, "interrupted")
+					}
+					os.Exit(ExitInterrupted)
+				}()
+				continue
+			}
+
+			if isInteractiveWriter(os.Stderr) {
+				fmt.Fprintln(os.Stderr, "interrupted")
+			}
+			os.Exit(ExitInterrupted)
+		}
+	}()
 
 	if err := root.ExecuteContext(ctx); err != nil {
 		if errors.Is(err, context.Canceled) {

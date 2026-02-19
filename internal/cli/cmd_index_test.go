@@ -46,9 +46,10 @@ mounts:
 	code, stdout, _ := runCLI(t, []string{"--config", cfg, "index", "media"})
 	require.Equal(t, ExitOK, code)
 	require.Contains(t, stdout, "pfs index: mount=media")
-	require.Contains(t, stdout, "Scanning storages: hdd1")
+	require.Contains(t, stdout, "Scanning: hdd1")
 	require.Contains(t, stdout, "Summary:")
-	require.Contains(t, stdout, "Index DB: updated")
+	require.Contains(t, stdout, "DB")
+	require.Contains(t, stdout, "upserts")
 	require.Contains(t, stdout, "Done:")
 }
 

@@ -143,7 +143,7 @@ func printPruneSummary(w io.Writer, s prune.Summary, quiet bool) {
 	}
 
 	fmt.Fprintln(w, "Summary:")
-	fmt.Fprintf(w, "  Events: processed %s  ok %s  skipped %s  failed %s\n",
+	fmt.Fprintf(w, "  Events: processed %s, ok %s, skipped %s, failed %s\n",
 		humanize.Comma(s.EventsProcessed),
 		humanize.Comma(s.EventsSucceeded),
 		humanize.Comma(s.EventsSkipped),
@@ -156,7 +156,7 @@ func printPruneSummary(w io.Writer, s prune.Summary, quiet bool) {
 		ren := s.ByType[eventlog.TypeRename]
 		set := s.ByType[eventlog.TypeSetattr]
 		if del != 0 || ren != 0 || set != 0 {
-			fmt.Fprintf(w, "  By type: DELETE %s  RENAME %s  SETATTR %s\n",
+			fmt.Fprintf(w, "  By type: DELETE %s, RENAME %s, SETATTR %s\n",
 				humanize.Comma(del),
 				humanize.Comma(ren),
 				humanize.Comma(set),

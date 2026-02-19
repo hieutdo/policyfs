@@ -5,10 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/signal"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/hanwen/go-fuse/v2/fs"
@@ -47,6 +45,9 @@ This command is typically managed by systemd as a service.`,
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			mountName := args[0]
+			if err := validateMountName(mountName); err != nil {
+				return &CLIError{Code: ExitUsage, Cmd: "mount", Headline: "invalid arguments", Cause: rootCause(err), Hint: "run 'pfs mount --help'"}
+			}
 
 			rootCfg, mountCfg, source, err := loadAndResolveMount(*configPath, mountName)
 			if err != nil {
@@ -247,25 +248,9 @@ This command is typically managed by systemd as a service.`,
 				})
 			}
 
-			sigCh := make(chan os.Signal, 2)
-			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-			defer signal.Stop(sigCh)
+			cmdCtx := cmd.Context()
 			go func() {
-				sigCount := 0
-				for range sigCh {
-					sigCount++
-					if sigCount == 1 {
-						reqShutdown()
-						continue
-					}
-					cmdLog.Info().Str("mount", mountName).Str("mountpoint", mountCfg.MountPoint).Msg("force exit requested")
-					flushCoverageIfEnabled(mountName, mountCfg.MountPoint)
-					os.Exit(1)
-				}
-			}()
-
-			go func() {
-				<-cmd.Context().Done()
+				<-cmdCtx.Done()
 				reqShutdown()
 			}()
 

@@ -388,9 +388,9 @@ func printMoveSummary(w io.Writer, res mover.Result, warningsHuman []string) {
 
 	totalDur := time.Duration(res.TotalDurationMS) * time.Millisecond
 
-	fmt.Fprintln(w, "\nSummary")
+	fmt.Fprintln(w, "\nSummary:")
 	for _, jr := range res.Jobs {
-		fmt.Fprintf(w, "  %-12s  moved %s files  %s  freed %s\n",
+		fmt.Fprintf(w, "  Job %s: moved %s files, %s, freed %s\n",
 			jr.Name,
 			humanize.Comma(jr.FilesMoved),
 			humanfmt.FormatBytesIEC(jr.BytesMoved, 1),
@@ -401,8 +401,13 @@ func printMoveSummary(w io.Writer, res mover.Result, warningsHuman []string) {
 	for _, jr := range res.Jobs {
 		totalErrors += jr.FilesErrored
 	}
-	fmt.Fprintf(w, "  Errors   %s\n", humanize.Comma(totalErrors))
-	fmt.Fprintf(w, "  Elapsed  %s\n", totalDur.Round(100*time.Millisecond))
+	fmt.Fprintf(w, "  Errors: %s\n", humanize.Comma(totalErrors))
+	fmt.Fprintf(w, "Done: %s files, %s, freed %s, in %s\n",
+		humanize.Comma(res.TotalFilesMoved),
+		humanfmt.FormatBytesIEC(res.TotalBytesMoved, 1),
+		humanfmt.FormatBytesIEC(res.TotalBytesFreed, 1),
+		totalDur.Round(100*time.Millisecond),
+	)
 
 	if len(warningsHuman) > 0 {
 		fmt.Fprintf(w, "\nWarnings (%d):\n", len(warningsHuman))
