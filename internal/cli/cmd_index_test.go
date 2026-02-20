@@ -170,6 +170,81 @@ mounts:
 	require.Contains(t, stdout, "Done:")
 }
 
+// TestIndex_noIndexedStorages_shouldReturnNoChanges verifies a mount with no indexed storages returns ExitNoChanges.
+func TestIndex_noIndexedStorages_shouldReturnNoChanges(t *testing.T) {
+	if os.Getenv(config.EnvTestHelper) == "1" {
+		return
+	}
+
+	runtimeDir := filepath.Join(t.TempDir(), "runtime")
+	require.NoError(t, os.MkdirAll(runtimeDir, 0o755))
+	t.Setenv(config.EnvRuntimeDir, runtimeDir)
+
+	stateDir := filepath.Join(t.TempDir(), "state")
+	require.NoError(t, os.MkdirAll(stateDir, 0o755))
+	t.Setenv(config.EnvStateDir, stateDir)
+
+	storageRoot := filepath.Join(t.TempDir(), "hdd1")
+	require.NoError(t, os.MkdirAll(storageRoot, 0o755))
+
+	cfg := writeTempConfig(t, `
+mounts:
+  media:
+    mountpoint: "/mnt/pfs/media"
+    storage_paths:
+      - id: "hdd1"
+        path: "`+storageRoot+`"
+        indexed: false
+    routing_rules:
+      - match: "**"
+        targets: ["hdd1"]
+`)
+
+	code, stdout, stderr := runCLI(t, []string{"--config", cfg, "index", "media"})
+	require.Equal(t, ExitNoChanges, code)
+	require.Empty(t, stderr)
+	require.Contains(t, stdout, "pfs index: mount=media")
+	require.Contains(t, stdout, "Skipped: no indexed storages")
+	require.NotContains(t, stdout, "Summary")
+}
+
+// TestIndex_emptyIndexedStorage_shouldReturnNoChanges verifies an indexed storage with no files returns ExitNoChanges.
+func TestIndex_emptyIndexedStorage_shouldReturnNoChanges(t *testing.T) {
+	if os.Getenv(config.EnvTestHelper) == "1" {
+		return
+	}
+
+	runtimeDir := filepath.Join(t.TempDir(), "runtime")
+	require.NoError(t, os.MkdirAll(runtimeDir, 0o755))
+	t.Setenv(config.EnvRuntimeDir, runtimeDir)
+
+	stateDir := filepath.Join(t.TempDir(), "state")
+	require.NoError(t, os.MkdirAll(stateDir, 0o755))
+	t.Setenv(config.EnvStateDir, stateDir)
+
+	storageRoot := filepath.Join(t.TempDir(), "hdd1")
+	require.NoError(t, os.MkdirAll(storageRoot, 0o755))
+
+	cfg := writeTempConfig(t, `
+mounts:
+  media:
+    mountpoint: "/mnt/pfs/media"
+    storage_paths:
+      - id: "hdd1"
+        path: "`+storageRoot+`"
+        indexed: true
+    routing_rules:
+      - match: "**"
+        targets: ["hdd1"]
+`)
+
+	code, stdout, stderr := runCLI(t, []string{"--config", cfg, "index", "media", "--quiet"})
+	require.Equal(t, ExitNoChanges, code)
+	require.Empty(t, stderr)
+	require.Contains(t, stdout, "nothing to index")
+	require.NotContains(t, stdout, "Summary")
+}
+
 // TestIndex_InvalidArgs_shouldReturnUsage verifies missing mount arg returns ExitUsage.
 func TestIndex_InvalidArgs_shouldReturnUsage(t *testing.T) {
 	if os.Getenv(config.EnvTestHelper) == "1" {

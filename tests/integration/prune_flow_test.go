@@ -22,14 +22,26 @@ import (
 	"github.com/hieutdo/policyfs/internal/eventlog"
 )
 
+const exitNoChanges = 3
+
 // mustRunPFS runs the pfs CLI with the integration test's runtime/state directories.
+//
+// It treats ExitNoChanges (3) as success to allow idempotent oneshot jobs.
 func mustRunPFS(t *testing.T, env *MountedFS, args ...string) {
 	t.Helper()
 	cmd := exec.Command(pfsBin, append([]string{"--config", env.ConfigPath}, args...)...)
 	cmd.Env = pfsTestEnv(env, "")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	require.NoError(t, cmd.Run())
+	if err := cmd.Run(); err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			if ee.ExitCode() == exitNoChanges {
+				return
+			}
+		}
+		require.NoError(t, err)
+	}
 }
 
 // runPFSOutput runs the pfs CLI and returns the combined stdout+stderr for assertion.
@@ -39,6 +51,12 @@ func runPFSOutput(t *testing.T, env *MountedFS, args ...string) ([]byte, error) 
 	cmd.Env = pfsTestEnv(env, "")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			if ee.ExitCode() == exitNoChanges {
+				return out, nil
+			}
+		}
 		return out, fmt.Errorf("pfs command failed: %w", err)
 	}
 	return out, nil

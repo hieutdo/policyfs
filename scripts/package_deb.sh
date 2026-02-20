@@ -42,6 +42,7 @@ rm -rf "${pkg_dir}"
 mkdir -p "${debian_dir}" \
   "${pkg_dir}/usr/bin" \
   "${pkg_dir}/etc/pfs" \
+  "${pkg_dir}/etc/logrotate.d" \
   "${pkg_dir}/etc/systemd/system" \
   "${pkg_dir}/var/lib/pfs" \
   "${out_dir}"
@@ -62,6 +63,7 @@ install -m 0644 "${root_dir}/packaging/systemd/pfs-prune@.timer" "${pkg_dir}/etc
 install -m 0644 "${root_dir}/packaging/systemd/pfs-maint@.service" "${pkg_dir}/etc/systemd/system/pfs-maint@.service"
 install -m 0644 "${root_dir}/packaging/systemd/pfs-maint@.timer" "${pkg_dir}/etc/systemd/system/pfs-maint@.timer"
 install -m 0644 "${root_dir}/packaging/config/pfs.example.yaml" "${pkg_dir}/etc/pfs/pfs.yaml.example"
+install -m 0644 "${root_dir}/packaging/logrotate/pfs" "${pkg_dir}/etc/logrotate.d/pfs"
 
 install -m 0755 "${binary_path}" "${pkg_dir}/usr/bin/pfs"
 

@@ -288,6 +288,17 @@ This enables metadata operations (lookup/readdir/getattr) to avoid touching disk
 				return err
 			}
 
+			indexed, err := mountCfg.GetIndexedStoragePaths()
+			if err != nil {
+				return r.fail(ExitFail, "unexpected error", err, "")
+			}
+			if len(indexed) == 0 {
+				stdout := cmd.OutOrStdout()
+				fmt.Fprintf(stdout, "pfs index: mount=%s\n", mountName)
+				fmt.Fprintln(stdout, "Skipped: no indexed storages")
+				return &CLIError{Code: ExitNoChanges, Silent: true}
+			}
+
 			ctx := cmd.Context()
 			stdout := cmd.OutOrStdout()
 			printIndexHeader(stdout, mountName, mountCfg)
@@ -305,12 +316,14 @@ This enables metadata operations (lookup/readdir/getattr) to avoid touching disk
 				progressUI.Cancel()
 			}()
 			if progressMode != "off" {
-				p, err := startIndexProgress(ctx, stdout, mountName, mountCfg, progressMode)
+				p, _, err := startIndexProgress(ctx, stdout, mountName, mountCfg, progressMode)
 				if err != nil {
 					return r.fail(ExitFail, "unexpected error", err, "")
 				}
-				progressUI = p
-				hooks.Progress = progressUI.OnProgress
+				if p != nil {
+					progressUI = p
+					hooks.Progress = progressUI.OnProgress
+				}
 			}
 			if verbose {
 				hooks.Progress = func(storageID string, rel string, isDir bool) {
@@ -336,6 +349,25 @@ This enables metadata operations (lookup/readdir/getattr) to avoid touching disk
 				progressUI.Finish()
 				progressFinished = true
 			}
+
+			totalUpserts := int64(0)
+			totalDeletes := int64(0)
+			for _, sr := range res.StoragePaths {
+				totalUpserts += sr.Upserts
+				totalDeletes += sr.StaleRemoved
+			}
+			noChanges := (totalUpserts == 0 && totalDeletes == 0)
+			if noChanges {
+				if len(warningsHuman) == 0 {
+					fmt.Fprintln(stdout, "Done: nothing to index.")
+				} else {
+					if err := r.writeSuccess(mountName, mountCfg, res, warningsHuman); err != nil {
+						return err
+					}
+				}
+				return &CLIError{Code: ExitNoChanges, Silent: true}
+			}
+
 			return r.writeSuccess(mountName, mountCfg, res, warningsHuman)
 		},
 	}

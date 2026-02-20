@@ -96,18 +96,22 @@ func (u *plainIndexUI) Cancel() {
 }
 
 // startIndexProgress runs the count phase silently and returns the appropriate progress adapter.
-func startIndexProgress(ctx context.Context, w io.Writer, mountName string, mountCfg *config.MountConfig, mode string) (indexProgressAdapter, error) {
+func startIndexProgress(ctx context.Context, w io.Writer, mountName string, mountCfg *config.MountConfig, mode string) (indexProgressAdapter, int64, error) {
 	if strings.TrimSpace(mode) == "tty" && !isInteractiveWriter(w) {
 		mode = "plain"
 	}
 
 	cr, err := indexer.Count(ctx, mountName, mountCfg)
 	if err != nil {
-		return nil, fmt.Errorf("failed to count entries: %w", err)
+		return nil, 0, fmt.Errorf("failed to count entries: %w", err)
+	}
+
+	if cr.TotalEntries == 0 {
+		return nil, 0, nil
 	}
 
 	if isInteractiveWriter(w) && mode != "plain" {
-		return startMpbIndexProgress(w, cr.TotalEntries), nil
+		return startMpbIndexProgress(w, cr.TotalEntries), cr.TotalEntries, nil
 	}
-	return startPlainIndexProgress(w, cr.TotalEntries), nil
+	return startPlainIndexProgress(w, cr.TotalEntries), cr.TotalEntries, nil
 }

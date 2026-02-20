@@ -19,6 +19,7 @@ const (
 	ExitOK          = 0
 	ExitFail        = 1
 	ExitUsage       = 2
+	ExitNoChanges   = 3
 	ExitBusy        = 75
 	ExitDoctorFail  = 78
 	ExitInterrupted = 130

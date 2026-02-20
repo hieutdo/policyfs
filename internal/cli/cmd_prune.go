@@ -80,6 +80,7 @@ This command executes physical mutations (unlink/rmdir/rename/chmod/chown/utimen
 				sort.Strings(mounts)
 
 				anyFailed := false
+				anyWork := false
 				for _, mountName := range mounts {
 					mountCfg, err := rootCfg.Mount(mountName)
 					if err != nil {
@@ -94,10 +95,21 @@ This command executes physical mutations (unlink/rmdir/rename/chmod/chown/utimen
 						}
 						continue
 					}
+					if res.EventsProcessed == 0 {
+						if !quiet {
+							fmt.Fprintf(stdout, "pfs prune: mount=%s\n", mountName)
+							fmt.Fprintln(stdout, "Done: nothing to prune.")
+						}
+						continue
+					}
+					anyWork = true
 					printPruneSummary(stdout, res, quiet)
 				}
 				if anyFailed {
 					return &CLIError{Code: ExitFail, Cmd: "prune", Headline: "unexpected error", Silent: true}
+				}
+				if !anyWork {
+					return &CLIError{Code: ExitNoChanges, Silent: true}
 				}
 				return nil
 			}
@@ -119,6 +131,13 @@ This command executes physical mutations (unlink/rmdir/rename/chmod/chown/utimen
 					return ce
 				}
 				return &CLIError{Code: ExitFail, Cmd: "prune", Headline: "unexpected error", Cause: rootCause(err)}
+			}
+			if res.EventsProcessed == 0 {
+				if !quiet {
+					fmt.Fprintf(stdout, "pfs prune: mount=%s\n", mountName)
+					fmt.Fprintln(stdout, "Done: nothing to prune.")
+				}
+				return &CLIError{Code: ExitNoChanges, Silent: true}
 			}
 			printPruneSummary(stdout, res, quiet)
 			return nil

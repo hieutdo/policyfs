@@ -149,6 +149,80 @@ mounts:
 `)
 
 	code, stdout, stderr := runCLI(t, []string{"--config", cfg, "maint", "media", "--index=touch"})
-	require.Equal(t, ExitOK, code, "expected exit_code=0 got=%d stderr=%s", code, stderr)
-	require.Contains(t, stdout, "pfs index: skipped (no touched indexed storages)")
+	require.Equal(t, ExitNoChanges, code, "expected exit_code=%d got=%d stderr=%s", ExitNoChanges, code, stderr)
+	require.Contains(t, stdout, "no indexed storages touched")
+}
+
+// TestMaint_allPhasesNoWork_shouldReturnExitNoChanges verifies maint returns ExitNoChanges when nothing changed across all phases.
+func TestMaint_allPhasesNoWork_shouldReturnExitNoChanges(t *testing.T) {
+	runtimeDir := filepath.Join(t.TempDir(), "runtime")
+	require.NoError(t, os.MkdirAll(runtimeDir, 0o755))
+	t.Setenv(config.EnvRuntimeDir, runtimeDir)
+
+	stateDir := filepath.Join(t.TempDir(), "state")
+	require.NoError(t, os.MkdirAll(stateDir, 0o755))
+	t.Setenv(config.EnvStateDir, stateDir)
+
+	src := t.TempDir()
+	dst := t.TempDir()
+
+	cfg := writeTempConfig(t, `
+mounts:
+  media:
+    mountpoint: "/mnt/pfs/media"
+    storage_paths:
+      - id: "ssd1"
+        path: "`+src+`"
+        indexed: false
+      - id: "hdd1"
+        path: "`+dst+`"
+        indexed: true
+    routing_rules:
+      - match: "**"
+        targets: ["ssd1"]
+    mover:
+      enabled: false
+`)
+
+	code, stdout, stderr := runCLI(t, []string{"--config", cfg, "maint", "media", "--index=touch"})
+	require.Equal(t, ExitNoChanges, code, "expected exit_code=%d got=%d stderr=%s", ExitNoChanges, code, stderr)
+	require.Empty(t, stderr)
+	require.Contains(t, stdout, "pfs maint: mount=media")
+}
+
+// TestMaint_allPhasesNoWork_quiet_shouldReturnExitNoChanges verifies --quiet does not change the aggregate exit code.
+func TestMaint_allPhasesNoWork_quiet_shouldReturnExitNoChanges(t *testing.T) {
+	runtimeDir := filepath.Join(t.TempDir(), "runtime")
+	require.NoError(t, os.MkdirAll(runtimeDir, 0o755))
+	t.Setenv(config.EnvRuntimeDir, runtimeDir)
+
+	stateDir := filepath.Join(t.TempDir(), "state")
+	require.NoError(t, os.MkdirAll(stateDir, 0o755))
+	t.Setenv(config.EnvStateDir, stateDir)
+
+	src := t.TempDir()
+	dst := t.TempDir()
+
+	cfg := writeTempConfig(t, `
+mounts:
+  media:
+    mountpoint: "/mnt/pfs/media"
+    storage_paths:
+      - id: "ssd1"
+        path: "`+src+`"
+        indexed: false
+      - id: "hdd1"
+        path: "`+dst+`"
+        indexed: true
+    routing_rules:
+      - match: "**"
+        targets: ["ssd1"]
+    mover:
+      enabled: false
+`)
+
+	code, stdout, stderr := runCLI(t, []string{"--config", cfg, "maint", "media", "--index=touch", "--quiet"})
+	require.Equal(t, ExitNoChanges, code, "expected exit_code=%d got=%d stderr=%s", ExitNoChanges, code, stderr)
+	require.Empty(t, stderr)
+	require.Empty(t, stdout)
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/hieutdo/policyfs/internal/config"
 	"github.com/hieutdo/policyfs/internal/errkind"
@@ -145,6 +146,7 @@ This command is intended for systemd timers to reduce disk wake-ups by batching 
 			}
 
 			touched := map[string]struct{}{}
+			didWork := false
 
 			mvOpts := mover.Opts{Job: job, Force: force, Limit: limit}
 			mvWarnings := []string{}
@@ -209,10 +211,12 @@ This command is intended for systemd timers to reduce disk wake-ups by batching 
 					return &CLIError{Code: ExitFail, Cmd: "maint", Headline: "failed to plan move", Cause: rootCause(err)}
 				}
 				mvPlan = pl
-				if isInteractiveWriter(stdout) {
-					mvProgressUI = startMpbProgress(stdout, mvOpts, mvPlan)
-				} else {
-					mvProgressUI = startPlainProgress(stdout, mvOpts, mvPlan)
+				if mvPlan.TotalCandidates > 0 {
+					if isInteractiveWriter(stdout) {
+						mvProgressUI = startMpbProgress(stdout, mvOpts, mvPlan)
+					} else {
+						mvProgressUI = startPlainProgress(stdout, mvOpts, mvPlan)
+					}
 				}
 			}
 
@@ -241,8 +245,27 @@ This command is intended for systemd timers to reduce disk wake-ups by batching 
 			if mvProgressUI != nil {
 				mvProgressUI.Finish()
 			}
+			if mvRes.TotalFilesMoved > 0 {
+				didWork = true
+			}
 			if !quiet {
-				printMoveSummary(stdout, mvRes, mvWarnings)
+				if mvRes.TotalFilesMoved == 0 {
+					if len(mvWarnings) == 0 {
+						skip, reason, err := moveShouldSkipAllJobsForTriggers(mountCfg, mvOpts, time.Now())
+						if err != nil {
+							return &CLIError{Code: ExitFail, Cmd: "maint", Headline: "unexpected error", Cause: rootCause(err)}
+						}
+						if skip && strings.TrimSpace(reason) != "" {
+							fmt.Fprintf(stdout, "Skipped: %s\n", reason)
+						} else {
+							fmt.Fprintln(stdout, "Done: nothing to move.")
+						}
+					} else {
+						printMoveSummary(stdout, mvRes, mvWarnings)
+					}
+				} else {
+					printMoveSummary(stdout, mvRes, mvWarnings)
+				}
 			}
 
 			if !quiet {
@@ -262,80 +285,113 @@ This command is intended for systemd timers to reduce disk wake-ups by batching 
 				}
 				return &CLIError{Code: ExitFail, Cmd: "maint", Headline: "failed to prune", Cause: rootCause(err)}
 			}
+			if prRes.EventsProcessed > 0 {
+				didWork = true
+			}
 			if !quiet {
-				fmt.Fprintln(stdout)
-				printPruneSummary(stdout, prRes, false)
+				if prRes.EventsProcessed == 0 {
+					fmt.Fprintln(stdout, "Done: nothing to prune.")
+				} else {
+					fmt.Fprintln(stdout)
+					printPruneSummary(stdout, prRes, false)
+				}
 			}
 
+			indexSkipped := false
 			if mode == maintIndexModeOff {
+				indexSkipped = true
 				if !quiet {
-					fmt.Fprintf(stdout, "\npfs index: skipped (index=off)\n")
+					fmt.Fprintf(stdout, "\npfs index:\nSkipped: index=off\n")
 				}
-				return nil
 			}
 
 			idxMountCfg := mountCfg
-			if mode == maintIndexModeTouch {
+			if !indexSkipped && mode == maintIndexModeTouch {
 				filtered, kept := filterMountCfgByIndexedStorageIDs(mountCfg, touched)
 				if len(kept) == 0 {
+					indexSkipped = true
 					if !quiet {
-						fmt.Fprintf(stdout, "\npfs index: skipped (no touched indexed storages)\n")
+						fmt.Fprintf(stdout, "\npfs index:\nSkipped: no indexed storages touched\n")
 					}
-					return nil
 				}
 				idxMountCfg = filtered
 			}
+			if !indexSkipped {
 
-			idxDB, err := indexdb.Open(mountName)
-			if err != nil {
-				return &CLIError{Code: ExitFail, Cmd: "maint", Headline: "failed to open index db", Cause: rootCause(err)}
-			}
-			defer func() { _ = idxDB.Close() }()
-
-			idxWarnings := []string{}
-			idxHooks := indexer.Hooks{}
-			idxHooks.Warn = func(storageID string, rel string, err error) {
-				rel = strings.TrimSpace(rel)
-				msg := simplifyError(err)
-				if rel != "" {
-					msg = fmt.Sprintf("%s: %s", rel, msg)
-				}
-				msg = fmt.Sprintf("%s: %s", storageID, msg)
-				idxWarnings = append(idxWarnings, msg)
-			}
-
-			if !quiet {
-				fmt.Fprintln(stdout)
-				printIndexHeader(stdout, mountName, idxMountCfg)
-			}
-
-			var idxProgressUI indexProgressAdapter
-			if !quiet {
-				p, err := startIndexProgress(ctx, stdout, mountName, idxMountCfg, "auto")
+				idxDB, err := indexdb.Open(mountName)
 				if err != nil {
-					return &CLIError{Code: ExitFail, Cmd: "maint", Headline: "failed to start index progress", Cause: rootCause(err)}
+					return &CLIError{Code: ExitFail, Cmd: "maint", Headline: "failed to open index db", Cause: rootCause(err)}
 				}
-				idxProgressUI = p
-				idxHooks.Progress = idxProgressUI.OnProgress
-			}
+				defer func() { _ = idxDB.Close() }()
 
-			idxRes, err := indexer.Run(ctx, mountName, idxMountCfg, idxDB.SQL(), idxHooks)
-			if err != nil {
+				idxWarnings := []string{}
+				idxHooks := indexer.Hooks{}
+				idxHooks.Warn = func(storageID string, rel string, err error) {
+					rel = strings.TrimSpace(rel)
+					msg := simplifyError(err)
+					if rel != "" {
+						msg = fmt.Sprintf("%s: %s", rel, msg)
+					}
+					msg = fmt.Sprintf("%s: %s", storageID, msg)
+					idxWarnings = append(idxWarnings, msg)
+				}
+
+				if !quiet {
+					fmt.Fprintln(stdout)
+					printIndexHeader(stdout, mountName, idxMountCfg)
+				}
+
+				var idxProgressUI indexProgressAdapter
+				if !quiet {
+					p, _, err := startIndexProgress(ctx, stdout, mountName, idxMountCfg, "auto")
+					if err != nil {
+						return &CLIError{Code: ExitFail, Cmd: "maint", Headline: "failed to start index progress", Cause: rootCause(err)}
+					}
+					if p != nil {
+						idxProgressUI = p
+						idxHooks.Progress = idxProgressUI.OnProgress
+					}
+				}
+
+				idxRes, err := indexer.Run(ctx, mountName, idxMountCfg, idxDB.SQL(), idxHooks)
+				if err != nil {
+					if idxProgressUI != nil {
+						idxProgressUI.Cancel()
+					}
+					if errors.Is(err, context.Canceled) {
+						return &CLIError{Code: ExitInterrupted, Silent: true}
+					}
+					return &CLIError{Code: ExitFail, Cmd: "maint", Headline: "failed to index", Cause: rootCause(err)}
+				}
 				if idxProgressUI != nil {
-					idxProgressUI.Cancel()
+					idxProgressUI.Finish()
 				}
-				if errors.Is(err, context.Canceled) {
-					return &CLIError{Code: ExitInterrupted, Silent: true}
+				totalUpserts := int64(0)
+				totalDeletes := int64(0)
+				for _, sr := range idxRes.StoragePaths {
+					totalUpserts += sr.Upserts
+					totalDeletes += sr.StaleRemoved
 				}
-				return &CLIError{Code: ExitFail, Cmd: "maint", Headline: "failed to index", Cause: rootCause(err)}
-			}
-			if idxProgressUI != nil {
-				idxProgressUI.Finish()
-			}
-			if !quiet {
-				printIndexSummary(stdout, idxRes, idxWarnings)
+				idxDidWork := (totalUpserts != 0 || totalDeletes != 0)
+				if idxDidWork {
+					didWork = true
+				}
+				if !quiet {
+					if !idxDidWork {
+						if len(idxWarnings) == 0 {
+							fmt.Fprintln(stdout, "Done: nothing to index.")
+						} else {
+							printIndexSummary(stdout, idxRes, idxWarnings)
+						}
+					} else {
+						printIndexSummary(stdout, idxRes, idxWarnings)
+					}
+				}
 			}
 
+			if !didWork {
+				return &CLIError{Code: ExitNoChanges, Silent: true}
+			}
 			return nil
 		},
 	}

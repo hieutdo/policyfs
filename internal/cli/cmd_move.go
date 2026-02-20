@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/dustin/go-humanize"
@@ -121,6 +123,20 @@ This command is typically scheduled via systemd timers for usage-triggered jobs.
 			if debug && !quiet {
 				printMoveCandidates(stdout, plan)
 			}
+			if needPlan && plan.TotalCandidates == 0 {
+				if !quiet {
+					skip, reason, err := moveShouldSkipAllJobsForTriggers(mountCfg, opts, time.Now())
+					if err != nil {
+						return &CLIError{Code: ExitFail, Cmd: "move", Headline: "unexpected error", Cause: rootCause(err)}
+					}
+					if skip && strings.TrimSpace(reason) != "" {
+						fmt.Fprintf(stdout, "Skipped: %s\n", reason)
+					} else {
+						fmt.Fprintln(stdout, "Done: nothing to move.")
+					}
+				}
+				return &CLIError{Code: ExitNoChanges, Silent: true}
+			}
 
 			warningsHuman := []string{}
 			sawCanceledCopy := false
@@ -149,6 +165,23 @@ This command is typically scheduled via systemd timers for usage-triggered jobs.
 				hooks.CopyProgress = progressUI.OnCopyProgress
 			}
 
+			if !needPlan {
+				skip, reason, err := moveShouldSkipAllJobsForTriggers(mountCfg, opts, time.Now())
+				if err != nil {
+					return &CLIError{Code: ExitFail, Cmd: "move", Headline: "unexpected error", Cause: rootCause(err)}
+				}
+				if skip {
+					if !quiet {
+						if strings.TrimSpace(reason) != "" {
+							fmt.Fprintf(stdout, "Skipped: %s\n", reason)
+						} else {
+							fmt.Fprintln(stdout, "Done: nothing to move.")
+						}
+					}
+					return &CLIError{Code: ExitNoChanges, Silent: true}
+				}
+			}
+
 			res, err := mover.RunOneshot(ctx, mountName, mountCfg, opts, hooks)
 			if err != nil {
 				if progressUI != nil {
@@ -175,6 +208,12 @@ This command is typically scheduled via systemd timers for usage-triggered jobs.
 			if progressUI != nil {
 				progressUI.Finish()
 			}
+			if res.TotalFilesMoved == 0 && len(warningsHuman) == 0 {
+				if !quiet {
+					fmt.Fprintln(stdout, "Done: nothing to move.")
+				}
+				return &CLIError{Code: ExitNoChanges, Silent: true}
+			}
 			if !quiet {
 				printMoveSummary(stdout, res, warningsHuman)
 			}
@@ -192,6 +231,199 @@ This command is typically scheduled via systemd timers for usage-triggered jobs.
 	cmd.Flags().StringVar(&progress, "progress", "auto", "progress output: auto|tty|plain|off")
 
 	return cmd
+}
+
+// moveShouldSkipAllJobsForTriggers reports whether every selected job would be skipped due to usage trigger preconditions.
+func moveShouldSkipAllJobsForTriggers(mountCfg *config.MountConfig, opts mover.Opts, now time.Time) (bool, string, error) {
+	if mountCfg == nil {
+		return false, "", &errkind.NilError{What: "mount config"}
+	}
+
+	enabled := true
+	if mountCfg.Mover.Enabled != nil {
+		enabled = *mountCfg.Mover.Enabled
+	}
+	if !enabled {
+		return true, "mover disabled", nil
+	}
+
+	jobs := mountCfg.Mover.Jobs
+	if strings.TrimSpace(opts.Job) != "" {
+		name := strings.TrimSpace(opts.Job)
+		filtered := make([]config.MoverJobConfig, 0, 1)
+		for _, j := range jobs {
+			if j.Name == name {
+				filtered = append(filtered, j)
+				break
+			}
+		}
+		if len(filtered) == 0 {
+			return false, "", nil
+		}
+		jobs = filtered
+	}
+	if len(jobs) == 0 {
+		return true, "", nil
+	}
+	if opts.Force {
+		return false, "", nil
+	}
+
+	storageByID := map[string]config.StoragePath{}
+	for _, sp := range mountCfg.StoragePaths {
+		storageByID[sp.ID] = sp
+	}
+
+	reasons := map[string]struct{}{}
+	skippedJobs := 0
+	for _, j := range jobs {
+		trigType := strings.TrimSpace(j.Trigger.Type)
+		if trigType != "usage" {
+			return false, "", nil
+		}
+		aw := j.Trigger.AllowedWindow
+		if aw != nil {
+			inside, err := cliInAllowedWindow(now, aw.Start, aw.End)
+			if err != nil {
+				return false, "", err
+			}
+			if !inside {
+				skippedJobs++
+				reasons["outside allowed_window"] = struct{}{}
+				continue
+			}
+		}
+
+		srcIDs, err := cliExpandStorageRefs(storageByID, mountCfg.StorageGroups, j.Source.Paths, j.Source.Groups)
+		if err != nil {
+			return false, "", err
+		}
+
+		anyActive := false
+		for _, id := range srcIDs {
+			sp, ok := storageByID[id]
+			if !ok {
+				continue
+			}
+			pct, err := cliUsagePercent(sp.Path)
+			if err != nil {
+				return false, "", err
+			}
+			if pct >= float64(j.Trigger.ThresholdStart) {
+				anyActive = true
+				break
+			}
+		}
+		if !anyActive {
+			skippedJobs++
+			reasons["usage below threshold_start"] = struct{}{}
+			continue
+		}
+
+		return false, "", nil
+	}
+
+	if skippedJobs != len(jobs) {
+		return false, "", nil
+	}
+	if len(reasons) == 0 {
+		return true, "", nil
+	}
+
+	ordered := make([]string, 0, len(reasons))
+	for r := range reasons {
+		ordered = append(ordered, r)
+	}
+	sort.Strings(ordered)
+	return true, strings.Join(ordered, "; "), nil
+}
+
+// cliInAllowedWindow is a local copy of the mover allowed window calculation, kept private to avoid widening APIs.
+func cliInAllowedWindow(now time.Time, start string, end string) (bool, error) {
+	st, err := time.Parse("15:04", start)
+	if err != nil {
+		return false, fmt.Errorf("invalid allowed_window.start: %w", err)
+	}
+	et, err := time.Parse("15:04", end)
+	if err != nil {
+		return false, fmt.Errorf("invalid allowed_window.end: %w", err)
+	}
+
+	startToday := time.Date(now.Year(), now.Month(), now.Day(), st.Hour(), st.Minute(), 0, 0, now.Location())
+	endToday := time.Date(now.Year(), now.Month(), now.Day(), et.Hour(), et.Minute(), 0, 0, now.Location())
+
+	var winStart time.Time
+	var winEnd time.Time
+	if !startToday.After(endToday) {
+		winStart = startToday
+		winEnd = endToday
+	} else {
+		if now.Equal(startToday) || now.After(startToday) {
+			winStart = startToday
+			winEnd = endToday.Add(24 * time.Hour)
+		} else {
+			winStart = startToday.Add(-24 * time.Hour)
+			winEnd = endToday
+		}
+	}
+
+	inside := (now.Equal(winStart) || now.After(winStart)) && now.Before(winEnd)
+	return inside, nil
+}
+
+// cliUsagePercent calculates filesystem usage percent using statfs.
+func cliUsagePercent(p string) (float64, error) {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(p, &st); err != nil {
+		return 0, fmt.Errorf("failed to statfs %q: %w", p, err)
+	}
+	if st.Blocks == 0 {
+		return 0, nil
+	}
+	used := float64(st.Blocks-st.Bavail) / float64(st.Blocks)
+	return used * 100.0, nil
+}
+
+// cliExpandStorageRefs expands storage IDs and group names into storage IDs.
+func cliExpandStorageRefs(storageByID map[string]config.StoragePath, groups map[string][]string, paths []string, groupNames []string) ([]string, error) {
+	in := []string{}
+	in = append(in, paths...)
+	in = append(in, groupNames...)
+
+	out := []string{}
+	seen := map[string]struct{}{}
+	for _, id := range in {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := storageByID[id]; ok {
+			if _, dup := seen[id]; !dup {
+				seen[id] = struct{}{}
+				out = append(out, id)
+			}
+			continue
+		}
+		if members, ok := groups[id]; ok {
+			for _, m := range members {
+				m = strings.TrimSpace(m)
+				if m == "" {
+					continue
+				}
+				if _, ok := storageByID[m]; !ok {
+					return nil, &errkind.InvalidError{Msg: fmt.Sprintf("config: storage_groups %q references unknown storage id %q", id, m)}
+				}
+				if _, dup := seen[m]; dup {
+					continue
+				}
+				seen[m] = struct{}{}
+				out = append(out, m)
+			}
+			continue
+		}
+		return nil, &errkind.NotFoundError{Msg: fmt.Sprintf("unknown storage id or group: %s", id)}
+	}
+	return out, nil
 }
 
 // printMoveHeader prints a short human-readable header before moving.

@@ -256,6 +256,144 @@ mounts:
 	require.Contains(t, stdout, "Done")
 }
 
+// TestMove_noCandidates_shouldReturnNoChanges verifies an empty source results in ExitNoChanges and concise output.
+func TestMove_noCandidates_shouldReturnNoChanges(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+
+	cfg := writeTempConfig(t, `
+mounts:
+  media:
+    mountpoint: "/mnt/pfs/media"
+    storage_paths:
+      - id: "ssd1"
+        path: "`+src+`"
+        indexed: false
+      - id: "hdd1"
+        path: "`+dst+`"
+        indexed: false
+    routing_rules:
+      - match: "**"
+        targets: ["ssd1"]
+    mover:
+      enabled: true
+      jobs:
+        - name: "archive"
+          trigger:
+            type: manual
+          source:
+            paths: ["ssd1"]
+            patterns: ["library/**"]
+          destination:
+            paths: ["hdd1"]
+            policy: first_found
+          delete_source: true
+          verify: false
+`)
+
+	code, stdout, stderr := runCLI(t, []string{"--config", cfg, "move", "media", "--job", "archive"})
+	require.Equal(t, ExitNoChanges, code)
+	require.Empty(t, stderr)
+	require.Contains(t, stdout, "pfs move: mount=media")
+	require.Contains(t, stdout, "nothing to move")
+	require.NotContains(t, stdout, "Summary")
+}
+
+// TestMove_usageThresholdNotMet_shouldReturnNoChangesWithReason verifies usage-trigger jobs skipped by threshold_start report a skip reason.
+func TestMove_usageThresholdNotMet_shouldReturnNoChangesWithReason(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+
+	cfg := writeTempConfig(t, `
+mounts:
+  media:
+    mountpoint: "/mnt/pfs/media"
+    storage_paths:
+      - id: "ssd1"
+        path: "`+src+`"
+        indexed: false
+      - id: "hdd1"
+        path: "`+dst+`"
+        indexed: false
+    routing_rules:
+      - match: "**"
+        targets: ["ssd1"]
+    mover:
+      enabled: true
+      jobs:
+        - name: "archive"
+          trigger:
+            type: usage
+            threshold_start: 101
+            threshold_stop: 100
+          source:
+            paths: ["ssd1"]
+            patterns: ["library/**"]
+          destination:
+            paths: ["hdd1"]
+            policy: first_found
+          delete_source: true
+          verify: false
+`)
+
+	code, stdout, stderr := runCLI(t, []string{"--config", cfg, "move", "media", "--job", "archive"})
+	require.Equal(t, ExitNoChanges, code)
+	require.Empty(t, stderr)
+	require.Contains(t, stdout, "pfs move: mount=media")
+	require.Contains(t, stdout, "Skipped:")
+	require.Contains(t, stdout, "usage below threshold_start")
+	require.NotContains(t, stdout, "Summary")
+}
+
+// TestMove_outsideAllowedWindow_shouldReturnNoChangesWithReason verifies usage-trigger jobs skipped by allowed_window report a skip reason.
+func TestMove_outsideAllowedWindow_shouldReturnNoChangesWithReason(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+
+	cfg := writeTempConfig(t, `
+mounts:
+  media:
+    mountpoint: "/mnt/pfs/media"
+    storage_paths:
+      - id: "ssd1"
+        path: "`+src+`"
+        indexed: false
+      - id: "hdd1"
+        path: "`+dst+`"
+        indexed: false
+    routing_rules:
+      - match: "**"
+        targets: ["ssd1"]
+    mover:
+      enabled: true
+      jobs:
+        - name: "archive"
+          trigger:
+            type: usage
+            threshold_start: 0
+            threshold_stop: 0
+            allowed_window:
+              start: "00:00"
+              end: "00:00"
+          source:
+            paths: ["ssd1"]
+            patterns: ["library/**"]
+          destination:
+            paths: ["hdd1"]
+            policy: first_found
+          delete_source: true
+          verify: false
+`)
+
+	code, stdout, stderr := runCLI(t, []string{"--config", cfg, "move", "media", "--job", "archive"})
+	require.Equal(t, ExitNoChanges, code)
+	require.Empty(t, stderr)
+	require.Contains(t, stdout, "pfs move: mount=media")
+	require.Contains(t, stdout, "Skipped:")
+	require.Contains(t, stdout, "outside allowed_window")
+	require.NotContains(t, stdout, "Summary")
+}
+
 // TestMove_quiet_shouldSuppressAllOutput verifies --quiet suppresses all stdout output on success.
 func TestMove_quiet_shouldSuppressAllOutput(t *testing.T) {
 	src := t.TempDir()

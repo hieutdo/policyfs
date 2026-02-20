@@ -75,6 +75,63 @@ func TestPrintPruneSummary_Quiet_shouldPrintNothing(t *testing.T) {
 	require.Empty(t, buf.String())
 }
 
+// TestPrune_noEvents_shouldReturnNoChanges verifies a mount with no events returns ExitNoChanges.
+func TestPrune_noEvents_shouldReturnNoChanges(t *testing.T) {
+	src := t.TempDir()
+
+	cfg := writeTempConfig(t, `
+mounts:
+  media:
+    mountpoint: "/mnt/pfs/media"
+    storage_paths:
+      - id: "ssd1"
+        path: "`+src+`"
+        indexed: false
+    routing_rules:
+      - match: "**"
+        targets: ["ssd1"]
+`)
+
+	code, stdout, stderr := runCLI(t, []string{"--config", cfg, "prune", "media"})
+	require.Equal(t, ExitNoChanges, code)
+	require.Empty(t, stderr)
+	require.Contains(t, stdout, "pfs prune: mount=media")
+	require.Contains(t, stdout, "nothing to prune")
+}
+
+// TestPrune_allNoEvents_shouldReturnNoChanges verifies --all with no events on any mount returns ExitNoChanges.
+func TestPrune_allNoEvents_shouldReturnNoChanges(t *testing.T) {
+	src1 := t.TempDir()
+	src2 := t.TempDir()
+
+	cfg := writeTempConfig(t, `
+mounts:
+  media:
+    mountpoint: "/mnt/pfs/media"
+    storage_paths:
+      - id: "ssd1"
+        path: "`+src1+`"
+        indexed: false
+    routing_rules:
+      - match: "**"
+        targets: ["ssd1"]
+  photos:
+    mountpoint: "/mnt/pfs/photos"
+    storage_paths:
+      - id: "ssd2"
+        path: "`+src2+`"
+        indexed: false
+    routing_rules:
+      - match: "**"
+        targets: ["ssd2"]
+`)
+
+	code, stdout, stderr := runCLI(t, []string{"--config", cfg, "prune", "--all"})
+	require.Equal(t, ExitNoChanges, code)
+	require.Empty(t, stderr)
+	require.Contains(t, stdout, "nothing to prune")
+}
+
 // TestPruneOneshot_Busy_shouldReturnExitBusy verifies ErrBusy maps to ExitBusy in the CLI wrapper.
 func TestPruneOneshot_Busy_shouldReturnExitBusy(t *testing.T) {
 	runtimeDir := filepath.Join(t.TempDir(), "runtime")
