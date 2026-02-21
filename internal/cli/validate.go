@@ -19,6 +19,22 @@ type usageError struct {
 	err error
 }
 
+// mountConfigError is a mount-scoped configuration validation error returned by validateConfigAll.
+//
+// It exists so callers can group errors by mount without parsing error strings.
+type mountConfigError struct {
+	Mount string
+	Msg   string
+}
+
+// Error formats the validation error in the same stable shape used elsewhere.
+func (e *mountConfigError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return fmt.Sprintf("config: mount %q: %s", e.Mount, e.Msg)
+}
+
 // Error formats a usage error.
 func (e *usageError) Error() string {
 	return e.err.Error()
@@ -111,13 +127,13 @@ func validateConfigAll(c *config.RootConfig) []error {
 			errList = append(errList, errors.New("config: mount name must not be empty"))
 		}
 		if m.MountPoint == "" {
-			errList = append(errList, fmt.Errorf("config: mount %q: mountpoint is required", mountName))
+			errList = append(errList, &mountConfigError{Mount: mountName, Msg: "mountpoint is required"})
 		}
 		if len(m.StoragePaths) == 0 {
-			errList = append(errList, fmt.Errorf("config: mount %q: storage_paths must not be empty", mountName))
+			errList = append(errList, &mountConfigError{Mount: mountName, Msg: "storage_paths must not be empty"})
 		}
 		if len(m.RoutingRules) == 0 {
-			errList = append(errList, fmt.Errorf("config: mount %q: routing_rules must not be empty", mountName))
+			errList = append(errList, &mountConfigError{Mount: mountName, Msg: "routing_rules must not be empty"})
 		}
 		if len(m.RoutingRules) > 0 {
 			normalizeMatch := func(p string) string {
@@ -136,20 +152,20 @@ func validateConfigAll(c *config.RootConfig) []error {
 			catchAllIdx := []int{}
 			for i, r := range m.RoutingRules {
 				if r.Match == "" {
-					errList = append(errList, fmt.Errorf("config: mount %q: routing_rules[%d].match is required", mountName, i))
+					errList = append(errList, &mountConfigError{Mount: mountName, Msg: fmt.Sprintf("routing_rules[%d].match is required", i)})
 				}
 				if isCatchAll(r.Match) {
 					catchAllIdx = append(catchAllIdx, i)
 				}
 			}
 			if len(catchAllIdx) == 0 {
-				errList = append(errList, fmt.Errorf("config: mount %q: missing catch-all rule '**'", mountName))
+				errList = append(errList, &mountConfigError{Mount: mountName, Msg: "missing catch-all rule '**'"})
 			} else {
 				if len(catchAllIdx) > 1 {
-					errList = append(errList, fmt.Errorf("config: mount %q: multiple catch-all rules '**'", mountName))
+					errList = append(errList, &mountConfigError{Mount: mountName, Msg: "multiple catch-all rules '**'"})
 				}
 				if catchAllIdx[len(catchAllIdx)-1] != len(m.RoutingRules)-1 {
-					errList = append(errList, fmt.Errorf("config: mount %q: catch-all rule '**' must be last", mountName))
+					errList = append(errList, &mountConfigError{Mount: mountName, Msg: "catch-all rule '**' must be last"})
 				}
 			}
 		}
@@ -157,16 +173,16 @@ func validateConfigAll(c *config.RootConfig) []error {
 		storageIDs := map[string]struct{}{}
 		for i, sp := range m.StoragePaths {
 			if sp.ID == "" {
-				errList = append(errList, fmt.Errorf("config: mount %q: storage_paths[%d].id is required", mountName, i))
+				errList = append(errList, &mountConfigError{Mount: mountName, Msg: fmt.Sprintf("storage_paths[%d].id is required", i)})
 				continue
 			}
 			if _, ok := storageIDs[sp.ID]; ok {
-				errList = append(errList, fmt.Errorf("config: mount %q: duplicate storage_paths id %q", mountName, sp.ID))
+				errList = append(errList, &mountConfigError{Mount: mountName, Msg: fmt.Sprintf("duplicate storage_paths id %q", sp.ID)})
 				continue
 			}
 			storageIDs[sp.ID] = struct{}{}
 			if sp.Path == "" {
-				errList = append(errList, fmt.Errorf("config: mount %q: storage_paths[%d].path is required", mountName, i))
+				errList = append(errList, &mountConfigError{Mount: mountName, Msg: fmt.Sprintf("storage_paths[%d].path is required", i)})
 			}
 		}
 
@@ -179,13 +195,13 @@ func validateConfigAll(c *config.RootConfig) []error {
 		for _, g := range groupNames {
 			members := m.StorageGroups[g]
 			if g == "" {
-				errList = append(errList, fmt.Errorf("config: mount %q: storage_groups name must not be empty", mountName))
+				errList = append(errList, &mountConfigError{Mount: mountName, Msg: "storage_groups name must not be empty"})
 				continue
 			}
 			groupIDs[g] = struct{}{}
 			for _, sid := range members {
 				if _, ok := storageIDs[sid]; !ok {
-					errList = append(errList, fmt.Errorf("config: mount %q: storage_groups %q references unknown storage id %q", mountName, g, sid))
+					errList = append(errList, &mountConfigError{Mount: mountName, Msg: fmt.Sprintf("storage_groups %q references unknown storage id %q", g, sid)})
 				}
 			}
 		}
@@ -215,24 +231,24 @@ func validateConfigAll(c *config.RootConfig) []error {
 		for i, r := range m.RoutingRules {
 			for _, t := range r.Targets {
 				if !isKnownTarget(t) {
-					errList = append(errList, fmt.Errorf("config: mount %q: routing_rules[%d].targets references unknown id %q", mountName, i, t))
+					errList = append(errList, &mountConfigError{Mount: mountName, Msg: fmt.Sprintf("routing_rules[%d].targets references unknown id %q", i, t)})
 				}
 			}
 			for _, t := range r.ReadTargets {
 				if !isKnownTarget(t) {
-					errList = append(errList, fmt.Errorf("config: mount %q: routing_rules[%d].read_targets references unknown id %q", mountName, i, t))
+					errList = append(errList, &mountConfigError{Mount: mountName, Msg: fmt.Sprintf("routing_rules[%d].read_targets references unknown id %q", i, t)})
 				}
 			}
 			for _, t := range r.WriteTargets {
 				if !isKnownTarget(t) {
-					errList = append(errList, fmt.Errorf("config: mount %q: routing_rules[%d].write_targets references unknown id %q", mountName, i, t))
+					errList = append(errList, &mountConfigError{Mount: mountName, Msg: fmt.Sprintf("routing_rules[%d].write_targets references unknown id %q", i, t)})
 				}
 			}
 			if r.WritePolicy != "" {
 				switch r.WritePolicy {
 				case "first_found", "most_free", "least_free":
 				default:
-					errList = append(errList, fmt.Errorf("config: mount %q: routing_rules[%d].write_policy is invalid", mountName, i))
+					errList = append(errList, &mountConfigError{Mount: mountName, Msg: fmt.Sprintf("routing_rules[%d].write_policy is invalid", i)})
 				}
 			}
 		}
@@ -245,10 +261,10 @@ func validateConfigAll(c *config.RootConfig) []error {
 			seenJobs := map[string]struct{}{}
 			for ji, j := range m.Mover.Jobs {
 				if strings.TrimSpace(j.Name) == "" {
-					errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].name is required", mountName, ji))
+					errList = append(errList, &mountConfigError{Mount: mountName, Msg: fmt.Sprintf("mover.jobs[%d].name is required", ji)})
 				} else {
 					if _, dup := seenJobs[j.Name]; dup {
-						errList = append(errList, fmt.Errorf("config: mount %q: duplicate mover job name %q", mountName, j.Name))
+						errList = append(errList, &mountConfigError{Mount: mountName, Msg: fmt.Sprintf("duplicate mover job name %q", j.Name)})
 					}
 					seenJobs[j.Name] = struct{}{}
 				}
@@ -257,89 +273,89 @@ func validateConfigAll(c *config.RootConfig) []error {
 				switch tt {
 				case "usage", "manual":
 				default:
-					errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].trigger.type is required and must be 'usage' or 'manual'", mountName, ji))
+					errList = append(errList, &mountConfigError{Mount: mountName, Msg: fmt.Sprintf("mover.jobs[%d].trigger.type is required and must be 'usage' or 'manual'", ji)})
 				}
 				if tt == "usage" {
 					if j.Trigger.ThresholdStart < 1 || j.Trigger.ThresholdStart > 100 {
-						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].trigger.threshold_start must be 1..100", mountName, ji))
+						errList = append(errList, &mountConfigError{Mount: mountName, Msg: fmt.Sprintf("mover.jobs[%d].trigger.threshold_start must be 1..100", ji)})
 					}
 					if j.Trigger.ThresholdStop < 1 || j.Trigger.ThresholdStop > 100 {
-						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].trigger.threshold_stop must be 1..100", mountName, ji))
+						errList = append(errList, &mountConfigError{Mount: mountName, Msg: fmt.Sprintf("mover.jobs[%d].trigger.threshold_stop must be 1..100", ji)})
 					}
 					if j.Trigger.ThresholdStop >= j.Trigger.ThresholdStart {
-						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].trigger.threshold_stop must be < threshold_start", mountName, ji))
+						errList = append(errList, &mountConfigError{Mount: mountName, Msg: fmt.Sprintf("mover.jobs[%d].trigger.threshold_stop must be < threshold_start", ji)})
 					}
 				}
 
 				aw := j.Trigger.AllowedWindow
 				if aw != nil {
 					if tt != "usage" {
-						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].trigger.allowed_window is only valid for trigger.type=usage", mountName, ji))
+						errList = append(errList, &mountConfigError{Mount: mountName, Msg: fmt.Sprintf("mover.jobs[%d].trigger.allowed_window is only valid for trigger.type=usage", ji)})
 					}
 					if strings.TrimSpace(aw.Start) == "" {
-						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].trigger.allowed_window.start is required", mountName, ji))
+						errList = append(errList, &mountConfigError{Mount: mountName, Msg: fmt.Sprintf("mover.jobs[%d].trigger.allowed_window.start is required", ji)})
 					} else if _, err := time.Parse("15:04", aw.Start); err != nil {
-						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].trigger.allowed_window.start must be HH:MM", mountName, ji))
+						errList = append(errList, &mountConfigError{Mount: mountName, Msg: fmt.Sprintf("mover.jobs[%d].trigger.allowed_window.start must be HH:MM", ji)})
 					}
 					if strings.TrimSpace(aw.End) == "" {
-						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].trigger.allowed_window.end is required", mountName, ji))
+						errList = append(errList, &mountConfigError{Mount: mountName, Msg: fmt.Sprintf("mover.jobs[%d].trigger.allowed_window.end is required", ji)})
 					} else if _, err := time.Parse("15:04", aw.End); err != nil {
-						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].trigger.allowed_window.end must be HH:MM", mountName, ji))
+						errList = append(errList, &mountConfigError{Mount: mountName, Msg: fmt.Sprintf("mover.jobs[%d].trigger.allowed_window.end must be HH:MM", ji)})
 					}
 				}
 
 				if len(j.Source.Paths) == 0 && len(j.Source.Groups) == 0 {
-					errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].source.paths or source.groups is required", mountName, ji))
+					errList = append(errList, &mountConfigError{Mount: mountName, Msg: fmt.Sprintf("mover.jobs[%d].source.paths or source.groups is required", ji)})
 				}
 				for _, sid := range j.Source.Paths {
 					if !isStorageID(sid) {
-						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].source.paths references unknown id %q", mountName, ji, sid))
+						errList = append(errList, &mountConfigError{Mount: mountName, Msg: fmt.Sprintf("mover.jobs[%d].source.paths references unknown id %q", ji, sid)})
 					}
 				}
 				for _, gid := range j.Source.Groups {
 					if !isGroupID(gid) {
-						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].source.groups references unknown id %q", mountName, ji, gid))
+						errList = append(errList, &mountConfigError{Mount: mountName, Msg: fmt.Sprintf("mover.jobs[%d].source.groups references unknown id %q", ji, gid)})
 					}
 				}
 				if len(j.Source.Patterns) == 0 {
-					errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].source.patterns must not be empty", mountName, ji))
+					errList = append(errList, &mountConfigError{Mount: mountName, Msg: fmt.Sprintf("mover.jobs[%d].source.patterns must not be empty", ji)})
 				}
 				for pi, p := range j.Source.Patterns {
 					if strings.TrimSpace(p) == "" {
-						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].source.patterns[%d] must not be empty", mountName, ji, pi))
+						errList = append(errList, &mountConfigError{Mount: mountName, Msg: fmt.Sprintf("mover.jobs[%d].source.patterns[%d] must not be empty", ji, pi)})
 					}
 				}
 
 				if len(j.Destination.Paths) == 0 && len(j.Destination.Groups) == 0 {
-					errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].destination.paths or destination.groups is required", mountName, ji))
+					errList = append(errList, &mountConfigError{Mount: mountName, Msg: fmt.Sprintf("mover.jobs[%d].destination.paths or destination.groups is required", ji)})
 				}
 				for _, sid := range j.Destination.Paths {
 					if !isStorageID(sid) {
-						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].destination.paths references unknown id %q", mountName, ji, sid))
+						errList = append(errList, &mountConfigError{Mount: mountName, Msg: fmt.Sprintf("mover.jobs[%d].destination.paths references unknown id %q", ji, sid)})
 					}
 				}
 				for _, gid := range j.Destination.Groups {
 					if !isGroupID(gid) {
-						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].destination.groups references unknown id %q", mountName, ji, gid))
+						errList = append(errList, &mountConfigError{Mount: mountName, Msg: fmt.Sprintf("mover.jobs[%d].destination.groups references unknown id %q", ji, gid)})
 					}
 				}
 				switch strings.TrimSpace(j.Destination.Policy) {
 				case "", "first_found", "most_free", "least_free":
 				default:
-					errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].destination.policy is invalid", mountName, ji))
+					errList = append(errList, &mountConfigError{Mount: mountName, Msg: fmt.Sprintf("mover.jobs[%d].destination.policy is invalid", ji)})
 				}
 
 				var minSizeBytes *int64
 				var maxSizeBytes *int64
 				if strings.TrimSpace(j.Conditions.MinAge) != "" {
 					if _, err := humanfmt.ParseDuration(j.Conditions.MinAge); err != nil {
-						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].conditions.min_age is invalid", mountName, ji))
+						errList = append(errList, &mountConfigError{Mount: mountName, Msg: fmt.Sprintf("mover.jobs[%d].conditions.min_age is invalid", ji)})
 					}
 				}
 				if strings.TrimSpace(j.Conditions.MinSize) != "" {
 					v, err := humanfmt.ParseBytes(j.Conditions.MinSize)
 					if err != nil {
-						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].conditions.min_size is invalid", mountName, ji))
+						errList = append(errList, &mountConfigError{Mount: mountName, Msg: fmt.Sprintf("mover.jobs[%d].conditions.min_size is invalid", ji)})
 					} else {
 						minSizeBytes = &v
 					}
@@ -347,13 +363,13 @@ func validateConfigAll(c *config.RootConfig) []error {
 				if strings.TrimSpace(j.Conditions.MaxSize) != "" {
 					v, err := humanfmt.ParseBytes(j.Conditions.MaxSize)
 					if err != nil {
-						errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].conditions.max_size is invalid", mountName, ji))
+						errList = append(errList, &mountConfigError{Mount: mountName, Msg: fmt.Sprintf("mover.jobs[%d].conditions.max_size is invalid", ji)})
 					} else {
 						maxSizeBytes = &v
 					}
 				}
 				if minSizeBytes != nil && maxSizeBytes != nil && *minSizeBytes > *maxSizeBytes {
-					errList = append(errList, fmt.Errorf("config: mount %q: mover.jobs[%d].conditions.min_size must be <= max_size", mountName, ji))
+					errList = append(errList, &mountConfigError{Mount: mountName, Msg: fmt.Sprintf("mover.jobs[%d].conditions.min_size must be <= max_size", ji)})
 				}
 			}
 		}

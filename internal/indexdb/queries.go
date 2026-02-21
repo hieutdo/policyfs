@@ -5,11 +5,97 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 
+	"github.com/hieutdo/policyfs/internal/config"
 	"github.com/hieutdo/policyfs/internal/errkind"
 )
+
+// IndexerStateRow holds summary stats from the indexer_state table.
+type IndexerStateRow struct {
+	StorageID      string
+	CurrentRunID   int64
+	LastCompleted  *int64 // unix timestamp, nil if never completed
+	LastDurationMS *int64
+	FileCount      *int64
+	TotalBytes     *int64
+}
+
+// QueryIndexerState opens the index DB read-only and returns indexer_state for a storage.
+// Returns nil (no error) if the DB file does not exist or the storage has no row.
+func QueryIndexerState(mountName string, storageID string) (*IndexerStateRow, error) {
+	if strings.TrimSpace(mountName) == "" {
+		return nil, &errkind.RequiredError{What: "mount name"}
+	}
+	if strings.TrimSpace(storageID) == "" {
+		return nil, &errkind.RequiredError{What: "storage id"}
+	}
+
+	dbPath := filepath.Join(config.MountStateDir(mountName), "index.db")
+	if _, err := os.Stat(dbPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to stat index db: %w", err)
+	}
+
+	dsn := fmt.Sprintf("file:%s?mode=ro&_busy_timeout=%d", dbPath, busyTimeoutMS)
+	conn, err := sql.Open("sqlite3", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open index db: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	row := conn.QueryRowContext(context.Background(),
+		`SELECT current_run_id, last_completed, last_duration_ms, file_count, total_bytes
+		 FROM indexer_state WHERE storage_id = ?;`, storageID)
+
+	var r IndexerStateRow
+	r.StorageID = storageID
+	if err := row.Scan(&r.CurrentRunID, &r.LastCompleted, &r.LastDurationMS, &r.FileCount, &r.TotalBytes); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to query indexer_state: %w", err)
+	}
+	return &r, nil
+}
+
+// QueryStaleCount returns the number of stale (deleted=2) files for a storage.
+// Returns 0 if the DB file does not exist.
+func QueryStaleCount(mountName string, storageID string) (int64, error) {
+	if strings.TrimSpace(mountName) == "" {
+		return 0, &errkind.RequiredError{What: "mount name"}
+	}
+	if strings.TrimSpace(storageID) == "" {
+		return 0, &errkind.RequiredError{What: "storage id"}
+	}
+
+	dbPath := filepath.Join(config.MountStateDir(mountName), "index.db")
+	if _, err := os.Stat(dbPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("failed to stat index db: %w", err)
+	}
+
+	dsn := fmt.Sprintf("file:%s?mode=ro&_busy_timeout=%d", dbPath, busyTimeoutMS)
+	conn, err := sql.Open("sqlite3", dsn)
+	if err != nil {
+		return 0, fmt.Errorf("failed to open index db: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	var count int64
+	if err := conn.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM files WHERE storage_id = ? AND deleted = 2;`, storageID).Scan(&count); err != nil {
+		return 0, fmt.Errorf("failed to count stale files: %w", err)
+	}
+	return count, nil
+}
 
 // File describes one indexed filesystem entry.
 type File struct {

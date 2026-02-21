@@ -23,10 +23,7 @@ func renderProgressBar(width int, done int64, total int64) string {
 		done = total
 	}
 
-	filled := max(int(float64(width)*float64(done)/float64(total)), 0)
-	if filled > width {
-		filled = width
-	}
+	filled := min(max(int(float64(width)*float64(done)/float64(total)), 0), width)
 
 	return strings.Repeat("█", filled) + strings.Repeat("░", width-filled)
 }

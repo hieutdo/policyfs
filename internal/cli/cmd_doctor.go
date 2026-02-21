@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
+	"slices"
+	"sort"
 
 	"github.com/spf13/cobra"
 )
@@ -17,9 +20,11 @@ func newDoctorCmd(configPath *string) *cobra.Command {
 
 Checks include:
   - Configuration file syntax and structure
-  - Storage path references and groups
-  - Routing rule validity and catch-all presence
-  - Mount-specific validation (if mount name provided)
+  - Storage path accessibility and free space
+  - Mount daemon and lock status
+  - Index stats (last indexed, file count, size)
+  - Pending deferred events (DELETE/RENAME/SETATTR)
+  - Disk access analysis (top processes and storages)
 
 Exit codes:
   0  - All checks passed
@@ -34,14 +39,14 @@ Exit codes:
 					Code:     ExitUsage,
 					Cmd:      "doctor",
 					Headline: "invalid arguments",
-					Cause:    fmt.Errorf("requires at most 1 argument: none or <mount>"),
+					Cause:    errors.New("requires at most 1 argument: none or <mount>"),
 					Hint:     "run 'pfs doctor --help'",
 				}
 			}
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var mountName *string
+			var filterMount *string
 			if len(args) == 1 {
 				m := args[0]
 				if err := validateMountName(m); err != nil {
@@ -57,7 +62,6 @@ Exit codes:
 					if jsonOut {
 						return emitJSONAndExit(ExitUsage, env)
 					}
-					fmt.Fprintln(cmd.OutOrStdout(), "FAIL")
 					return &CLIError{
 						Code:     ExitUsage,
 						Cmd:      "doctor",
@@ -66,58 +70,173 @@ Exit codes:
 						Hint:     "run 'pfs doctor --help'",
 					}
 				}
-				mountName = &m
+				filterMount = &m
 			}
-			cfg := *configPath
-			scope := &JSONScope{Mount: mountName, Config: &cfg}
 
-			rootCfg, err := loadRootConfig(*configPath)
-			if err != nil {
+			cfgPath := *configPath
+			stdout := cmd.OutOrStdout()
+
+			// --- Build report ---
+			report := doctorReport{ConfigPath: cfgPath}
+
+			// 1. Load config.
+			rootCfg, loadErr := loadRootConfig(cfgPath)
+			report.ConfigChecks = append(report.ConfigChecks, checkConfigLoaded(cfgPath, loadErr))
+
+			if loadErr != nil {
+				report.IssueCount++
+
 				if jsonOut {
+					scope := &JSONScope{Mount: filterMount, Config: &cfgPath}
 					env := JSONEnvelope{
 						Command:  "doctor",
 						OK:       false,
 						Scope:    scope,
 						Warnings: []JSONIssue{},
-						Errors:   []JSONIssue{jsonIssueFromConfigLoadError(*configPath, err)},
+						Errors:   []JSONIssue{jsonIssueFromConfigLoadError(cfgPath, loadErr)},
 					}
 					return emitJSONAndExit(ExitFail, env)
 				}
-				fmt.Fprintln(cmd.OutOrStdout(), "FAIL")
-				return newConfigLoadCLIError("doctor", *configPath, err)
+
+				printDoctorReport(stdout, report)
+				return &CLIError{Code: ExitDoctorFail, Silent: true}
 			}
 
+			// 2. Validate config — per-mount checks.
 			validateErrs := validateConfigAll(rootCfg)
-			issues := make([]JSONIssue, 0, len(validateErrs))
-			for _, e := range validateErrs {
-				issues = append(issues, JSONIssue{Message: rootCause(e).Error()})
-			}
 
-			if len(issues) == 0 && mountName != nil {
-				if _, _, err := resolveMount(rootCfg, *mountName); err != nil {
+			// Collect mount names in sorted order.
+			mountNames := make([]string, 0, len(rootCfg.Mounts))
+			for name := range rootCfg.Mounts {
+				mountNames = append(mountNames, name)
+			}
+			sort.Strings(mountNames)
+
+			// If a specific mount was requested, validate it exists.
+			if filterMount != nil {
+				found := slices.Contains(mountNames, *filterMount)
+				if !found {
 					if jsonOut {
+						scope := &JSONScope{Mount: filterMount, Config: &cfgPath}
 						env := JSONEnvelope{
 							Command:  "doctor",
 							OK:       false,
 							Scope:    scope,
 							Warnings: []JSONIssue{},
-							Errors:   []JSONIssue{jsonIssueFromError("ARG_MOUNT", err, "run 'pfs doctor --help'")},
+							Errors:   []JSONIssue{jsonIssueFromError("ARG_MOUNT", fmt.Errorf("mount %q not found", *filterMount), "run 'pfs doctor --help'")},
 						}
 						return emitJSONAndExit(ExitUsage, env)
 					}
-					fmt.Fprintln(cmd.OutOrStdout(), "FAIL")
 					return &CLIError{
 						Code:     ExitUsage,
 						Cmd:      "doctor",
 						Headline: "invalid arguments",
-						Cause:    rootCause(err),
+						Cause:    fmt.Errorf("mount %q not found", *filterMount),
 						Hint:     "run 'pfs doctor --help'",
+					}
+				}
+				mountNames = []string{*filterMount}
+			}
+
+			// Per-mount config checks.
+			for _, name := range mountNames {
+				checks := configChecksForMount(name, validateErrs)
+				report.ConfigChecks = append(report.ConfigChecks, checks...)
+			}
+
+			// Count config issues.
+			for _, c := range report.ConfigChecks {
+				if !c.Pass {
+					report.IssueCount++
+				}
+			}
+
+			// Determine which mounts have valid config.
+			mountValid := map[string]bool{}
+			for _, name := range mountNames {
+				mountValid[name] = true
+			}
+			for _, e := range validateErrs {
+				var me *mountConfigError
+				if errors.As(e, &me) && me != nil {
+					if _, ok := mountValid[me.Mount]; ok {
+						mountValid[me.Mount] = false
 					}
 				}
 			}
 
-			ok := len(issues) == 0
+			// 3. Per-mount runtime checks.
+			for _, name := range mountNames {
+				m := mountReport{
+					Name:        name,
+					ConfigValid: mountValid[name],
+				}
+
+				if !m.ConfigValid {
+					report.Mounts = append(report.Mounts, m)
+					continue
+				}
+
+				mountCfg := rootCfg.Mounts[name]
+				logPath := resolveDoctorLogFilePath(name, rootCfg.Log)
+
+				// Status probes.
+				m.Daemon = checkDaemonLock(name)
+				m.Mountpoint = checkMountpointAccessible(mountCfg.MountPoint)
+				m.JobLock = checkJobLock(name)
+
+				// Files (informational).
+				m.IndexDB = checkIndexDBFile(name)
+				m.LogFile = checkLogFile(logPath)
+
+				// Systemd timers (best-effort).
+				m.SystemdTimers = querySystemdTimers(name)
+
+				// Storage checks (informational — does not affect exit code).
+				for _, sp := range mountCfg.StoragePaths {
+					m.Storages = append(m.Storages, checkStorage(sp))
+				}
+
+				// Index stats for indexed storages.
+				for _, sp := range mountCfg.StoragePaths {
+					if !sp.Indexed {
+						continue
+					}
+					if stats := queryIndexStats(name, sp.ID); stats != nil {
+						m.IndexStats = append(m.IndexStats, *stats)
+					}
+				}
+
+				// Pending events.
+				if pe, err := countPendingEvents(name, 1000); err == nil && pe != nil {
+					m.PendingEvents = pe
+				}
+
+				// Disk access.
+				if da, err := analyzeDiskAccess(logPath, 1000); err == nil && da != nil {
+					m.DiskAccess = da
+				}
+
+				report.Mounts = append(report.Mounts, m)
+			}
+
+			// 4. Suggestions.
+			report.Suggestions = generateSuggestions(&report)
+
+			// 5. Output.
 			if jsonOut {
+				issues := make([]JSONIssue, 0)
+				for _, c := range report.ConfigChecks {
+					if !c.Pass {
+						msg := c.Name
+						if c.Detail != "" {
+							msg += ": " + c.Detail
+						}
+						issues = append(issues, JSONIssue{Message: msg})
+					}
+				}
+				ok := report.IssueCount == 0
+				scope := &JSONScope{Mount: filterMount, Config: &cfgPath}
 				env := JSONEnvelope{
 					Command:  "doctor",
 					OK:       ok,
@@ -140,21 +259,12 @@ Exit codes:
 				return emitJSONAndExit(ExitDoctorFail, env)
 			}
 
-			if ok {
-				fmt.Fprintln(cmd.OutOrStdout(), "OK")
-				return nil
-			}
+			printDoctorReport(stdout, report)
 
-			fmt.Fprintln(cmd.OutOrStdout(), "FAIL")
-			for _, issue := range issues {
-				fmt.Fprintln(cmd.OutOrStdout(), issue.Message)
+			if report.IssueCount > 0 {
+				return &CLIError{Code: ExitDoctorFail, Silent: true}
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%d issues.\n", len(issues))
-
-			return &CLIError{
-				Code:   ExitDoctorFail,
-				Silent: true,
-			}
+			return nil
 		},
 	}
 

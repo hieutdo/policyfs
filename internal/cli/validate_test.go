@@ -68,12 +68,12 @@ mounts:
 	require.Equal(t, ExitDoctorFail, code)
 	require.Empty(t, stderr)
 
-	idxA := strings.Index(stdout, "config: mount \"aaa\": mountpoint is required\n")
-	idxZ := strings.Index(stdout, "config: mount \"zzz\": mountpoint is required\n")
+	idxA := strings.Index(stdout, "Mount \"aaa\":")
+	idxZ := strings.Index(stdout, "Mount \"zzz\":")
 	require.NotEqual(t, -1, idxA)
 	require.NotEqual(t, -1, idxZ)
 	require.True(t, idxA < idxZ)
-	require.Contains(t, stdout, "6 issues.\n")
+	require.Contains(t, stdout, "6 issues")
 }
 
 // TestDoctor_MultipleCatchAll_shouldReportIssue verifies config validation rejects multiple catch-all rules.
@@ -95,5 +95,5 @@ mounts:
 	code, stdout, stderr := runCLI(t, []string{"--config", cfg, "doctor"})
 	require.Equal(t, ExitDoctorFail, code)
 	require.Empty(t, stderr)
-	require.Contains(t, stdout, "config: mount \"media\": multiple catch-all rules '**'\n")
+	require.Contains(t, stdout, "multiple catch-all rules '**'")
 }
