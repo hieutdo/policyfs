@@ -259,10 +259,7 @@ func RunOneshot(ctx context.Context, mountName string, mountCfg *config.MountCon
 	}
 
 	moved := int64(0)
-	limit := int64(opts.Limit)
-	if limit <= 0 {
-		limit = 0
-	}
+	limit := max(int64(opts.Limit), 0)
 
 	for _, j := range jobs {
 		if limit > 0 && moved >= limit {

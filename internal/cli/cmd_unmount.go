@@ -106,14 +106,12 @@ func isMountpointMounted(mountPoint string) (mounted bool, supported bool, err e
 	if err == nil {
 		return true, true, nil
 	}
-	var execErr *exec.Error
-	if errors.As(err, &execErr) {
+	if execErr, ok := errors.AsType[*exec.Error](err); ok {
 		if errors.Is(execErr.Err, exec.ErrNotFound) {
 			return false, false, nil
 		}
 	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
+	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 		switch exitErr.ExitCode() {
 		case 1, 32:
 			return false, true, nil
@@ -140,8 +138,8 @@ func isMountpointMountedProc(mountPoint string) (mounted bool, supported bool, e
 		return false, true, fmt.Errorf("failed to read mountinfo: %w", err)
 	}
 
-	lines := strings.Split(string(b), "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(string(b), "\n")
+	for line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -211,8 +209,7 @@ func unmountMountpoint(ctx context.Context, mountPoint string) (succeeded bool, 
 		}
 		c := exec.CommandContext(ctx, p, args...)
 		if err := c.Run(); err != nil {
-			var exitErr *exec.ExitError
-			if errors.As(err, &exitErr) {
+			if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 				if exitErr.ExitCode() == 32 {
 					succeeded = true
 					return true

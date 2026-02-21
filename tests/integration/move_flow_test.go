@@ -15,11 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// boolPtr returns a pointer to v.
-func boolPtr(v bool) *bool {
-	return &v
-}
-
 // TestMove_shouldMoveFromNonIndexedToIndexed_andMountShouldExposeWithoutIndex verifies that moving a file
 // into an indexed destination upserts the indexdb entries (including directory chain) so the running mount
 // exposes the file immediately without an index run.
@@ -33,7 +28,7 @@ func TestMove_shouldMoveFromNonIndexedToIndexed_andMountShouldExposeWithoutIndex
 	content := []byte("hello-move")
 
 	mv := &config.MoverConfig{
-		Enabled: boolPtr(true),
+		Enabled: new(true),
 		Jobs: []config.MoverJobConfig{
 			{
 				Name:        jobName,
@@ -51,8 +46,8 @@ func TestMove_shouldMoveFromNonIndexedToIndexed_andMountShouldExposeWithoutIndex
 					PathPreserving: true,
 				},
 				Conditions:   config.MoverConditionsConfig{},
-				DeleteSource: boolPtr(true),
-				Verify:       boolPtr(true),
+				DeleteSource: new(true),
+				Verify:       new(true),
 			},
 		},
 	}
@@ -122,7 +117,7 @@ func TestMove_deleteEmptyDir_nonIndexed_shouldRemoveEmptySourceDirs(t *testing.T
 	rel := filepath.Join("library", "a", "b", "c", "x.txt")
 
 	mv := &config.MoverConfig{
-		Enabled: boolPtr(true),
+		Enabled: new(true),
 		Jobs: []config.MoverJobConfig{
 			{
 				Name:        jobName,
@@ -136,9 +131,9 @@ func TestMove_deleteEmptyDir_nonIndexed_shouldRemoveEmptySourceDirs(t *testing.T
 					Paths:  []string{"hdd1"},
 					Policy: "first_found",
 				},
-				DeleteSource:   boolPtr(true),
-				DeleteEmptyDir: boolPtr(true),
-				Verify:         boolPtr(false),
+				DeleteSource:   new(true),
+				DeleteEmptyDir: new(true),
+				Verify:         new(false),
 			},
 		},
 	}
@@ -174,7 +169,7 @@ func TestMove_debug_shouldPrintCandidates(t *testing.T) {
 	jobName := "archive"
 
 	mv := &config.MoverConfig{
-		Enabled: boolPtr(true),
+		Enabled: new(true),
 		Jobs: []config.MoverJobConfig{
 			{
 				Name:        jobName,
@@ -188,8 +183,8 @@ func TestMove_debug_shouldPrintCandidates(t *testing.T) {
 					Paths:  []string{"hdd1"},
 					Policy: "first_found",
 				},
-				DeleteSource: boolPtr(false),
-				Verify:       boolPtr(false),
+				DeleteSource: new(false),
+				Verify:       new(false),
 			},
 		},
 	}
@@ -227,7 +222,7 @@ func TestMove_dryRun_shouldNotChangeFilesystemOrDB(t *testing.T) {
 	content := []byte("hello-move-dry")
 
 	mv := &config.MoverConfig{
-		Enabled: boolPtr(true),
+		Enabled: new(true),
 		Jobs: []config.MoverJobConfig{
 			{
 				Name:        jobName,
@@ -245,8 +240,8 @@ func TestMove_dryRun_shouldNotChangeFilesystemOrDB(t *testing.T) {
 					PathPreserving: true,
 				},
 				Conditions:   config.MoverConditionsConfig{},
-				DeleteSource: boolPtr(true),
-				Verify:       boolPtr(true),
+				DeleteSource: new(true),
+				Verify:       new(true),
 			},
 		},
 	}
@@ -295,7 +290,7 @@ func TestMove_fromIndexedSource_shouldMarkDeletedAndAppendEventlog(t *testing.T)
 	content := []byte("indexed-source-move")
 
 	mv := &config.MoverConfig{
-		Enabled: boolPtr(true),
+		Enabled: new(true),
 		Jobs: []config.MoverJobConfig{
 			{
 				Name:        jobName,
@@ -309,8 +304,8 @@ func TestMove_fromIndexedSource_shouldMarkDeletedAndAppendEventlog(t *testing.T)
 					Paths:  []string{"hdd1"},
 					Policy: "first_found",
 				},
-				DeleteSource: boolPtr(true),
-				Verify:       boolPtr(true),
+				DeleteSource: new(true),
+				Verify:       new(true),
 			},
 		},
 	}
@@ -380,7 +375,7 @@ func TestMove_limit_shouldMoveOnlyNFiles(t *testing.T) {
 	jobName := "archive"
 
 	mv := &config.MoverConfig{
-		Enabled: boolPtr(true),
+		Enabled: new(true),
 		Jobs: []config.MoverJobConfig{
 			{
 				Name:        jobName,
@@ -394,8 +389,8 @@ func TestMove_limit_shouldMoveOnlyNFiles(t *testing.T) {
 					Paths:  []string{"hdd1"},
 					Policy: "first_found",
 				},
-				DeleteSource: boolPtr(true),
-				Verify:       boolPtr(false),
+				DeleteSource: new(true),
+				Verify:       new(false),
 			},
 		},
 	}

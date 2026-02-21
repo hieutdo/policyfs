@@ -31,8 +31,8 @@ func (e *usageError) Unwrap() error {
 
 // isUsageError checks whether an error represents a CLI usage error.
 func isUsageError(err error) bool {
-	var ue *usageError
-	return errors.As(err, &ue)
+	_, ok := errors.AsType[*usageError](err)
+	return ok
 }
 
 // validateMountName validates a CLI mount name argument.

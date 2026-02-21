@@ -23,10 +23,7 @@ func renderProgressBar(width int, done int64, total int64) string {
 		done = total
 	}
 
-	filled := int(float64(width) * float64(done) / float64(total))
-	if filled < 0 {
-		filled = 0
-	}
+	filled := max(int(float64(width)*float64(done)/float64(total)), 0)
 	if filled > width {
 		filled = width
 	}

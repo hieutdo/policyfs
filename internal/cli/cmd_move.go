@@ -592,10 +592,7 @@ func printMoveCancelSummary(w io.Writer, res mover.Result, totalCandidates int64
 
 	moved := res.TotalFilesMoved
 	freed := humanfmt.FormatBytesIEC(res.TotalBytesFreed, 1)
-	remaining := totalCandidates - moved
-	if remaining < 0 {
-		remaining = 0
-	}
+	remaining := max(totalCandidates-moved, 0)
 
 	parts := []string{}
 	parts = append(parts, fmt.Sprintf("%d moved (%s freed)", moved, freed))

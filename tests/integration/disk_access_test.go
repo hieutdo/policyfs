@@ -29,7 +29,7 @@ func TestDiskAccess_shouldNotSpamDuringBurst(t *testing.T) {
 
 		// Simulate a burst of opens (e.g., Sonarr/Bazarr scanning), where logs should remain helpful
 		// and not spammy due to dedup + periodic summary.
-		for i := 0; i < 50; i++ {
+		for range 50 {
 			got := env.MustReadFileInMountPoint(t, rel)
 			require.Equal(t, []byte("data"), got)
 		}
@@ -63,7 +63,7 @@ func TestDiskAccess_shouldNotSpamDuringBurst(t *testing.T) {
 			diskAccessLines = 0
 			sumSummaryTotals = 0
 			for _, line := range lines {
-				var entry map[string]interface{}
+				var entry map[string]any
 				if err := json.Unmarshal([]byte(line), &entry); err != nil {
 					continue
 				}

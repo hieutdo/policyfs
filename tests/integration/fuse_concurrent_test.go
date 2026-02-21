@@ -30,7 +30,7 @@ func TestFUSE_Concurrent_ReadSameFile(t *testing.T) {
 		errs := make([]error, numReaders)
 
 		wg.Add(numReaders)
-		for i := 0; i < numReaders; i++ {
+		for i := range numReaders {
 			go func(idx int) {
 				defer wg.Done()
 				results[idx], errs[idx] = env.ReadFileInMountPoint(rel)
@@ -39,7 +39,7 @@ func TestFUSE_Concurrent_ReadSameFile(t *testing.T) {
 		wg.Wait()
 
 		// Verify: all reads succeeded and returned the same content.
-		for i := 0; i < numReaders; i++ {
+		for i := range numReaders {
 			require.NoError(t, errs[i], "reader %d failed", i)
 			require.Equal(t, want, results[i], "reader %d got wrong content", i)
 		}
@@ -54,9 +54,9 @@ func TestFUSE_Concurrent_ReadDifferentFiles(t *testing.T) {
 		files := make([]string, numFiles)
 		contents := make([][]byte, numFiles)
 
-		for i := 0; i < numFiles; i++ {
+		for i := range numFiles {
 			files[i] = fmt.Sprintf("concurrent/read-diff/file%d.txt", i)
-			contents[i] = []byte(fmt.Sprintf("content for file %d", i))
+			contents[i] = fmt.Appendf(nil, "content for file %d", i)
 			env.MustWriteFileInMountPoint(t, files[i], contents[i])
 		}
 
@@ -66,7 +66,7 @@ func TestFUSE_Concurrent_ReadDifferentFiles(t *testing.T) {
 		errs := make([]error, numFiles)
 
 		wg.Add(numFiles)
-		for i := 0; i < numFiles; i++ {
+		for i := range numFiles {
 			go func(idx int) {
 				defer wg.Done()
 				results[idx], errs[idx] = env.ReadFileInMountPoint(files[idx])
@@ -75,7 +75,7 @@ func TestFUSE_Concurrent_ReadDifferentFiles(t *testing.T) {
 		wg.Wait()
 
 		// Verify: all reads succeeded with correct content.
-		for i := 0; i < numFiles; i++ {
+		for i := range numFiles {
 			require.NoError(t, errs[i], "reader %d failed", i)
 			require.Equal(t, contents[i], results[i], "reader %d got wrong content", i)
 		}
@@ -94,9 +94,9 @@ func TestFUSE_Concurrent_WriteDifferentFiles(t *testing.T) {
 		files := make([]string, numWriters)
 		contents := make([][]byte, numWriters)
 
-		for i := 0; i < numWriters; i++ {
+		for i := range numWriters {
 			files[i] = fmt.Sprintf("concurrent/write-diff/file%d.txt", i)
-			contents[i] = []byte(fmt.Sprintf("written by goroutine %d", i))
+			contents[i] = fmt.Appendf(nil, "written by goroutine %d", i)
 		}
 
 		// Create parent directory first.
@@ -107,7 +107,7 @@ func TestFUSE_Concurrent_WriteDifferentFiles(t *testing.T) {
 		errs := make([]error, numWriters)
 
 		wg.Add(numWriters)
-		for i := 0; i < numWriters; i++ {
+		for i := range numWriters {
 			go func(idx int) {
 				defer wg.Done()
 				errs[idx] = env.WriteFileInMountPoint(files[idx], contents[idx], 0o644)
@@ -116,12 +116,12 @@ func TestFUSE_Concurrent_WriteDifferentFiles(t *testing.T) {
 		wg.Wait()
 
 		// Verify: all writes succeeded.
-		for i := 0; i < numWriters; i++ {
+		for i := range numWriters {
 			require.NoError(t, errs[i], "writer %d failed", i)
 		}
 
 		// Verify: all files have correct content.
-		for i := 0; i < numWriters; i++ {
+		for i := range numWriters {
 			got := env.MustReadFileInMountPoint(t, files[i])
 			require.Equal(t, contents[i], got, "file %d has wrong content", i)
 		}
@@ -143,7 +143,7 @@ func TestFUSE_Concurrent_MkdirRace(t *testing.T) {
 		errs := make([]error, numWorkers)
 
 		wg.Add(numWorkers)
-		for i := 0; i < numWorkers; i++ {
+		for i := range numWorkers {
 			go func(idx int) {
 				defer wg.Done()
 				errs[idx] = os.Mkdir(p, 0o755)
@@ -153,7 +153,7 @@ func TestFUSE_Concurrent_MkdirRace(t *testing.T) {
 
 		// Verify: exactly one succeeded, others got EEXIST.
 		successCount := 0
-		for i := 0; i < numWorkers; i++ {
+		for i := range numWorkers {
 			if errs[i] == nil {
 				successCount++
 			}
@@ -216,7 +216,7 @@ func TestFUSE_Concurrent_CreateSameFile(t *testing.T) {
 		files := make([]*os.File, numWorkers)
 
 		wg.Add(numWorkers)
-		for i := 0; i < numWorkers; i++ {
+		for i := range numWorkers {
 			go func(idx int) {
 				defer wg.Done()
 				f, err := os.OpenFile(p, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
@@ -227,7 +227,7 @@ func TestFUSE_Concurrent_CreateSameFile(t *testing.T) {
 		wg.Wait()
 
 		// Cleanup: close any open files.
-		for i := 0; i < numWorkers; i++ {
+		for i := range numWorkers {
 			if files[i] != nil {
 				_ = files[i].Close()
 			}
@@ -235,7 +235,7 @@ func TestFUSE_Concurrent_CreateSameFile(t *testing.T) {
 
 		// Verify: exactly one succeeded, others got EEXIST.
 		successCount := 0
-		for i := 0; i < numWorkers; i++ {
+		for i := range numWorkers {
 			if errs[i] == nil {
 				successCount++
 			}

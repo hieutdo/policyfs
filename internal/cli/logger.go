@@ -100,7 +100,7 @@ func newLogger(cfg config.LogConfig, logFileFlag string, jsonOut io.Writer, text
 	switch cfg.Format {
 	case "text":
 		cw := zerolog.ConsoleWriter{Out: textOut, TimeFormat: "2006-01-02 15:04:05"}
-		cw.FormatLevel = func(i interface{}) string {
+		cw.FormatLevel = func(i any) string {
 			v := strings.ToLower(fmt.Sprintf("%v", i))
 			switch v {
 			case "inf":

@@ -74,7 +74,7 @@ func Open(mountName string) (*DB, error) {
 		return nil, fmt.Errorf("failed to stat index db: %w", statErr)
 	}
 
-	for attempt := 0; attempt < 2; attempt++ {
+	for range 2 {
 		dsn := fmt.Sprintf(
 			"file:%s?_foreign_keys=on&_busy_timeout=%d&_journal_mode=WAL&_synchronous=NORMAL",
 			dbPath,

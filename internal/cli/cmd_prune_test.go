@@ -147,7 +147,7 @@ func TestPruneOneshot_Busy_shouldReturnExitBusy(t *testing.T) {
 	_, err = pruneOneshot(context.Background(), mount, nil, prune.Opts{}, prune.Hooks{})
 	require.Error(t, err)
 
-	var ce *CLIError
-	require.True(t, errors.As(err, &ce))
+	ce, ok := errors.AsType[*CLIError](err)
+	require.True(t, ok)
 	require.Equal(t, ExitBusy, ce.Code)
 }

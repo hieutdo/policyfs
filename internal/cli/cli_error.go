@@ -69,8 +69,7 @@ func rootCause(err error) error {
 	}
 	for {
 		// Preserve path context for user-facing causes.
-		var pe *os.PathError
-		if errors.As(err, &pe) {
+		if pe, ok := errors.AsType[*os.PathError](err); ok {
 			return pe
 		}
 

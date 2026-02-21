@@ -385,8 +385,7 @@ func simplifyError(err error) string {
 	if err == nil {
 		return ""
 	}
-	var pe *os.PathError
-	if errors.As(err, &pe) {
+	if pe, ok := errors.AsType[*os.PathError](err); ok {
 		if errors.Is(err, os.ErrNotExist) {
 			return fmt.Sprintf("not found: %s", pe.Path)
 		}

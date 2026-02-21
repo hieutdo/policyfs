@@ -72,8 +72,7 @@ This command is typically managed by systemd as a service.`,
 			// Configure logging and create command logger.
 			cfgLog, closer, err := NewLogger(rootCfg.Log, logFile)
 			if err != nil {
-				var eolf *OpenLogFileError
-				if errors.As(err, &eolf) {
+				if _, ok := errors.AsType[*OpenLogFileError](err); ok {
 					return &CLIError{Code: ExitFail, Cmd: "mount", Headline: "failed to open log file", Cause: rootCause(err)}
 				}
 				return &CLIError{Code: ExitFail, Cmd: "mount", Headline: fmt.Sprintf("invalid config: %s", *configPath), Cause: rootCause(err)}

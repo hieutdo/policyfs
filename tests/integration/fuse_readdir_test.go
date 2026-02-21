@@ -164,7 +164,7 @@ func TestFUSE_Readdir_LargeDirectory(t *testing.T) {
 		rel := "readdir-edge/large"
 		env.MustMkdirInMountPoint(t, rel)
 
-		for i := 0; i < numFiles; i++ {
+		for i := range numFiles {
 			fileName := rel + "/" + fmt.Sprintf("file%04d.txt", i)
 			env.MustWriteFileInMountPoint(t, fileName, []byte("x"))
 		}

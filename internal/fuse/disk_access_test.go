@@ -100,7 +100,7 @@ func TestDiskAccessLogger_RecordOpen_shouldLogIndexedAccess(t *testing.T) {
 
 	require.NotEmpty(t, buf.String())
 
-	var entry map[string]interface{}
+	var entry map[string]any
 	require.NoError(t, json.Unmarshal(buf.Bytes(), &entry))
 	require.Equal(t, "disk_access", entry[zerolog.MessageFieldName])
 	require.Equal(t, "open", entry["op"])
@@ -179,7 +179,7 @@ func TestDiskAccessLogger_summary_shouldEmitAfterInterval(t *testing.T) {
 	lines := bytes.Split(bytes.TrimSpace(buf.Bytes()), []byte("\n"))
 	foundSummary := false
 	for _, line := range lines {
-		var entry map[string]interface{}
+		var entry map[string]any
 		if err := json.Unmarshal(line, &entry); err != nil {
 			continue
 		}
@@ -201,7 +201,7 @@ func TestDiskAccessLogger_summary_shouldCountDedupedEvents(t *testing.T) {
 	l := newDiskAccessLogger(log, cfg)
 
 	ctx := testContext(42)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		l.RecordOpen(ctx, "hdd1", "same.txt", true)
 	}
 
@@ -213,7 +213,7 @@ func TestDiskAccessLogger_summary_shouldCountDedupedEvents(t *testing.T) {
 	var gotTotal uint64
 	found := false
 	for _, line := range lines {
-		var entry map[string]interface{}
+		var entry map[string]any
 		if err := json.Unmarshal(line, &entry); err != nil {
 			continue
 		}
@@ -253,7 +253,7 @@ func TestDiskAccessLogger_summary_shouldIncludeDroppedFromRateLimiter(t *testing
 	var gotDropped uint64
 	found := false
 	for _, line := range lines {
-		var entry map[string]interface{}
+		var entry map[string]any
 		if err := json.Unmarshal(line, &entry); err != nil {
 			continue
 		}

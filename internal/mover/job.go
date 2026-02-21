@@ -193,8 +193,7 @@ func (p *planner) runJob(ctx context.Context, j config.MoverJobConfig, hooks Hoo
 					}
 					continue
 				}
-				var skip *skipError
-				if errors.As(err, &skip) {
+				if _, ok := errors.AsType[*skipError](err); ok {
 					jr.FilesSkipped++
 					movedThis = false
 					break

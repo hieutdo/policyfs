@@ -16,11 +16,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// durPtr returns a pointer to v.
-func durPtr(v time.Duration) *time.Duration {
-	return &v
-}
-
 // TestParseConditions_shouldParseMinAgeMinSizeMaxSize verifies parseConditions accepts valid humanfmt fields.
 func TestParseConditions_shouldParseMinAgeMinSizeMaxSize(t *testing.T) {
 	c, err := parseConditions(config.MoverConditionsConfig{MinAge: "7d", MinSize: "100MB", MaxSize: "1GiB"})
@@ -165,7 +160,7 @@ func TestDiscoverCandidatesOneSource_shouldFilterByMinAgeAndSort(t *testing.T) {
 	m, err := pathmatch.NewMatcher([]string{"library/**"})
 	require.NoError(t, err)
 
-	conds := conditions{MinAge: durPtr(24 * time.Hour)}
+	conds := conditions{MinAge: new(24 * time.Hour)}
 	cands, err := pl.discoverCandidatesOneSource(context.Background(), "job", "ssd1", m, nil, conds, nil)
 	require.NoError(t, err)
 
@@ -198,8 +193,8 @@ func TestCopyFileWithVerify_destinationExists_shouldReturnSkip(t *testing.T) {
 	c := candidate{Mode: uint32(st.Mode()), MTimeSec: st.ModTime().Unix()}
 	err = copyFileWithVerify(context.Background(), src, dst, c, false, nil)
 	require.Error(t, err)
-	var skip *skipError
-	require.True(t, errors.As(err, &skip))
+	_, ok := errors.AsType[*skipError](err)
+	require.True(t, ok)
 }
 
 // TestCopyFileWithVerify_verifyMismatch_shouldReturnSkipAndNotCreateDest verifies verify failures
@@ -224,8 +219,8 @@ func TestCopyFileWithVerify_verifyMismatch_shouldReturnSkipAndNotCreateDest(t *t
 	err = copyFileWithVerify(context.Background(), src, dst, c, true, nil)
 	require.Error(t, err)
 
-	var skip *skipError
-	require.True(t, errors.As(err, &skip), "verify failure should be a skipError, got: %v", err)
+	_, ok := errors.AsType[*skipError](err)
+	require.True(t, ok, "verify failure should be a skipError, got: %v", err)
 	require.NoFileExists(t, dst)
 }
 
@@ -311,11 +306,6 @@ func TestInAllowedWindow_exactEnd_shouldBeOutside(t *testing.T) {
 
 // --- discover min_size / max_size tests ---
 
-// int64Ptr returns a pointer to v.
-func int64Ptr(v int64) *int64 {
-	return &v
-}
-
 // TestDiscoverCandidatesOneSource_shouldFilterByMinSizeAndMaxSize verifies min_size and max_size filtering.
 func TestDiscoverCandidatesOneSource_shouldFilterByMinSizeAndMaxSize(t *testing.T) {
 	root := t.TempDir()
@@ -335,7 +325,7 @@ func TestDiscoverCandidatesOneSource_shouldFilterByMinSizeAndMaxSize(t *testing.
 	m, err := pathmatch.NewMatcher([]string{"lib/**"})
 	require.NoError(t, err)
 
-	conds := conditions{MinSize: int64Ptr(5), MaxSize: int64Ptr(50)}
+	conds := conditions{MinSize: new(int64(5)), MaxSize: new(int64(50))}
 	cands, err := pl.discoverCandidatesOneSource(context.Background(), "job", "s1", m, nil, conds, nil)
 	require.NoError(t, err)
 
@@ -428,8 +418,8 @@ func TestCopyFileWithVerifyRetry_verifyMismatch_shouldNotRetry(t *testing.T) {
 
 	err = copyFileWithVerifyRetry(context.Background(), src, dst, c, true, 3, nil)
 	require.Error(t, err)
-	var skip *skipError
-	require.True(t, errors.As(err, &skip), "verify mismatch should be skipError")
+	_, ok := errors.AsType[*skipError](err)
+	require.True(t, ok, "verify mismatch should be skipError")
 	// 1 hash call (dest only), only 1 attempt since skipError is not retried.
 	require.Equal(t, 1, callCount, "verify mismatch should not be retried")
 }
@@ -556,11 +546,6 @@ func TestCopyFileWithVerifyRetry_copyFailed_shouldRetryAndFail(t *testing.T) {
 
 // --- Missing coverage tests ---
 
-// boolPtr returns a pointer to v.
-func boolPtr(v bool) *bool {
-	return &v
-}
-
 // TestSelectDestinations_policyLeastFree_shouldSort verifies least_free sorts by free space ascending.
 func TestSelectDestinations_policyLeastFree_shouldSort(t *testing.T) {
 	mc := &config.MountConfig{StoragePaths: []config.StoragePath{{ID: "hdd1", Path: "/mnt/hdd1"}, {ID: "hdd2", Path: "/mnt/hdd2"}}}
@@ -594,7 +579,7 @@ func TestCount_shouldReturnCandidateCount(t *testing.T) {
 	mc := &config.MountConfig{
 		StoragePaths: []config.StoragePath{{ID: "ssd1", Path: root}},
 		Mover: config.MoverConfig{
-			Enabled: boolPtr(true),
+			Enabled: new(true),
 			Jobs: []config.MoverJobConfig{{
 				Name:        "test",
 				Trigger:     config.MoverTriggerConfig{Type: "manual"},
@@ -613,14 +598,14 @@ func TestCount_shouldReturnCandidateCount(t *testing.T) {
 func TestCount_withLimit_shouldCapCount(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "media"), 0o755))
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		require.NoError(t, os.WriteFile(filepath.Join(root, "media", fmt.Sprintf("f%d.txt", i)), []byte("x"), 0o644))
 	}
 
 	mc := &config.MountConfig{
 		StoragePaths: []config.StoragePath{{ID: "ssd1", Path: root}},
 		Mover: config.MoverConfig{
-			Enabled: boolPtr(true),
+			Enabled: new(true),
 			Jobs: []config.MoverJobConfig{{
 				Name:        "test",
 				Trigger:     config.MoverTriggerConfig{Type: "manual"},
@@ -640,7 +625,7 @@ func TestRunJob_usageTrigger_shouldStopAtThresholdStop(t *testing.T) {
 	srcDir := t.TempDir()
 	dstDir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(srcDir, "lib"), 0o755))
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		require.NoError(t, os.WriteFile(filepath.Join(srcDir, "lib", fmt.Sprintf("f%d.txt", i)), make([]byte, 100), 0o644))
 	}
 
@@ -674,8 +659,8 @@ func TestRunJob_usageTrigger_shouldStopAtThresholdStop(t *testing.T) {
 		Trigger:      config.MoverTriggerConfig{Type: "usage", ThresholdStart: 80, ThresholdStop: 75},
 		Source:       config.MoverSourceConfig{Paths: []string{"ssd1"}, Patterns: []string{"lib/**"}},
 		Destination:  config.MoverDestinationConfig{Paths: []string{"hdd1"}, Policy: "first_found"},
-		DeleteSource: boolPtr(false),
-		Verify:       boolPtr(false),
+		DeleteSource: new(false),
+		Verify:       new(false),
 	}
 
 	jr, err := p.runJob(context.Background(), j, Hooks{}, nil, 0, 0)

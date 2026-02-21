@@ -102,7 +102,6 @@ func TestRouter_MatchRule_GlobSyntax(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			// Build a router that always has a valid catch-all rule.
 			rules := []config.RoutingRule{{Match: tc.pattern, Targets: []string{"ssd1"}}}

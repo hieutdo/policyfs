@@ -432,8 +432,8 @@ func shouldRetryDBWrite(err error) bool {
 
 // isSQLiteFull reports whether a sqlite error indicates a disk-full condition.
 func isSQLiteFull(err error) bool {
-	var sqliteErr sqlite3.Error
-	if !errors.As(err, &sqliteErr) {
+	sqliteErr, ok := errors.AsType[sqlite3.Error](err)
+	if !ok {
 		return false
 	}
 	return sqliteErr.Code == sqlite3.ErrFull

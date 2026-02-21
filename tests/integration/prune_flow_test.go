@@ -34,8 +34,7 @@ func mustRunPFS(t *testing.T, env *MountedFS, args ...string) {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) {
+		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
 			if ee.ExitCode() == exitNoChanges {
 				return
 			}
@@ -51,8 +50,7 @@ func runPFSOutput(t *testing.T, env *MountedFS, args ...string) ([]byte, error) 
 	cmd.Env = pfsTestEnv(env, "")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) {
+		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
 			if ee.ExitCode() == exitNoChanges {
 				return out, nil
 			}
@@ -342,8 +340,8 @@ func TestPrune_shouldApplyDeferredRenameFile_whenDestParentMissing(t *testing.T)
 			if err == nil {
 				break
 			}
-			var se sqlite3.Error
-			if errors.Is(err, sql.ErrNoRows) || (errors.As(err, &se) && (se.Code == sqlite3.ErrBusy || se.Code == sqlite3.ErrLocked)) {
+			se, seOK := errors.AsType[sqlite3.Error](err)
+			if errors.Is(err, sql.ErrNoRows) || (seOK && (se.Code == sqlite3.ErrBusy || se.Code == sqlite3.ErrLocked)) {
 				if time.Now().After(deadline) {
 					require.NoError(t, err)
 				}

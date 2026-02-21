@@ -82,8 +82,7 @@ func Execute(args []string) int {
 			return ExitInterrupted
 		}
 
-		var ce *CLIError
-		if errors.As(err, &ce) {
+		if ce, ok := errors.AsType[*CLIError](err); ok {
 			code := ce.Code
 			if code == 0 && !ce.Silent {
 				code = ExitFail
@@ -107,9 +106,9 @@ func Execute(args []string) int {
 			hint = "run 'pfs --help'"
 		}
 
-		ce = &CLIError{Code: code, Headline: headline, Cause: err, Hint: hint}
+		fallback := &CLIError{Code: code, Headline: headline, Cause: err, Hint: hint}
 
-		for _, line := range ce.Lines() {
+		for _, line := range fallback.Lines() {
 			fmt.Fprintln(os.Stderr, line)
 		}
 		return code

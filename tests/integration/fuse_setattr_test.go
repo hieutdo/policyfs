@@ -35,8 +35,8 @@ func TestFUSE_Setattr_chmod_nonRoot_denied(t *testing.T) {
 		// Action: run chmod as a non-root user against the mount.
 		err := env.RunAsUser(t, "nobody", "chmod 600 "+env.MountPath(rel))
 		require.Error(t, err)
-		var exitErr *exec.ExitError
-		require.True(t, errors.As(err, &exitErr))
+		exitErr, ok := errors.AsType[*exec.ExitError](err)
+		require.True(t, ok)
 		require.NotEqual(t, 0, exitErr.ExitCode())
 
 		// Verify: underlying storage permissions must not change.
@@ -66,8 +66,8 @@ func TestFUSE_Setattr_chown_nonRoot_denied(t *testing.T) {
 		// Action: run chown as a non-root user against the mount.
 		err := env.RunAsUser(t, "nobody", "chown 0:0 "+env.MountPath(rel))
 		require.Error(t, err)
-		var exitErr *exec.ExitError
-		require.True(t, errors.As(err, &exitErr))
+		exitErr, ok := errors.AsType[*exec.ExitError](err)
+		require.True(t, ok)
 		require.NotEqual(t, 0, exitErr.ExitCode())
 
 		// Verify: underlying uid/gid must not change.

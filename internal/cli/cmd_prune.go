@@ -126,8 +126,7 @@ This command executes physical mutations (unlink/rmdir/rename/chmod/chown/utimen
 
 			res, err := pruneOneshot(ctx, mountName, mountCfg, prune.Opts{DryRun: dryRun, Limit: limit}, actionHook(mountName))
 			if err != nil {
-				var ce *CLIError
-				if errors.As(err, &ce) {
+				if ce, ok := errors.AsType[*CLIError](err); ok {
 					return ce
 				}
 				return &CLIError{Code: ExitFail, Cmd: "prune", Headline: "unexpected error", Cause: rootCause(err)}

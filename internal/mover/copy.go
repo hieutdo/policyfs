@@ -192,8 +192,7 @@ func copyFileWithVerifyRetry(ctx context.Context, srcPhys string, dstPhys string
 			return nil
 		}
 		// Do not retry skips.
-		var skip *skipError
-		if errors.As(err, &skip) {
+		if _, ok := errors.AsType[*skipError](err); ok {
 			return err
 		}
 		// Do not retry disk-full.
