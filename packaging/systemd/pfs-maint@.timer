@@ -2,7 +2,7 @@
 Description=Run PolicyFS maint for mount %i
 
 [Timer]
-OnCalendar=hourly
+OnCalendar=*-*-* 00:30:00
 Persistent=true
 RandomizedDelaySec=10m
 

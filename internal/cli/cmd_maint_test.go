@@ -117,7 +117,7 @@ mounts:
 	require.Contains(t, stderr, "error: invalid arguments")
 }
 
-// TestMaint_indexTouch_noTouchedIndexedStorages_shouldSkipIndex verifies touch mode skips indexing when no indexed storages are touched.
+// TestMaint_indexTouch_noMoveWork_shouldSkipPruneAndIndex verifies maint skips prune and index when mover did no work.
 func TestMaint_indexTouch_noTouchedIndexedStorages_shouldSkipIndex(t *testing.T) {
 	runtimeDir := filepath.Join(t.TempDir(), "runtime")
 	require.NoError(t, os.MkdirAll(runtimeDir, 0o755))
@@ -150,7 +150,7 @@ mounts:
 
 	code, stdout, stderr := runCLI(t, []string{"--config", cfg, "maint", "media", "--index=touch"})
 	require.Equal(t, ExitNoChanges, code, "expected exit_code=%d got=%d stderr=%s", ExitNoChanges, code, stderr)
-	require.Contains(t, stdout, "no indexed storages touched")
+	require.Contains(t, stdout, "Skipped: mover did no work")
 }
 
 // TestMaint_allPhasesNoWork_shouldReturnExitNoChanges verifies maint returns ExitNoChanges when nothing changed across all phases.
@@ -188,6 +188,7 @@ mounts:
 	require.Equal(t, ExitNoChanges, code, "expected exit_code=%d got=%d stderr=%s", ExitNoChanges, code, stderr)
 	require.Empty(t, stderr)
 	require.Contains(t, stdout, "pfs maint: mount=media")
+	require.Contains(t, stdout, "Skipped: mover did no work")
 }
 
 // TestMaint_allPhasesNoWork_quiet_shouldReturnExitNoChanges verifies --quiet does not change the aggregate exit code.

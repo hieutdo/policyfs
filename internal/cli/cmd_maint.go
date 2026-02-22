@@ -245,7 +245,8 @@ This command is intended for systemd timers to reduce disk wake-ups by batching 
 			if mvProgressUI != nil {
 				mvProgressUI.Finish()
 			}
-			if mvRes.TotalFilesMoved > 0 {
+			moveDidWork := mvRes.TotalFilesMoved > 0
+			if moveDidWork {
 				didWork = true
 			}
 			if !quiet {
@@ -266,6 +267,14 @@ This command is intended for systemd timers to reduce disk wake-ups by batching 
 				} else {
 					printMoveSummary(stdout, mvRes, mvWarnings)
 				}
+			}
+
+			if !moveDidWork {
+				if !quiet {
+					fmt.Fprintf(stdout, "\npfs prune:\nSkipped: mover did no work\n")
+					fmt.Fprintf(stdout, "\npfs index:\nSkipped: mover did no work\n")
+				}
+				return &CLIError{Code: ExitNoChanges, Silent: true}
 			}
 
 			if !quiet {
