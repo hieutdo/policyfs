@@ -21,8 +21,12 @@ func escapeLIKE(s string) string {
 	return s
 }
 
-// normalizeVirtualPath converts a user-provided virtual path into a stable DB key.
+// NormalizeVirtualPath converts a user-provided virtual path into a stable DB key.
 // It removes leading slashes, cleans dot segments, and returns "" for root.
+func NormalizeVirtualPath(p string) string {
+	return normalizeVirtualPath(p)
+}
+
 func normalizeVirtualPath(p string) string {
 	p = strings.TrimSpace(p)
 	p = path.Clean("/" + p)

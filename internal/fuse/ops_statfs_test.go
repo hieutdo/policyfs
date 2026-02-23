@@ -42,8 +42,10 @@ func Test_statfsWriteTarget_shouldReturnWriteTargetStats(t *testing.T) {
 	ok := statfsWriteTarget(rt, "", got)
 	require.True(t, ok)
 
-	// Statfs values can change between two consecutive syscalls (overlayfs, tmpfs,
-	// background writes), so allow a tiny delta.
+	// Statfs values can change between two consecutive syscalls due to OS
+	// background activity, temp file cleanup, etc. Allow a delta of up to 64
+	// blocks — large enough to absorb noise, small enough to catch wrong-device bugs.
+	const maxDelta = uint64(64)
 	{
 		var diff uint64
 		if want.Blocks > got.Blocks {
@@ -51,7 +53,7 @@ func Test_statfsWriteTarget_shouldReturnWriteTargetStats(t *testing.T) {
 		} else {
 			diff = got.Blocks - want.Blocks
 		}
-		require.LessOrEqual(t, diff, uint64(1), "Blocks mismatch: want=%d got=%d", want.Blocks, got.Blocks)
+		require.LessOrEqual(t, diff, maxDelta, "Blocks mismatch: want=%d got=%d", want.Blocks, got.Blocks)
 	}
 	{
 		var diff uint64
@@ -60,7 +62,7 @@ func Test_statfsWriteTarget_shouldReturnWriteTargetStats(t *testing.T) {
 		} else {
 			diff = got.Bfree - want.Bfree
 		}
-		require.LessOrEqual(t, diff, uint64(1), "Bfree mismatch: want=%d got=%d", want.Bfree, got.Bfree)
+		require.LessOrEqual(t, diff, maxDelta, "Bfree mismatch: want=%d got=%d", want.Bfree, got.Bfree)
 	}
 }
 

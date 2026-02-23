@@ -144,12 +144,12 @@ mounts:
 	require.Contains(t, stdout, "All checks passed.")
 }
 
-// TestDoctor_TooManyArgs_returnsUsage verifies `pfs doctor` rejects more than 1 arg through the real CLI flow.
+// TestDoctor_TooManyArgs_returnsUsage verifies `pfs doctor` rejects more than 2 args through the real CLI flow.
 func TestDoctor_TooManyArgs_returnsUsage(t *testing.T) {
-	code, _, stderr := runCLI(t, []string{"doctor", "a", "b"})
+	code, _, stderr := runCLI(t, []string{"doctor", "a", "b", "c"})
 	require.Equal(t, ExitUsage, code)
 	require.Contains(t, stderr, "error: invalid arguments\n")
-	require.Contains(t, stderr, "cause: requires at most 1 argument")
+	require.Contains(t, stderr, "cause: requires at most 2 arguments")
 	require.Contains(t, stderr, "hint: run 'pfs doctor --help'\n")
 }
 

@@ -26,6 +26,7 @@ type JSONEnvelope struct {
 	OK       bool        `json:"ok"`
 	Scope    *JSONScope  `json:"scope,omitempty"`
 	Issues   []JSONIssue `json:"issues,omitempty"`
+	Inspect  any         `json:"inspect,omitempty"`
 	Warnings []JSONIssue `json:"warnings"`
 	Errors   []JSONIssue `json:"errors"`
 }
