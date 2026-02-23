@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"github.com/dustin/go-humanize"
+	"github.com/hieutdo/policyfs/internal/doctor"
 	"github.com/hieutdo/policyfs/internal/eventlog"
+	"github.com/hieutdo/policyfs/internal/humanfmt"
 )
 
 const (
@@ -16,7 +18,7 @@ const (
 )
 
 // printDoctorReport renders the full doctor report to w.
-func printDoctorReport(w io.Writer, r doctorReport) {
+func printDoctorReport(w io.Writer, r doctor.Report) {
 	// --- Config section ---
 	fmt.Fprintln(w, "Config")
 	for _, c := range r.ConfigChecks {
@@ -106,7 +108,7 @@ func printDoctorReport(w io.Writer, r doctorReport) {
 }
 
 // printCheck prints one ✓ or ✗ check line.
-func printCheck(w io.Writer, c checkResult) {
+func printCheck(w io.Writer, c doctor.CheckResult) {
 	mark := checkPass
 	if !c.Pass {
 		mark = checkFail
@@ -119,7 +121,7 @@ func printCheck(w io.Writer, c checkResult) {
 }
 
 // printStatusLine prints a status key/value line.
-func printStatusLine(w io.Writer, c checkResult) {
+func printStatusLine(w io.Writer, c doctor.CheckResult) {
 	detail := c.Detail
 	if detail == "" {
 		detail = "unknown"
@@ -128,7 +130,7 @@ func printStatusLine(w io.Writer, c checkResult) {
 }
 
 // printStorageLine prints one storage accessibility line.
-func printStorageLine(w io.Writer, s storageReport) {
+func printStorageLine(w io.Writer, s doctor.StorageReport) {
 	indexed := ""
 	if s.Indexed {
 		indexed = " (indexed)"
@@ -145,7 +147,7 @@ func printStorageLine(w io.Writer, s storageReport) {
 }
 
 // printFileLine prints a single file path plus best-effort size/availability.
-func printFileLine(w io.Writer, label string, f fileReport) {
+func printFileLine(w io.Writer, label string, f doctor.FileReport) {
 	if f.Missing {
 		fmt.Fprintf(w, "    %-12s %s (missing)\n", label+":", f.Path)
 		return
@@ -162,7 +164,7 @@ func printFileLine(w io.Writer, label string, f fileReport) {
 }
 
 // printSystemdTimers prints best-effort timer schedule info for maintenance jobs.
-func printSystemdTimers(w io.Writer, s *systemdTimersReport) {
+func printSystemdTimers(w io.Writer, s *doctor.SystemdTimersReport) {
 	fmt.Fprintln(w, "  Systemd Timers")
 	if !s.Supported {
 		detail := "not supported"
@@ -207,10 +209,10 @@ func printSystemdTimers(w io.Writer, s *systemdTimersReport) {
 }
 
 // printIndexStats prints index stats for one storage.
-func printIndexStats(w io.Writer, idx indexStatsReport) {
+func printIndexStats(w io.Writer, idx doctor.IndexStatsReport) {
 	if idx.LastCompleted != nil {
 		ago := time.Since(*idx.LastCompleted).Truncate(time.Minute)
-		fmt.Fprintf(w, "    last indexed: %s  (%s ago)\n", idx.LastCompleted.Format("2006-01-02 15:04"), humanizeDuration(ago))
+		fmt.Fprintf(w, "    last indexed: %s  (%s ago)\n", idx.LastCompleted.Format("2006-01-02 15:04"), humanfmt.HumanizeDuration(ago))
 	} else {
 		fmt.Fprintln(w, "    last indexed: never")
 	}
@@ -234,7 +236,7 @@ func printIndexStats(w io.Writer, idx indexStatsReport) {
 }
 
 // printPendingEvents prints the pending events section.
-func printPendingEvents(w io.Writer, p *pendingEvents) {
+func printPendingEvents(w io.Writer, p *doctor.PendingEvents) {
 	fmt.Fprintln(w, "  Pending Events")
 
 	// Summary line: total (DELETE N, RENAME N, SETATTR N)
@@ -266,7 +268,7 @@ func printPendingEvents(w io.Writer, p *pendingEvents) {
 }
 
 // printDiskAccess prints the disk access analysis section.
-func printDiskAccess(w io.Writer, d *diskAccessReport) {
+func printDiskAccess(w io.Writer, d *doctor.DiskAccessReport) {
 	fmt.Fprintf(w, "  Disk Access (from %s, last %s lines)\n", d.LogPath, humanize.Comma(int64(d.LinesScanned)))
 
 	if len(d.TopProcesses) > 0 {
@@ -282,71 +284,6 @@ func printDiskAccess(w io.Writer, d *diskAccessReport) {
 			fmt.Fprintf(w, "      %-28s %d accesses\n", s.Label, s.Count)
 		}
 	}
-}
-
-// humanizeDuration formats a duration in a human-friendly way.
-//
-//	< 1m   → "just now"
-//	< 1h   → "42m"
-//	< 24h  → "14h 22m"
-//	< 7d   → "3d 14h"
-//	< 30d  → "2w 3d"
-//	< 365d → "2mo 5d"
-//	≥ 365d → "1y 2mo"
-func humanizeDuration(d time.Duration) string {
-	if d < time.Minute {
-		return "just now"
-	}
-
-	totalMinutes := int(d.Minutes())
-	totalHours := totalMinutes / 60
-	totalDays := totalHours / 24
-
-	if totalHours < 1 {
-		return fmt.Sprintf("%dm", totalMinutes)
-	}
-	if totalDays < 1 {
-		m := totalMinutes % 60
-		if m == 0 {
-			return fmt.Sprintf("%dh", totalHours)
-		}
-		return fmt.Sprintf("%dh %dm", totalHours, m)
-	}
-	if totalDays < 7 {
-		h := totalHours % 24
-		if h == 0 {
-			return fmt.Sprintf("%dd", totalDays)
-		}
-		return fmt.Sprintf("%dd %dh", totalDays, h)
-	}
-	if totalDays < 30 {
-		weeks := totalDays / 7
-		days := totalDays % 7
-		if days == 0 {
-			return fmt.Sprintf("%dw", weeks)
-		}
-		return fmt.Sprintf("%dw %dd", weeks, days)
-	}
-	if totalDays < 365 {
-		months := totalDays / 30
-		days := totalDays % 30
-		if days == 0 {
-			return fmt.Sprintf("%dmo", months)
-		}
-		return fmt.Sprintf("%dmo %dd", months, days)
-	}
-
-	years := totalDays / 365
-	remDays := totalDays % 365
-	months := remDays / 30
-	days := remDays % 30
-	if months > 0 {
-		return fmt.Sprintf("%dy %dmo", years, months)
-	}
-	if days > 0 {
-		return fmt.Sprintf("%dy %dd", years, days)
-	}
-	return fmt.Sprintf("%dy", years)
 }
 
 // pluralize returns singular or plural based on count.

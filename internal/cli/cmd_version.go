@@ -17,20 +17,8 @@ var (
 	BuildDate = "unknown"
 )
 
-// JSONVersionOutput is the JSON output for `pfs version --json`.
-type JSONVersionOutput struct {
-	Command   string `json:"command"`
-	OK        bool   `json:"ok"`
-	Version   string `json:"version"`
-	Commit    string `json:"commit"`
-	GoVersion string `json:"go_version"`
-	BuildTime string `json:"build_time"`
-}
-
 // newVersionCmd creates `pfs version`.
 func newVersionCmd() *cobra.Command {
-	var jsonOut bool
-
 	cmd := &cobra.Command{
 		Use:   "version",
 		Short: "Print version and build information",
@@ -39,21 +27,13 @@ func newVersionCmd() *cobra.Command {
 Displays the semantic version, git commit, build date, Go version,
 and platform information.`,
 		Example: `  pfs version
-  pfs version --json`,
+  pfs version`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			version := Version
 			commit := Commit
 			buildTime := BuildDate
 			goVersion := runtime.Version()
-
-			if jsonOut {
-				out := JSONVersionOutput{Command: "version", OK: true, Version: version, Commit: commit, GoVersion: goVersion, BuildTime: buildTime}
-				if err := writeJSON(out); err != nil {
-					return &CLIError{Code: ExitFail, Cmd: "version", Headline: "failed to write json", Cause: rootCause(err)}
-				}
-				return nil
-			}
 
 			fmt.Fprintf(cmd.OutOrStdout(), "pfs %s\n", version)
 			fmt.Fprintf(cmd.OutOrStdout(), "  commit:     %s\n", commit)
@@ -63,8 +43,6 @@ and platform information.`,
 			return nil
 		},
 	}
-
-	cmd.Flags().BoolVarP(&jsonOut, "json", "j", false, "output as JSON")
 
 	return cmd
 }

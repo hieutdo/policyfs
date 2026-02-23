@@ -2,7 +2,7 @@
 Description=Run PolicyFS index for mount %i
 
 [Timer]
-OnCalendar=*:0/30
+OnCalendar=*-*-* 05:30:00
 Persistent=true
 RandomizedDelaySec=2m
 

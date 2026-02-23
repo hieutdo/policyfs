@@ -4,7 +4,6 @@ package integration
 
 import (
 	"bytes"
-	"encoding/json"
 	"os"
 	"os/exec"
 	"strings"
@@ -14,15 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type doctorEnvelope struct {
-	Command  string `json:"command"`
-	OK       bool   `json:"ok"`
-	Warnings any    `json:"warnings"`
-	Errors   any    `json:"errors"`
-}
-
-// TestDoctorJSONSmoke verifies `pfs doctor --json` emits valid JSON while the daemon is running.
-func TestDoctorJSONSmoke(t *testing.T) {
+// TestDoctorSmoke verifies `pfs doctor` runs successfully while the daemon is running.
+func TestDoctorSmoke(t *testing.T) {
 	withMountedFS(t, IntegrationConfig{}, func(fsEnv *MountedFS) {
 		cfg := fsEnv.ConfigPath
 		if strings.TrimSpace(cfg) == "" {
@@ -32,16 +24,13 @@ func TestDoctorJSONSmoke(t *testing.T) {
 			t.Skip("missing config path; set " + config.EnvIntegrationConfig + " when using an existing mount")
 		}
 
-		cmd := exec.Command(pfsBin, "--config", cfg, "doctor", fsEnv.MountName, "--json")
+		cmd := exec.Command(pfsBin, "--config", cfg, "doctor", fsEnv.MountName)
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		out, err := cmd.Output()
 		require.NoError(t, err)
 		require.Empty(t, stderr.String())
-
-		var env doctorEnvelope
-		require.NoError(t, json.Unmarshal(out, &env))
-		require.Equal(t, "doctor", env.Command)
-		require.True(t, env.OK)
+		require.NotEmpty(t, strings.TrimSpace(string(out)))
+		require.Contains(t, string(out), "Mount:")
 	})
 }
