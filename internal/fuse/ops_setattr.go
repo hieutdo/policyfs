@@ -27,6 +27,9 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 	caller, callerOK := gofuse.FromContext(ctx)
 
 	virtualPath := n.Path(n.Root())
+	if errno := validateVirtualPath(virtualPath); errno != 0 {
+		return errno
+	}
 	physicalPath := ""
 	indexed := false
 	indexedStorageID := ""

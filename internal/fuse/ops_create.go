@@ -21,7 +21,10 @@ func (n *Node) Create(ctx context.Context, name string, flags uint32, mode uint3
 	}
 
 	parentVirtualPath := n.Path(n.Root())
-	virtualPath := filepath.Join(parentVirtualPath, name)
+	virtualPath, errno := joinVirtualPath(parentVirtualPath, name)
+	if errno != 0 {
+		return nil, nil, 0, errno
+	}
 
 	// Route: choose a single write target for this create.
 	target, err := n.rt.SelectWriteTarget(virtualPath)
@@ -80,7 +83,10 @@ func (n *Node) Mkdir(ctx context.Context, name string, mode uint32, out *gofuse.
 	}
 
 	parentVirtualPath := n.Path(n.Root())
-	virtualPath := filepath.Join(parentVirtualPath, name)
+	virtualPath, errno := joinVirtualPath(parentVirtualPath, name)
+	if errno != 0 {
+		return nil, errno
+	}
 
 	// Route: choose a single write target for this mkdir.
 	target, err := n.rt.SelectWriteTarget(virtualPath)

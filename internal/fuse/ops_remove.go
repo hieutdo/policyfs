@@ -23,7 +23,10 @@ func (n *Node) Unlink(ctx context.Context, name string) syscall.Errno {
 	}
 
 	parentVirtualPath := n.Path(n.Root())
-	virtualPath := filepath.Join(parentVirtualPath, name)
+	virtualPath, errno := joinVirtualPath(parentVirtualPath, name)
+	if errno != 0 {
+		return errno
+	}
 
 	targets, err := n.rt.ResolveReadTargets(virtualPath)
 	if err != nil {
@@ -94,7 +97,10 @@ func (n *Node) Rmdir(ctx context.Context, name string) syscall.Errno {
 	}
 
 	parentVirtualPath := n.Path(n.Root())
-	virtualPath := filepath.Join(parentVirtualPath, name)
+	virtualPath, errno := joinVirtualPath(parentVirtualPath, name)
+	if errno != 0 {
+		return errno
+	}
 
 	targets, err := n.rt.ResolveReadTargets(virtualPath)
 	if err != nil {

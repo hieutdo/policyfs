@@ -138,6 +138,9 @@ func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 // space for the filesystem that will receive writes at this path.
 func (n *Node) Statfs(ctx context.Context, out *gofuse.StatfsOut) syscall.Errno {
 	virtualPath := n.Path(n.Root())
+	if errno := validateVirtualPath(virtualPath); errno != 0 {
+		return errno
+	}
 	if statfsWriteTarget(n.rt, virtualPath, out) {
 		return 0
 	}

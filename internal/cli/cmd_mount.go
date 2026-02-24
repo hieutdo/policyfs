@@ -60,6 +60,10 @@ This command is typically managed by systemd as a service.`,
 				return &CLIError{Code: ExitFail, Cmd: "mount", Headline: fmt.Sprintf("invalid config: %s", *configPath), Cause: rootCause(err)}
 			}
 
+			if os.Geteuid() != 0 {
+				return &CLIError{Code: ExitFail, Cmd: "mount", Headline: "permission denied", Cause: errors.New("must be run as root"), Hint: "run as root"}
+			}
+
 			dlk, err := lock.AcquireMountLock(mountName, config.DefaultDaemonLockFile)
 			if err != nil {
 				if errors.Is(err, errkind.ErrBusy) {
@@ -140,7 +144,7 @@ This command is typically managed by systemd as a service.`,
 				return &CLIError{Code: ExitFail, Cmd: "mount", Headline: fmt.Sprintf("invalid config: %s", *configPath), Cause: rootCause(err)}
 			}
 
-			options := []string{}
+			options := []string{"default_permissions"}
 			if rootCfg.Fuse.AllowOther {
 				options = append(options, "allow_other")
 			}

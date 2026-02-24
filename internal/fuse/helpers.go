@@ -50,6 +50,9 @@ func openFirst(ctx context.Context, rt *router.Router, db *indexdb.DB, virtualPa
 	if rt == nil {
 		return nil, 0, fs.ToErrno(&errkind.NilError{What: "router"})
 	}
+	if errno := validateVirtualPath(virtualPath); errno != 0 {
+		return nil, 0, errno
+	}
 
 	var targets []router.Target
 	var err error
@@ -79,6 +82,9 @@ func openFirst(ctx context.Context, rt *router.Router, db *indexdb.DB, virtualPa
 			}
 			if !ok || f.IsDir {
 				continue
+			}
+			if errno := validateVirtualPath(f.RealPath); errno != 0 {
+				return nil, 0, errno
 			}
 			physicalPath = filepath.Join(t.Root, f.RealPath)
 		}
@@ -152,6 +158,9 @@ func statfsWriteTarget(rt *router.Router, virtualPath string, out *gofuse.Statfs
 
 // firstExistingPhysical resolves the first existing target and its physical path.
 func firstExistingPhysical(rt *router.Router, virtualPath string) (router.Target, string, syscall.Errno) {
+	if errno := validateVirtualPath(virtualPath); errno != 0 {
+		return router.Target{}, "", errno
+	}
 	targets, err := rt.ResolveReadTargets(virtualPath)
 	if err != nil {
 		return router.Target{}, "", toErrno(err)

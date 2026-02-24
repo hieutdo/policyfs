@@ -22,7 +22,10 @@ import (
 // Key sharp edge:
 // - On Linux, chown may clear setgid bits; we apply chmod after chown to ensure setgid sticks.
 func materializeParentDirs(ctx context.Context, targetRoot string, virtualPath string) error {
-	parentVirtual := filepath.Clean(filepath.Dir(virtualPath))
+	if errno := validateVirtualPath(virtualPath); errno != 0 {
+		return errno
+	}
+	parentVirtual := filepath.Dir(virtualPath)
 	if parentVirtual == "." {
 		return nil
 	}

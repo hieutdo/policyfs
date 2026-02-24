@@ -39,7 +39,10 @@ func (n *Node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 	}
 
 	oldParentVirtualPath := n.Path(n.Root())
-	oldVirtualPath := filepath.Join(oldParentVirtualPath, name)
+	oldVirtualPath, errno := joinVirtualPath(oldParentVirtualPath, name)
+	if errno != 0 {
+		return errno
+	}
 
 	srcTarget := router.Target{}
 	srcPhysicalPath := ""
@@ -98,7 +101,10 @@ func (n *Node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 	}
 
 	newParentVirtualPath := np.Path(np.Root())
-	newVirtualPath := filepath.Join(newParentVirtualPath, newName)
+	newVirtualPath, errno := joinVirtualPath(newParentVirtualPath, newName)
+	if errno != 0 {
+		return errno
+	}
 
 	if srcWasIndexed {
 		if n.db == nil {
@@ -162,11 +168,11 @@ func (n *Node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 		n.log.Error().Str("op", "rename").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Err(err).Msg("failed to materialize parent dirs")
 		return fs.ToErrno(err)
 	}
-	errno := fs.ToErrno(syscall.Rename(srcPhysicalPath, dstPhysicalPath))
-	if errno != 0 {
-		n.log.Error().Str("op", "rename").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Err(errno).Msg("failed to rename")
+	renameErrno := fs.ToErrno(syscall.Rename(srcPhysicalPath, dstPhysicalPath))
+	if renameErrno != 0 {
+		n.log.Error().Str("op", "rename").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Err(renameErrno).Msg("failed to rename")
 	} else {
 		n.log.Debug().Str("op", "rename").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Bool("indexed", false).Msg("rename")
 	}
-	return errno
+	return renameErrno
 }

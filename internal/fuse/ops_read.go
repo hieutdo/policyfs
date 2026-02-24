@@ -5,9 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
-	"strings"
 	"syscall"
 
 	"github.com/hanwen/go-fuse/v2/fs"
@@ -28,12 +26,9 @@ func lookupChild(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoo
 	}
 
 	parentPath := parent.Path(parent.Root())
-	childPath := path.Clean(path.Join(parentPath, name))
-	if childPath == "." {
-		childPath = ""
-	}
-	if childPath == ".." || strings.HasPrefix(childPath, "../") {
-		childPath = ""
+	childPath, errno := joinVirtualPath(parentPath, name)
+	if errno != 0 {
+		return nil, errno
 	}
 
 	targets, err := rt.ResolveReadTargets(childPath)
@@ -116,6 +111,12 @@ func getattrPath(ctx context.Context, ino *fs.Inode, rt *router.Router, db *inde
 	}
 
 	virtualPath := ino.Path(ino.Root())
+	if virtualPath == "." {
+		virtualPath = ""
+	}
+	if errno := validateVirtualPath(virtualPath); errno != 0 {
+		return errno
+	}
 	targets, err := rt.ResolveReadTargets(virtualPath)
 	if err != nil {
 		return toErrno(err)
@@ -200,6 +201,12 @@ func listDirEntriesForVirtualPath(ctx context.Context, virtualPath string, rt *r
 	if rt == nil {
 		return nil, fs.ToErrno(&errkind.NilError{What: "router"})
 	}
+	if virtualPath == "." {
+		virtualPath = ""
+	}
+	if errno := validateVirtualPath(virtualPath); errno != 0 {
+		return nil, errno
+	}
 
 	targets, err := rt.ResolveListTargets(virtualPath)
 	if err != nil {
@@ -231,9 +238,9 @@ func listDirEntriesForVirtualPath(ctx context.Context, virtualPath string, rt *r
 					mode = uint32(gofuse.S_IFDIR)
 				}
 
-				childPath := path.Clean(path.Join(virtualPath, name))
-				if childPath == "." {
-					childPath = ""
+				childPath, errno := joinVirtualPath(virtualPath, name)
+				if errno != 0 {
+					continue
 				}
 
 				allowed := false
@@ -295,9 +302,9 @@ func listDirEntriesForVirtualPath(ctx context.Context, virtualPath string, rt *r
 		for _, e := range list {
 			name := e.Name
 
-			childPath := path.Clean(path.Join(virtualPath, name))
-			if childPath == "." {
-				childPath = ""
+			childPath, errno := joinVirtualPath(virtualPath, name)
+			if errno != 0 {
+				continue
 			}
 
 			allowed := false

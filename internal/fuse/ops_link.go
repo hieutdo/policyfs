@@ -36,7 +36,10 @@ func (n *Node) Link(ctx context.Context, target fs.InodeEmbedder, name string, o
 	}
 
 	parentVirtualPath := n.Path(n.Root())
-	newVirtualPath := filepath.Join(parentVirtualPath, name)
+	newVirtualPath, errno := joinVirtualPath(parentVirtualPath, name)
+	if errno != 0 {
+		return nil, errno
+	}
 
 	oldVirtualPath := tino.Path(tino.Root())
 	// Source must exist on some read target; we hardlink from the first existing physical file.
