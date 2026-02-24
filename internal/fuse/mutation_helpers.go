@@ -66,6 +66,11 @@ func materializeParentDirs(ctx context.Context, targetRoot string, virtualPath s
 		if uint32(pst.Mode)&syscall.S_IFMT != syscall.S_IFDIR {
 			return syscall.ENOTDIR
 		}
+		if callerOK {
+			if errno := dirWriteExecPermErrno(caller, uint32(pst.Mode), pst.Uid, pst.Gid); errno != 0 {
+				return errno
+			}
+		}
 
 		// Inherit permissions from the physical parent directory (but let setgid propagate explicitly).
 		newMode := uint32(pst.Mode) & 0o777

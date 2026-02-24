@@ -35,13 +35,24 @@ func (n *Node) Link(ctx context.Context, target fs.InodeEmbedder, name string, o
 		return nil, fs.ToErrno(&errkind.NilError{What: "target inode"})
 	}
 
+	caller, callerOK := gofuse.FromContext(ctx)
+	if !callerOK {
+		return nil, syscall.EPERM
+	}
+
 	parentVirtualPath := n.Path(n.Root())
+	if parentVirtualPath == "." {
+		parentVirtualPath = ""
+	}
 	newVirtualPath, errno := joinVirtualPath(parentVirtualPath, name)
 	if errno != 0 {
 		return nil, errno
 	}
 
 	oldVirtualPath := tino.Path(tino.Root())
+	if oldVirtualPath == "." {
+		oldVirtualPath = ""
+	}
 	// Source must exist on some read target; we hardlink from the first existing physical file.
 	srcTarget, srcPhysicalPath, errno := firstExistingPhysical(n.rt, oldVirtualPath)
 	if errno != 0 {
@@ -74,6 +85,19 @@ func (n *Node) Link(ctx context.Context, target fs.InodeEmbedder, name string, o
 	// Ensure the destination parent dirs exist on the source target.
 	if err := materializeParentDirs(ctx, srcTarget.Root, newVirtualPath); err != nil {
 		return nil, fs.ToErrno(err)
+	}
+	if callerOK {
+		parentPhysical := filepath.Dir(dstPhysicalPath)
+		pst := syscall.Stat_t{}
+		if err := syscall.Lstat(parentPhysical, &pst); err != nil {
+			return nil, fs.ToErrno(err)
+		}
+		if uint32(pst.Mode)&syscall.S_IFMT != syscall.S_IFDIR {
+			return nil, syscall.ENOTDIR
+		}
+		if errno := dirWriteExecPermErrno(caller, uint32(pst.Mode), pst.Uid, pst.Gid); errno != 0 {
+			return nil, errno
+		}
 	}
 	if err := syscall.Link(srcPhysicalPath, dstPhysicalPath); err != nil {
 		n.log.Error().Str("op", "link").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Err(err).Msg("failed to link")

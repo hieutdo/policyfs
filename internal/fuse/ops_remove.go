@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hanwen/go-fuse/v2/fs"
+	gofuse "github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/hieutdo/policyfs/internal/errkind"
 	"github.com/hieutdo/policyfs/internal/eventlog"
 )
@@ -22,7 +23,15 @@ func (n *Node) Unlink(ctx context.Context, name string) syscall.Errno {
 		return fs.ToErrno(&errkind.NilError{What: "router"})
 	}
 
+	caller, callerOK := gofuse.FromContext(ctx)
+	if !callerOK {
+		return syscall.EPERM
+	}
+
 	parentVirtualPath := n.Path(n.Root())
+	if parentVirtualPath == "." {
+		parentVirtualPath = ""
+	}
 	virtualPath, errno := joinVirtualPath(parentVirtualPath, name)
 	if errno != 0 {
 		return errno
@@ -46,6 +55,22 @@ func (n *Node) Unlink(ctx context.Context, name string) syscall.Errno {
 			if uint32(st.Mode)&syscall.S_IFMT == syscall.S_IFDIR {
 				return syscall.EISDIR
 			}
+			if callerOK {
+				parentPhysical := filepath.Dir(physicalPath)
+				pst := syscall.Stat_t{}
+				if err := syscall.Lstat(parentPhysical, &pst); err != nil {
+					return fs.ToErrno(err)
+				}
+				if uint32(pst.Mode)&syscall.S_IFMT != syscall.S_IFDIR {
+					return syscall.ENOTDIR
+				}
+				if errno := dirWriteExecPermErrno(caller, uint32(pst.Mode), pst.Uid, pst.Gid); errno != 0 {
+					return errno
+				}
+				if errno := stickyDirMayRemoveErrno(caller, uint32(pst.Mode), pst.Uid, st.Uid); errno != 0 {
+					return errno
+				}
+			}
 			errno := fs.ToErrno(syscall.Unlink(physicalPath))
 			if errno != 0 {
 				n.log.Error().Str("op", "unlink").Str("path", virtualPath).Str("storage_id", t.ID).Err(errno).Msg("failed to unlink")
@@ -68,6 +93,24 @@ func (n *Node) Unlink(ctx context.Context, name string) syscall.Errno {
 		}
 		if f.IsDir {
 			return syscall.EISDIR
+		}
+		if callerOK && parentVirtualPath != "" {
+			pdir, ok, err := n.db.GetEffectiveFile(ctx, t.ID, parentVirtualPath)
+			if err != nil {
+				return toErrno(fmt.Errorf("failed to lookup indexed parent dir: %w", err))
+			}
+			if !ok {
+				return syscall.ENOENT
+			}
+			if !pdir.IsDir {
+				return syscall.ENOTDIR
+			}
+			if errno := dirWriteExecPermErrno(caller, pdir.Mode, pdir.UID, pdir.GID); errno != 0 {
+				return errno
+			}
+			if errno := stickyDirMayRemoveErrno(caller, pdir.Mode, pdir.UID, f.UID); errno != 0 {
+				return errno
+			}
 		}
 		updated, err := n.db.MarkDeleted(ctx, t.ID, virtualPath, false)
 		if err != nil {
@@ -96,7 +139,15 @@ func (n *Node) Rmdir(ctx context.Context, name string) syscall.Errno {
 		return fs.ToErrno(&errkind.NilError{What: "router"})
 	}
 
+	caller, callerOK := gofuse.FromContext(ctx)
+	if !callerOK {
+		return syscall.EPERM
+	}
+
 	parentVirtualPath := n.Path(n.Root())
+	if parentVirtualPath == "." {
+		parentVirtualPath = ""
+	}
 	virtualPath, errno := joinVirtualPath(parentVirtualPath, name)
 	if errno != 0 {
 		return errno
@@ -120,6 +171,22 @@ func (n *Node) Rmdir(ctx context.Context, name string) syscall.Errno {
 			if uint32(st.Mode)&syscall.S_IFMT != syscall.S_IFDIR {
 				return syscall.ENOTDIR
 			}
+			if callerOK {
+				parentPhysical := filepath.Dir(physicalPath)
+				pst := syscall.Stat_t{}
+				if err := syscall.Lstat(parentPhysical, &pst); err != nil {
+					return fs.ToErrno(err)
+				}
+				if uint32(pst.Mode)&syscall.S_IFMT != syscall.S_IFDIR {
+					return syscall.ENOTDIR
+				}
+				if errno := dirWriteExecPermErrno(caller, uint32(pst.Mode), pst.Uid, pst.Gid); errno != 0 {
+					return errno
+				}
+				if errno := stickyDirMayRemoveErrno(caller, uint32(pst.Mode), pst.Uid, st.Uid); errno != 0 {
+					return errno
+				}
+			}
 			errno := fs.ToErrno(syscall.Rmdir(physicalPath))
 			if errno != 0 {
 				n.log.Error().Str("op", "rmdir").Str("path", virtualPath).Str("storage_id", t.ID).Err(errno).Msg("failed to rmdir")
@@ -142,6 +209,24 @@ func (n *Node) Rmdir(ctx context.Context, name string) syscall.Errno {
 		}
 		if !f.IsDir {
 			return syscall.ENOTDIR
+		}
+		if callerOK && parentVirtualPath != "" {
+			pdir, ok, err := n.db.GetEffectiveFile(ctx, t.ID, parentVirtualPath)
+			if err != nil {
+				return toErrno(fmt.Errorf("failed to lookup indexed parent dir: %w", err))
+			}
+			if !ok {
+				return syscall.ENOENT
+			}
+			if !pdir.IsDir {
+				return syscall.ENOTDIR
+			}
+			if errno := dirWriteExecPermErrno(caller, pdir.Mode, pdir.UID, pdir.GID); errno != 0 {
+				return errno
+			}
+			if errno := stickyDirMayRemoveErrno(caller, pdir.Mode, pdir.UID, f.UID); errno != 0 {
+				return errno
+			}
 		}
 		updated, err := n.db.MarkDeleted(ctx, t.ID, virtualPath, true)
 		if err != nil {

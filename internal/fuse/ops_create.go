@@ -20,7 +20,15 @@ func (n *Node) Create(ctx context.Context, name string, flags uint32, mode uint3
 		return nil, nil, 0, fs.ToErrno(&errkind.NilError{What: "router"})
 	}
 
+	caller, callerOK := gofuse.FromContext(ctx)
+	if !callerOK {
+		return nil, nil, 0, syscall.EPERM
+	}
+
 	parentVirtualPath := n.Path(n.Root())
+	if parentVirtualPath == "." {
+		parentVirtualPath = ""
+	}
 	virtualPath, errno := joinVirtualPath(parentVirtualPath, name)
 	if errno != 0 {
 		return nil, nil, 0, errno
@@ -44,6 +52,20 @@ func (n *Node) Create(ctx context.Context, name string, flags uint32, mode uint3
 	if err := materializeParentDirs(ctx, target.Root, virtualPath); err != nil {
 		n.log.Error().Str("op", "create").Str("path", virtualPath).Str("storage_id", target.ID).Err(err).Msg("failed to materialize parent dirs")
 		return nil, nil, 0, fs.ToErrno(err)
+	}
+	if callerOK {
+		parentPhysical := filepath.Dir(physicalPath)
+		pst := syscall.Stat_t{}
+		if err := syscall.Lstat(parentPhysical, &pst); err != nil {
+			n.log.Error().Str("op", "create").Str("path", virtualPath).Str("storage_id", target.ID).Err(err).Msg("failed to lstat parent")
+			return nil, nil, 0, fs.ToErrno(err)
+		}
+		if uint32(pst.Mode)&syscall.S_IFMT != syscall.S_IFDIR {
+			return nil, nil, 0, syscall.ENOTDIR
+		}
+		if errno := dirWriteExecPermErrno(caller, uint32(pst.Mode), pst.Uid, pst.Gid); errno != 0 {
+			return nil, nil, 0, errno
+		}
 	}
 
 	openFlags := int(flags) &^ syscall.O_APPEND
@@ -82,7 +104,15 @@ func (n *Node) Mkdir(ctx context.Context, name string, mode uint32, out *gofuse.
 		return nil, fs.ToErrno(&errkind.NilError{What: "router"})
 	}
 
+	caller, callerOK := gofuse.FromContext(ctx)
+	if !callerOK {
+		return nil, syscall.EPERM
+	}
+
 	parentVirtualPath := n.Path(n.Root())
+	if parentVirtualPath == "." {
+		parentVirtualPath = ""
+	}
 	virtualPath, errno := joinVirtualPath(parentVirtualPath, name)
 	if errno != 0 {
 		return nil, errno
@@ -115,6 +145,11 @@ func (n *Node) Mkdir(ctx context.Context, name string, mode uint32, out *gofuse.
 	}
 	if uint32(pst.Mode)&syscall.S_IFMT != syscall.S_IFDIR {
 		return nil, syscall.ENOTDIR
+	}
+	if callerOK {
+		if errno := dirWriteExecPermErrno(caller, uint32(pst.Mode), pst.Uid, pst.Gid); errno != 0 {
+			return nil, errno
+		}
 	}
 	if uint32(pst.Mode)&syscall.S_ISGID != 0 {
 		// setgid must propagate from the physical parent directory.

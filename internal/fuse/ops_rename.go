@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hanwen/go-fuse/v2/fs"
+	gofuse "github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/hieutdo/policyfs/internal/errkind"
 	"github.com/hieutdo/policyfs/internal/eventlog"
 	"github.com/hieutdo/policyfs/internal/router"
@@ -29,6 +30,11 @@ func (n *Node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 		return syscall.ENOTSUP
 	}
 
+	caller, callerOK := gofuse.FromContext(ctx)
+	if !callerOK {
+		return syscall.EPERM
+	}
+
 	np, ok := newParent.(*Node)
 	if !ok {
 		return syscall.EXDEV
@@ -39,6 +45,9 @@ func (n *Node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 	}
 
 	oldParentVirtualPath := n.Path(n.Root())
+	if oldParentVirtualPath == "." {
+		oldParentVirtualPath = ""
+	}
 	oldVirtualPath, errno := joinVirtualPath(oldParentVirtualPath, name)
 	if errno != 0 {
 		return errno
@@ -47,6 +56,8 @@ func (n *Node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 	srcTarget := router.Target{}
 	srcPhysicalPath := ""
 	srcWasIndexed := false
+	srcSt := syscall.Stat_t{}
+	haveSrcSt := false
 	{
 		targets, err := n.rt.ResolveReadTargets(oldVirtualPath)
 		if err != nil {
@@ -66,6 +77,8 @@ func (n *Node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 				srcTarget = t
 				srcPhysicalPath = p
 				srcWasIndexed = false
+				srcSt = st
+				haveSrcSt = true
 				found = true
 				break
 			}
@@ -101,9 +114,32 @@ func (n *Node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 	}
 
 	newParentVirtualPath := np.Path(np.Root())
+	if newParentVirtualPath == "." {
+		newParentVirtualPath = ""
+	}
 	newVirtualPath, errno := joinVirtualPath(newParentVirtualPath, newName)
 	if errno != 0 {
 		return errno
+	}
+
+	if !srcWasIndexed && callerOK {
+		if !haveSrcSt {
+			return syscall.EIO
+		}
+		oldParentPhysical := filepath.Dir(srcPhysicalPath)
+		pst := syscall.Stat_t{}
+		if err := syscall.Lstat(oldParentPhysical, &pst); err != nil {
+			return fs.ToErrno(err)
+		}
+		if uint32(pst.Mode)&syscall.S_IFMT != syscall.S_IFDIR {
+			return syscall.ENOTDIR
+		}
+		if errno := dirWriteExecPermErrno(caller, uint32(pst.Mode), pst.Uid, pst.Gid); errno != 0 {
+			return errno
+		}
+		if errno := stickyDirMayRemoveErrno(caller, uint32(pst.Mode), pst.Uid, srcSt.Uid); errno != 0 {
+			return errno
+		}
 	}
 
 	if srcWasIndexed {
@@ -128,6 +164,52 @@ func (n *Node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 			// Treat moves out of the source target's routing domain as cross-device.
 			n.log.Debug().Str("op", "rename").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Msg("rename blocked: cross-target")
 			return syscall.EXDEV
+		}
+
+		if callerOK {
+			srcEntry, ok, err := n.db.GetEffectiveFile(ctx, srcTarget.ID, oldVirtualPath)
+			if err != nil {
+				return toErrno(fmt.Errorf("failed to lookup indexed source: %w", err))
+			}
+			if !ok {
+				return syscall.ENOENT
+			}
+			if oldParentVirtualPath != "" {
+				pdir, ok, err := n.db.GetEffectiveFile(ctx, srcTarget.ID, oldParentVirtualPath)
+				if err != nil {
+					return toErrno(fmt.Errorf("failed to lookup indexed src parent: %w", err))
+				}
+				if !ok || !pdir.IsDir {
+					return syscall.ENOTDIR
+				}
+				if errno := dirWriteExecPermErrno(caller, pdir.Mode, pdir.UID, pdir.GID); errno != 0 {
+					return errno
+				}
+				if errno := stickyDirMayRemoveErrno(caller, pdir.Mode, pdir.UID, srcEntry.UID); errno != 0 {
+					return errno
+				}
+			}
+			if newParentVirtualPath != "" {
+				pdir, ok, err := n.db.GetEffectiveFile(ctx, srcTarget.ID, newParentVirtualPath)
+				if err != nil {
+					return toErrno(fmt.Errorf("failed to lookup indexed dst parent: %w", err))
+				}
+				if !ok || !pdir.IsDir {
+					return syscall.ENOTDIR
+				}
+				if errno := dirWriteExecPermErrno(caller, pdir.Mode, pdir.UID, pdir.GID); errno != 0 {
+					return errno
+				}
+				dstEntry, ok, err := n.db.GetEffectiveFile(ctx, srcTarget.ID, newVirtualPath)
+				if err != nil {
+					return toErrno(fmt.Errorf("failed to lookup indexed overwrite target: %w", err))
+				}
+				if ok {
+					if errno := stickyDirMayRemoveErrno(caller, pdir.Mode, pdir.UID, dstEntry.UID); errno != 0 {
+						return errno
+					}
+				}
+			}
 		}
 
 		updated, err := n.db.RenamePath(ctx, srcTarget.ID, oldVirtualPath, newVirtualPath)
@@ -167,6 +249,27 @@ func (n *Node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 	if err := materializeParentDirs(ctx, srcTarget.Root, newVirtualPath); err != nil {
 		n.log.Error().Str("op", "rename").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Err(err).Msg("failed to materialize parent dirs")
 		return fs.ToErrno(err)
+	}
+	if callerOK {
+		newParentPhysical := filepath.Dir(dstPhysicalPath)
+		pst := syscall.Stat_t{}
+		if err := syscall.Lstat(newParentPhysical, &pst); err != nil {
+			return fs.ToErrno(err)
+		}
+		if uint32(pst.Mode)&syscall.S_IFMT != syscall.S_IFDIR {
+			return syscall.ENOTDIR
+		}
+		if errno := dirWriteExecPermErrno(caller, uint32(pst.Mode), pst.Uid, pst.Gid); errno != 0 {
+			return errno
+		}
+		dstSt := syscall.Stat_t{}
+		if err := syscall.Lstat(dstPhysicalPath, &dstSt); err == nil {
+			if errno := stickyDirMayRemoveErrno(caller, uint32(pst.Mode), pst.Uid, dstSt.Uid); errno != 0 {
+				return errno
+			}
+		} else if !errors.Is(err, syscall.ENOENT) {
+			return fs.ToErrno(err)
+		}
 	}
 	renameErrno := fs.ToErrno(syscall.Rename(srcPhysicalPath, dstPhysicalPath))
 	if renameErrno != 0 {
