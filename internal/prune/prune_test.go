@@ -201,6 +201,82 @@ func TestRunOneshot_UnknownStorage_shouldSkipAndContinue(t *testing.T) {
 	require.NoFileExists(t, physical, "valid DELETE should have been applied")
 }
 
+// TestRunOneshot_InvalidPathTraversal_shouldWarnAndSkip verifies prune rejects escaping paths
+// and still processes subsequent valid events.
+func TestRunOneshot_InvalidPathTraversal_shouldWarnAndSkip(t *testing.T) {
+	mount := "media"
+	_ = setupPruneTestEnv(t, mount)
+
+	storageRoot := filepath.Join(t.TempDir(), "hdd1")
+	require.NoError(t, os.MkdirAll(storageRoot, 0o755))
+
+	// A file outside the storage root should never be touched.
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	mustWriteFile(t, outside, []byte("do-not-touch"))
+
+	// Event 1: escape-root attempt.
+	require.NoError(t, eventlog.Append(context.Background(), mount,
+		eventlog.DeleteEvent{Type: eventlog.TypeDelete, StorageID: "hdd1", Path: "../outside.txt", IsDir: false, TS: 1}))
+
+	// Event 2: valid DELETE.
+	insideRel := "ok.txt"
+	insidePhysical := filepath.Join(storageRoot, insideRel)
+	mustWriteFile(t, insidePhysical, []byte("hello"))
+	require.NoError(t, eventlog.Append(context.Background(), mount,
+		eventlog.DeleteEvent{Type: eventlog.TypeDelete, StorageID: "hdd1", Path: insideRel, IsDir: false, TS: 2}))
+
+	res, err := RunOneshot(context.Background(), mount,
+		&config.MountConfig{StoragePaths: []config.StoragePath{{ID: "hdd1", Path: storageRoot}}},
+		Opts{}, Hooks{})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), res.EventsProcessed)
+	require.Equal(t, int64(1), res.EventsSucceeded)
+	require.Equal(t, int64(1), res.EventsFailed)
+	require.NotEmpty(t, res.Warnings)
+	require.Contains(t, res.Warnings[0], "invalid path")
+
+	// Invalid event must not touch outside file.
+	require.FileExists(t, outside)
+	// Valid event should apply.
+	require.NoFileExists(t, insidePhysical)
+}
+
+// TestRunOneshot_InvalidPathForms_shouldWarnAndSkip verifies various invalid path encodings are rejected.
+func TestRunOneshot_InvalidPathForms_shouldWarnAndSkip(t *testing.T) {
+	mount := "media"
+	_ = setupPruneTestEnv(t, mount)
+
+	storageRoot := filepath.Join(t.TempDir(), "hdd1")
+	require.NoError(t, os.MkdirAll(storageRoot, 0o755))
+
+	cases := []struct {
+		name string
+		path string
+	}{
+		{name: "absolute", path: "/abs.txt"},
+		{name: "trailing-slash", path: "dir/"},
+		{name: "dot-segment", path: "a/./b"},
+		{name: "dotdot-segment", path: "a/../b"},
+		{name: "double-slash", path: "a//b"},
+	}
+
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.NoError(t, eventlog.Append(context.Background(), mount,
+				eventlog.DeleteEvent{Type: eventlog.TypeDelete, StorageID: "hdd1", Path: tc.path, IsDir: false, TS: int64(i + 1)}))
+			res, err := RunOneshot(context.Background(), mount,
+				&config.MountConfig{StoragePaths: []config.StoragePath{{ID: "hdd1", Path: storageRoot}}},
+				Opts{Limit: 1}, Hooks{})
+			require.NoError(t, err)
+			require.Equal(t, int64(1), res.EventsProcessed)
+			require.Equal(t, int64(0), res.EventsSucceeded)
+			require.Equal(t, int64(1), res.EventsFailed)
+			require.NotEmpty(t, res.Warnings)
+			require.Contains(t, res.Warnings[0], "invalid path")
+		})
+	}
+}
+
 // TestApplySetattr_partialFailure_chmodOK_chownEPERM verifies that when chmod succeeds but
 // chown fails with EPERM, the event is marked as failed with a warning, but the offset still
 // advances (no retry). Requires non-root to trigger EPERM on chown.

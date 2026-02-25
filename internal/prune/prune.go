@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -207,6 +208,32 @@ func applyOneEvent(ctx context.Context, storageRoots map[string]string, db *inde
 	}
 }
 
+// validateEventVirtualPath rejects any event path that could escape the storage root.
+func validateEventVirtualPath(rel string) error {
+	rel = strings.TrimSpace(rel)
+	if rel == "" || rel == "." {
+		return &errkind.InvalidError{What: "path"}
+	}
+	if strings.ContainsRune(rel, 0) {
+		return &errkind.InvalidError{What: "path"}
+	}
+	if strings.HasPrefix(rel, "/") {
+		return &errkind.InvalidError{What: "path"}
+	}
+	if strings.HasSuffix(rel, "/") {
+		return &errkind.InvalidError{What: "path"}
+	}
+	if strings.Contains(rel, "//") {
+		return &errkind.InvalidError{What: "path"}
+	}
+	for part := range strings.SplitSeq(rel, "/") {
+		if part == "" || part == "." || part == ".." {
+			return &errkind.InvalidError{What: "path"}
+		}
+	}
+	return nil
+}
+
 // physicalPathFor resolves a storage_id + virtual path to an absolute physical path.
 func physicalPathFor(storageRoots map[string]string, storageID string, rel string) (string, error) {
 	root := ""
@@ -216,8 +243,22 @@ func physicalPathFor(storageRoots map[string]string, storageID string, rel strin
 	if strings.TrimSpace(root) == "" {
 		return "", &errkind.NotFoundError{Msg: fmt.Sprintf("storage id not found: %s", storageID)}
 	}
-	rel = filepath.FromSlash(strings.TrimPrefix(strings.TrimSpace(rel), "/"))
-	return filepath.Join(root, rel), nil
+	if err := validateEventVirtualPath(rel); err != nil {
+		return "", err
+	}
+
+	root = filepath.Clean(root)
+	if runtime.GOOS != "windows" && !filepath.IsAbs(root) {
+		return "", &errkind.InvalidError{What: "storage root"}
+	}
+
+	relOS := filepath.FromSlash(rel)
+	p := filepath.Clean(filepath.Join(root, relOS))
+	rootPrefix := root + string(os.PathSeparator)
+	if p != root && !strings.HasPrefix(p, rootPrefix) {
+		return "", &errkind.InvalidError{What: "path"}
+	}
+	return p, nil
 }
 
 // applyDelete applies one DELETE event.
@@ -226,6 +267,10 @@ func applyDelete(ctx context.Context, storageRoots map[string]string, db *indexd
 	if err != nil {
 		if errors.Is(err, errkind.ErrNotFound) {
 			w := fmt.Sprintf("storage not found: storage_id=%s path=%s", e.StorageID, e.Path)
+			return applyResult{failed: 1}, []string{w}, true, false, nil
+		}
+		if errors.Is(err, errkind.ErrInvalid) {
+			w := fmt.Sprintf("invalid path: storage_id=%s path=%s", e.StorageID, e.Path)
 			return applyResult{failed: 1}, []string{w}, true, false, nil
 		}
 		return applyResult{failed: 1}, nil, false, true, err
@@ -283,12 +328,20 @@ func applyRename(ctx context.Context, storageRoots map[string]string, db *indexd
 			w := fmt.Sprintf("storage not found: storage_id=%s old_path=%s new_path=%s", e.StorageID, e.OldPath, e.NewPath)
 			return applyResult{failed: 1}, []string{w}, true, false, nil
 		}
+		if errors.Is(err, errkind.ErrInvalid) {
+			w := fmt.Sprintf("invalid path: storage_id=%s old_path=%s new_path=%s", e.StorageID, e.OldPath, e.NewPath)
+			return applyResult{failed: 1}, []string{w}, true, false, nil
+		}
 		return applyResult{failed: 1}, nil, false, true, err
 	}
 	newP, err := physicalPathFor(storageRoots, e.StorageID, e.NewPath)
 	if err != nil {
 		if errors.Is(err, errkind.ErrNotFound) {
 			w := fmt.Sprintf("storage not found: storage_id=%s old_path=%s new_path=%s", e.StorageID, e.OldPath, e.NewPath)
+			return applyResult{failed: 1}, []string{w}, true, false, nil
+		}
+		if errors.Is(err, errkind.ErrInvalid) {
+			w := fmt.Sprintf("invalid path: storage_id=%s old_path=%s new_path=%s", e.StorageID, e.OldPath, e.NewPath)
 			return applyResult{failed: 1}, []string{w}, true, false, nil
 		}
 		return applyResult{failed: 1}, nil, false, true, err
@@ -331,6 +384,10 @@ func applySetattr(ctx context.Context, storageRoots map[string]string, db *index
 	if err != nil {
 		if errors.Is(err, errkind.ErrNotFound) {
 			w := fmt.Sprintf("storage not found: storage_id=%s path=%s", e.StorageID, e.Path)
+			return applyResult{failed: 1}, []string{w}, true, false, nil
+		}
+		if errors.Is(err, errkind.ErrInvalid) {
+			w := fmt.Sprintf("invalid path: storage_id=%s path=%s", e.StorageID, e.Path)
 			return applyResult{failed: 1}, []string{w}, true, false, nil
 		}
 		return applyResult{failed: 1}, nil, false, true, err
