@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hieutdo/policyfs/internal/config"
+	"github.com/hieutdo/policyfs/internal/daemonctl"
 	"github.com/hieutdo/policyfs/internal/errkind"
 	"github.com/hieutdo/policyfs/internal/eventlog"
 	"github.com/hieutdo/policyfs/internal/indexdb"
@@ -96,6 +97,12 @@ func (p *planner) runJob(ctx context.Context, j config.MoverJobConfig, hooks Hoo
 			return jr, err
 		}
 		jr.TotalCandidates += int64(len(cands))
+
+		openSet, openErr := p.queryOpenFileSet(ctx, cands)
+		if openErr != nil {
+			return jr, openErr
+		}
+
 		for _, c := range cands {
 			if err := ctx.Err(); err != nil {
 				return jr, fmt.Errorf("move canceled: %w", err)
@@ -125,6 +132,15 @@ func (p *planner) runJob(ctx context.Context, j config.MoverJobConfig, hooks Hoo
 
 			srcRoot := p.storageByID[c.SrcStorageID].Path
 			srcPhys := filepath.Join(srcRoot, c.RelPath)
+
+			if openSet != nil {
+				id := daemonctl.OpenFileID{StorageID: c.SrcStorageID, Dev: c.Dev, Ino: c.Ino}
+				if _, isOpen := openSet[id]; isOpen {
+					jr.FilesSkipped++
+					jr.FilesSkippedOpen++
+					continue
+				}
+			}
 
 			if p.opts.DryRun {
 				if hooks.FileStart != nil && len(dests) > 0 {

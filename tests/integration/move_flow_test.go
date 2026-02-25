@@ -106,6 +106,71 @@ func TestMove_shouldMoveFromNonIndexedToIndexed_andMountShouldExposeWithoutIndex
 	})
 }
 
+// TestMove_shouldSkipOpenFileAndMoveAfterClose verifies open-file awareness:
+// when a file is open via the mounted view, mover must skip it (skipped_open++)
+// and only move it after the file handle is closed.
+func TestMove_shouldSkipOpenFileAndMoveAfterClose(t *testing.T) {
+	if os.Getenv(config.EnvIntegrationUseExistingMount) != "" {
+		t.Skip("skip move flow test when using an existing mount")
+	}
+
+	jobName := "archive"
+	rel := "library/open-aware.txt"
+
+	mv := &config.MoverConfig{
+		Enabled: new(true),
+		Jobs: []config.MoverJobConfig{
+			{
+				Name:        jobName,
+				Description: "integration open-file awareness",
+				Trigger:     config.MoverTriggerConfig{Type: "manual"},
+				Source: config.MoverSourceConfig{
+					Paths:    []string{"ssd1"},
+					Patterns: []string{"library/**"},
+				},
+				Destination: config.MoverDestinationConfig{
+					Paths:  []string{"hdd1"},
+					Policy: "first_found",
+				},
+				DeleteSource: new(true),
+				Verify:       new(false),
+			},
+		},
+	}
+
+	cfg := IntegrationConfig{
+		Storages: []IntegrationStorage{
+			{ID: "ssd1", Indexed: false, BasePath: "/mnt/ssd1/pfs-integration"},
+			{ID: "hdd1", Indexed: false, BasePath: "/mnt/hdd1/pfs-integration"},
+		},
+		Targets:     []string{"ssd1"},
+		ReadTargets: []string{"ssd1"},
+		Mover:       mv,
+	}
+
+	withMountedFS(t, cfg, func(env *MountedFS) {
+		env.MustWriteFileInMountPoint(t, rel, []byte("hello-open"))
+
+		f, err := os.Open(env.MountPath(rel))
+		require.NoError(t, err)
+		defer func() { _ = f.Close() }()
+
+		out, err := runPFSOutput(t, env, "move", env.MountName, "--job", jobName, "--progress=off")
+		require.NoError(t, err, "move should succeed (no-op) when skipping open files, output: %s", string(out))
+		require.Contains(t, string(out), "skipped_open", "expected skipped_open in output, got: %s", string(out))
+
+		require.FileExists(t, env.StoragePath("ssd1", rel))
+		require.NoFileExists(t, env.StoragePath("hdd1", rel))
+
+		require.NoError(t, f.Close())
+
+		mustRunPFS(t, env, "move", env.MountName, "--job", jobName, "--progress=off")
+
+		require.NoFileExists(t, env.StoragePath("ssd1", rel))
+		require.FileExists(t, env.StoragePath("hdd1", rel))
+	})
+}
+
 // TestMove_deleteEmptyDir_nonIndexed_shouldRemoveEmptySourceDirs verifies delete_empty_dir removes empty
 // source directory chains after successful move when source is non-indexed.
 func TestMove_deleteEmptyDir_nonIndexed_shouldRemoveEmptySourceDirs(t *testing.T) {

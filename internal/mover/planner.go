@@ -2,6 +2,7 @@ package mover
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -12,8 +13,9 @@ import (
 
 // planner contains shared state for counting and running jobs.
 type planner struct {
-	mountName string
-	mountCfg  *config.MountConfig
+	mountName      string
+	mountCfg       *config.MountConfig
+	daemonSockPath string
 
 	opts Opts
 
@@ -35,14 +37,15 @@ func newPlanner(mountName string, mountCfg *config.MountConfig, opts Opts) *plan
 		groups[k] = append([]string{}, v...)
 	}
 	return &planner{
-		mountName:   mountName,
-		mountCfg:    mountCfg,
-		opts:        opts,
-		storageByID: storageByID,
-		groups:      groups,
-		now:         time.Now,
-		usagePct:    usagePercent,
-		freeSpaceGB: freeSpaceGB,
+		mountName:      mountName,
+		mountCfg:       mountCfg,
+		daemonSockPath: filepath.Join(config.MountRuntimeDir(mountName), "daemon.sock"),
+		opts:           opts,
+		storageByID:    storageByID,
+		groups:         groups,
+		now:            time.Now,
+		usagePct:       usagePercent,
+		freeSpaceGB:    freeSpaceGB,
 	}
 }
 

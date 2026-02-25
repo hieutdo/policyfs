@@ -10,6 +10,7 @@ import (
 	"github.com/hanwen/go-fuse/v2/fs"
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/hieutdo/policyfs/internal/config"
+	"github.com/hieutdo/policyfs/internal/daemonctl"
 	"github.com/hieutdo/policyfs/internal/indexdb"
 	"github.com/hieutdo/policyfs/internal/router"
 	"github.com/rs/zerolog"
@@ -23,6 +24,7 @@ type Node struct {
 	db        *indexdb.DB
 	log       zerolog.Logger
 	disk      *diskAccessLogger
+	open      *OpenTracker
 }
 
 // NewRoot creates the PolicyFS root node for mounting.
@@ -49,7 +51,7 @@ func NewRoot(mountName string, m *config.MountConfig, primaryRootPath string, db
 		return op, nil
 	}
 
-	n := &Node{LoopbackNode: lb, mountName: mountName, rt: rt, db: db, log: fuseLog, disk: diskLog}
+	n := &Node{LoopbackNode: lb, mountName: mountName, rt: rt, db: db, log: fuseLog, disk: diskLog, open: NewOpenTracker()}
 	if lb.RootData != nil {
 		lb.RootData.RootNode = n
 	}
@@ -62,12 +64,20 @@ func (n *Node) WrapChild(ctx context.Context, ops fs.InodeEmbedder) fs.InodeEmbe
 	if !ok {
 		return ops
 	}
-	return &Node{LoopbackNode: lb, mountName: n.mountName, rt: n.rt, db: n.db, log: n.log, disk: n.disk}
+	return &Node{LoopbackNode: lb, mountName: n.mountName, rt: n.rt, db: n.db, log: n.log, disk: n.disk, open: n.open}
+}
+
+// OpenCounts implements daemonctl.OpenCountsProvider for the daemon control socket.
+func (n *Node) OpenCounts(ctx context.Context, files []daemonctl.OpenFileID) ([]daemonctl.OpenStat, error) {
+	if n == nil || n.open == nil {
+		return nil, nil
+	}
+	return n.open.OpenCounts(ctx, files)
 }
 
 // Lookup resolves a child entry using the router's read target order.
 func (n *Node) Lookup(ctx context.Context, name string, out *gofuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	ch, errno := lookupChild(ctx, n.EmbeddedInode(), n.RootData, n.mountName, n.rt, n.db, n.log, n.disk, name, out)
+	ch, errno := lookupChild(ctx, n.EmbeddedInode(), n.RootData, n.mountName, n.rt, n.db, n.log, n.disk, n.open, name, out)
 	if errno != 0 && errno != syscall.ENOENT {
 		n.log.Error().Str("op", "lookup").Str("path", filepath.Join(n.Path(n.Root()), name)).Err(errno).Msg("failed to lookup")
 	}
@@ -119,6 +129,7 @@ func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 		return nil, 0, errno
 	}
 	if h, ok := fh.(*FileHandle); ok {
+		attachOpenTracking(ctx, n, virtualPath, h, write)
 		if h.fallback {
 			n.log.Warn().Str("op", "open").Str("path", virtualPath).Str("storage_id", h.storageID).Msg("open: stale real_path fallback triggered")
 		}

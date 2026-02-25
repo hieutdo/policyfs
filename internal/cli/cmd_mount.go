@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/hanwen/go-fuse/v2/fs"
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/hieutdo/policyfs/internal/config"
+	"github.com/hieutdo/policyfs/internal/daemonctl"
 	"github.com/hieutdo/policyfs/internal/errkind"
 	pfsfuse "github.com/hieutdo/policyfs/internal/fuse"
 	"github.com/hieutdo/policyfs/internal/indexdb"
@@ -163,6 +165,32 @@ This command is typically managed by systemd as a service.`,
 				return &CLIError{Code: ExitFail, Cmd: "mount", Headline: "unexpected error", Cause: rootCause(err)}
 			}
 
+			// Start daemon control socket for open-file awareness.
+			mountRuntimeDir := config.MountRuntimeDir(mountName)
+			if err := os.MkdirAll(mountRuntimeDir, 0o755); err != nil {
+				return &CLIError{Code: ExitFail, Cmd: "mount", Headline: "failed to ensure runtime dir", Cause: rootCause(err)}
+			}
+			sockPath := filepath.Join(mountRuntimeDir, "daemon.sock")
+			controlLog := cfgLog.With().Str("component", "fuse").Str("mount", mountName).Logger()
+			controlCtx, controlCancel := context.WithCancel(context.Background())
+			var controlSrv *daemonctl.Server
+			if provider, ok := root.(daemonctl.OpenCountsProvider); ok {
+				controlSrv, err = daemonctl.StartServer(controlCtx, sockPath, provider, controlLog)
+				if err != nil {
+					controlCancel()
+					return &CLIError{Code: ExitFail, Cmd: "mount", Headline: "failed to start daemon control socket", Cause: rootCause(err)}
+				}
+			} else {
+				controlCancel()
+				cmdLog.Warn().Str("mount", mountName).Msg("daemon control socket unavailable")
+			}
+			defer func() {
+				controlCancel()
+				if controlSrv != nil {
+					_ = controlSrv.Close()
+				}
+			}()
+
 			idxDBPath := ""
 			if idxDB != nil {
 				idxDBPath = idxDB.Path
@@ -215,6 +243,10 @@ This command is typically managed by systemd as a service.`,
 			var shutdownOnce sync.Once
 			reqShutdown := func() {
 				shutdownOnce.Do(func() {
+					controlCancel()
+					if controlSrv != nil {
+						_ = controlSrv.Close()
+					}
 					cmdLog.Info().Str("mount", mountName).Str("mountpoint", mountCfg.MountPoint).Msg("unmount requested")
 
 					// Do not block on Unmount(): go-fuse can hang here in some failure modes.

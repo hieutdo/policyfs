@@ -26,6 +26,8 @@ type candidate struct {
 	Mode         uint32
 	UID          uint32
 	GID          uint32
+	Dev          uint64
+	Ino          uint64
 }
 
 // conditions is the parsed move conditions for filtering candidates.
@@ -275,8 +277,10 @@ func (p *planner) discoverCandidatesOneSource(ctx context.Context, jobName strin
 			SizeBytes:    sz,
 			MTimeSec:     mtime.Unix(),
 			Mode:         mode,
-			UID:          uint32(st.Uid),
-			GID:          uint32(st.Gid),
+			UID:          st.Uid,
+			GID:          st.Gid,
+			Dev:          uint64(st.Dev),
+			Ino:          st.Ino,
 		})
 
 		return nil

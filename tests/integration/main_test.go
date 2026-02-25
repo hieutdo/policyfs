@@ -4,6 +4,8 @@ package integration
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -190,12 +192,14 @@ func withMountedFS(t *testing.T, cfg IntegrationConfig, fn func(env *MountedFS))
 		t.Fatalf("failed to create storage roots: %v", err)
 	}
 
-	runtimeDir := filepath.Join(tmpDir, name+"-run")
+	rid := runtimeID(name)
+
+	runtimeDir := filepath.Join(tmpDir, "run-"+rid)
 	_ = os.RemoveAll(runtimeDir)
 	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
 		t.Fatalf("failed to ensure runtime dir: %v", err)
 	}
-	stateDir := filepath.Join(tmpDir, name+"-state")
+	stateDir := filepath.Join(tmpDir, "state-"+rid)
 	_ = os.RemoveAll(stateDir)
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		t.Fatalf("failed to ensure state dir: %v", err)
@@ -290,6 +294,15 @@ func sanitizeName(s string) string {
 	s = strings.ReplaceAll(s, "\\", "_")
 	s = strings.ReplaceAll(s, ":", "_")
 	return s
+}
+
+// runtimeID returns a short stable identifier derived from the test name.
+//
+// This avoids unix domain socket path length limits (e.g. daemon.sock) while keeping
+// mountpoints and storage roots readable.
+func runtimeID(testName string) string {
+	sum := sha1.Sum([]byte(testName))
+	return hex.EncodeToString(sum[:6])
 }
 
 // effectiveStorages returns the storage list for a test, with sane defaults.

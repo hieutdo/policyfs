@@ -6,6 +6,7 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/hieutdo/policyfs/internal/daemonctl"
 )
 
 // FileHandle caches open-time resolution for performance.
@@ -20,6 +21,11 @@ type FileHandle struct {
 	fallback     bool // true when stale real_path triggered fallback to virtualPath
 	fd           int
 	flags        uint32
+
+	openTracker *OpenTracker
+	openID      daemonctl.OpenFileID
+	openWrite   bool
+	openTracked bool
 }
 
 // Read reads bytes from the already-open file descriptor.
@@ -52,6 +58,10 @@ func (h *FileHandle) Fsync(ctx context.Context, flags uint32) syscall.Errno {
 
 // Release closes the underlying file descriptor.
 func (h *FileHandle) Release(ctx context.Context) syscall.Errno {
+	if h.openTracker != nil && h.openTracked {
+		defer h.openTracker.Dec(h.openID, h.openWrite)
+	}
+
 	if h.flags&gofuse.O_ANYWRITE != 0 {
 		if err := syscall.Fsync(h.fd); err != nil {
 			_ = syscall.Close(h.fd)

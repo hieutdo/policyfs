@@ -208,7 +208,18 @@ This command is typically scheduled via systemd timers for usage-triggered jobs.
 			if progressUI != nil {
 				progressUI.Finish()
 			}
+
+			totalSkippedOpen := int64(0)
+			for _, jr := range res.Jobs {
+				totalSkippedOpen += jr.FilesSkippedOpen
+			}
 			if res.TotalFilesMoved == 0 && len(warningsHuman) == 0 {
+				if totalSkippedOpen > 0 {
+					if !quiet {
+						printMoveSummary(stdout, res, warningsHuman)
+					}
+					return &CLIError{Code: ExitNoChanges, Silent: true}
+				}
 				if !quiet {
 					fmt.Fprintln(stdout, "Done: nothing to move.")
 				}
@@ -625,6 +636,9 @@ func printMoveSummary(w io.Writer, res mover.Result, warningsHuman []string) {
 			humanfmt.FormatBytesIEC(jr.BytesMoved, 1),
 			humanfmt.FormatBytesIEC(jr.BytesFreed, 1),
 		)
+		if jr.FilesSkippedOpen > 0 {
+			fmt.Fprintf(w, "         skipped_open %s\n", humanize.Comma(jr.FilesSkippedOpen))
+		}
 	}
 	var totalErrors int64
 	for _, jr := range res.Jobs {
