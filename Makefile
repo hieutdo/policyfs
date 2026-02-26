@@ -1,4 +1,4 @@
-.PHONY: dev dev-build dev-down dev-shell build build-local build-linux-amd64 package-deb test test-unit test-integration coverage fmt fmt-staged lint lint-staged hooks clean
+.PHONY: dev dev-build dev-down dev-shell build build-local build-linux-amd64 package-deb test test-unit test-integration coverage fmt fmt-staged lint lint-staged hooks clean docs docs-serve
 
 # Version info from git
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -88,6 +88,12 @@ lint:
 
 lint-staged:
 	$(DCD_EXEC_T) bash /workspace/scripts/lint.sh staged
+
+docs:
+	$(DCD_EXEC_T) bash -lc 'python3 -m venv /workspace/tmp/venv-docs && /workspace/tmp/venv-docs/bin/pip install -r docs/requirements.txt >/dev/null && PYTHON_BIN=/workspace/tmp/venv-docs/bin/python bash scripts/build_docs.sh'
+
+docs-serve:
+	$(DCD_EXEC) bash -lc 'python3 -m venv /workspace/tmp/venv-docs && /workspace/tmp/venv-docs/bin/pip install -r docs/requirements.txt >/dev/null && /workspace/tmp/venv-docs/bin/mkdocs serve -f mkdocs.yml -a 0.0.0.0:8000'
 
 hooks:
 	@git config core.hooksPath .githooks

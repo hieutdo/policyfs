@@ -1,0 +1,3 @@
+# For policyfs.org Cloudflare Pages project:
+# Redirect everything to the canonical .org domain.
+/* https://policyfs.org/:splat 301!

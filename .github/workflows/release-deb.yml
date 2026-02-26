@@ -1,0 +1,56 @@
+name: release-deb
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: setup go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            dpkg-dev \
+            libsqlite3-dev
+
+      - name: unit tests
+        run: go test ./...
+
+      - name: build linux/amd64
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          mkdir -p bin
+          COMMIT_SHORT="$(echo '${{ github.sha }}' | cut -c1-7)"
+          LDFLAGS="-X github.com/hieutdo/policyfs/internal/cli.Version=${VERSION} -X github.com/hieutdo/policyfs/internal/cli.Commit=${COMMIT_SHORT} -X github.com/hieutdo/policyfs/internal/cli.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=1 go build -ldflags "${LDFLAGS}" -o bin/pfs ./cmd/pfs
+
+      - name: package deb
+        env:
+          VERSION: ${{ github.ref_name }}
+          ARCH: amd64
+        run: |
+          bash scripts/package_deb.sh
+
+      - name: release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.deb
+            dist/*.sha256
+          generate_release_notes: true

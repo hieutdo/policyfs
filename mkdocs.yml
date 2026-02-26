@@ -1,0 +1,42 @@
+site_name: PolicyFS
+site_description: PolicyFS Documentation
+site_url: https://docs.policyfs.org/v1/
+repo_url: https://github.com/hieutdo/policyfs
+repo_name: hieutdo/policyfs
+
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - search.highlight
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - pymdownx.superfences
+  - pymdownx.details
+  - pymdownx.inlinehilite
+  - pymdownx.highlight
+
+nav:
+  - Overview: index.md
+  - Install:
+      - Debian/Ubuntu: install/debian.md
+  - Configure: config.md
+  - Systemd: systemd.md
+  - Commands:
+      - CLI overview: cli.md
+      - mount: commands/mount.md
+      - unmount: commands/unmount.md
+      - index: commands/index.md
+      - move: commands/move.md
+      - prune: commands/prune.md
+      - maint: commands/maint.md
+      - doctor: commands/doctor.md
+      - version: commands/version.md
+  - Troubleshooting: troubleshooting.md

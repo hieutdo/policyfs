@@ -2,6 +2,7 @@
 bin/
 dist/
 packaging/build/
+public/
 coverage.out
 coverage.html
 coverage/

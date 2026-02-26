@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PolicyFS</title>
+    <meta name="description" content="Policy-routed FUSE filesystem plus maintenance jobs (index/move/prune)." />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="wrap">
+      <header>
+        <h1>PolicyFS</h1>
+        <p class="tagline">Policy-routed FUSE filesystem plus maintenance jobs for multi-disk storage.</p>
+        <p class="links">
+          <a href="https://docs.policyfs.org/v1/">Docs</a>
+          <a href="https://github.com/hieutdo/policyfs/releases">Releases</a>
+          <a href="https://github.com/hieutdo/policyfs">Source</a>
+        </p>
+      </header>
+
+      <section>
+        <h2>What</h2>
+        <p>
+          PolicyFS mounts multiple storage paths under a single mountpoint. Reads and writes are routed by rules, and
+          directory listings can use an index to keep HDDs asleep.
+        </p>
+      </section>
+
+      <section>
+        <h2>How you run it</h2>
+        <p>
+          PolicyFS is meant to be operated via systemd: one long-running mount daemon, plus timer-driven maintenance
+          jobs.
+        </p>
+      </section>
+
+      <section>
+        <h2>Quickstart</h2>
+        <pre><code>sudo dpkg -i ./pfs_&lt;version&gt;_amd64.deb
+sudo edit /etc/pfs/pfs.yaml
+sudo systemctl enable --now pfs@media.service
+</code></pre>
+      </section>
+
+      <footer>
+        <p>Apache-2.0 licensed.</p>
+      </footer>
+    </main>
+  </body>
+</html>
