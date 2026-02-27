@@ -27,6 +27,7 @@ nav:
   - Overview: index.md
   - Install:
       - Debian/Ubuntu: install/debian.md
+  - Concepts: concepts.md
   - Configure: config.md
   - Systemd: systemd.md
   - Commands:
