@@ -1,6 +1,6 @@
 # PolicyFS
 
-PolicyFS (pfs) is a policy-routed FUSE filesystem plus maintenance jobs (index/move/prune) for managing a multi-disk storage setup.
+PolicyFS (pfs) unifies multiple disks into one mount and uses rules to control where files go, with maintenance jobs to index, move, and prune data.
 
 ## What it does
 
@@ -11,7 +11,6 @@ PolicyFS (pfs) is a policy-routed FUSE filesystem plus maintenance jobs (index/m
 
 ## Status
 
-- v1 development is considered feature-complete.
 - Supported packaging today: Debian/Ubuntu `.deb` (linux/amd64).
 
 ## Docs

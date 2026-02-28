@@ -1,6 +1,6 @@
 # PolicyFS (pfs)
 
-PolicyFS is a policy-routed FUSE filesystem plus maintenance jobs (`index`, `move`, `prune`) for managing multi-disk storage.
+PolicyFS unifies multiple disks into one mount and uses rules to control where files go, with maintenance jobs to index, move, and prune data.
 
 ## When you would use it
 
@@ -8,9 +8,34 @@ PolicyFS is a policy-routed FUSE filesystem plus maintenance jobs (`index`, `mov
 - You want explicit read/write routing rules.
 - You want HDD-friendly directory listings using an index (SQLite) to avoid spinning up disks.
 
+## Why PolicyFS?
+
+While tools like `mergerfs` are great for pooling drives, PolicyFS is focused on making storage behavior explicit:
+
+- How reads and writes are routed.
+- How metadata can be served without touching slow disks.
+- How and when cold data should be moved.
+
+### Key Advantages
+
+- **Policy-based routing:**
+  Route reads and writes based on path patterns, with clear write target selection (`first_found`, `most_free`, `least_free`).
+
+- **SQLite-backed metadata index (optional):**
+  For storage paths with `indexed: true`, metadata operations (e.g., `readdir`, `getattr`) are served from SQLite.
+  This reduces disk touches for metadata-heavy workloads.
+
+- **Built-in maintenance jobs:**
+  Indexing, moving, and applying deferred mutations are first-class CLI commands (`pfs index`, `pfs move`, `pfs prune`, `pfs maint`) with systemd units.
+
+- **Portable data layout:**
+  Your data stays on normal Linux filesystems as plain files and directories.
+
 ## Next steps
 
-- [Install on Debian/Ubuntu](install/debian.md)
+- [Concepts](concepts.md)
+- [Use cases](use-cases.md)
 - [Configure mounts and routing](config.md)
+- [Install on Debian/Ubuntu](install/debian.md)
 - [Run as a systemd-managed service](systemd.md)
 - [CLI overview](cli.md)

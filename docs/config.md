@@ -218,7 +218,7 @@ At least one of `paths` or `groups` must be provided.
 | --------------------- | ------------------- | ------------------------------------------------------------------------------ |
 | `PFS_CONFIG_FILE`     | `/etc/pfs/pfs.yaml` | Override the config file path.                                                 |
 | `PFS_LOG_FILE`        | (unset)             | If set, enables structured log duplication to this file. Overrides `log.file`. |
-| `PFS_LOG_DISK_ACCESS` | —                   | Set to `1` to enable disk access logging for indexed storage.                  |
 | `PFS_STATE_DIR`       | `/var/lib/pfs`      | Base directory for persistent state (index DB, event logs).                    |
 | `PFS_RUNTIME_DIR`     | `/run/pfs`          | Base directory for runtime data (locks, sockets).                              |
+| `PFS_LOG_DISK_ACCESS` | —                   | Set to `1` to enable disk access logging for indexed storage.                  |
 | `TZ`                  | system              | Timezone for `allowed_window` evaluation.                                      |

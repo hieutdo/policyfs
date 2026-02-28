@@ -6,6 +6,21 @@ repo_name: hieutdo/policyfs
 
 theme:
   name: material
+  palette:
+    - media: '(prefers-color-scheme)'
+      toggle:
+        icon: material/brightness-auto
+        name: Switch to light mode
+    - media: '(prefers-color-scheme: light)'
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: '(prefers-color-scheme: dark)'
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to system preference
   features:
     - navigation.instant
     - navigation.sections
@@ -16,9 +31,17 @@ theme:
 plugins:
   - search
 
+extra_javascript:
+  - https://cdn.jsdelivr.net/npm/mermaid@11.12.3/dist/mermaid.min.js
+  - javascripts/mermaid.js
+
 markdown_extensions:
   - admonition
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_div_format
   - pymdownx.details
   - pymdownx.inlinehilite
   - pymdownx.highlight
@@ -28,6 +51,7 @@ nav:
   - Install:
       - Debian/Ubuntu: install/debian.md
   - Concepts: concepts.md
+  - Use cases: use-cases.md
   - Configure: config.md
   - Systemd: systemd.md
   - Commands:

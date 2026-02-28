@@ -92,7 +92,7 @@ lint-staged:
 docs:
 	$(DCD_EXEC_T) bash -lc 'python3 -m venv /workspace/tmp/venv-docs && /workspace/tmp/venv-docs/bin/pip install -r docs/requirements.txt >/dev/null && PYTHON_BIN=/workspace/tmp/venv-docs/bin/python bash scripts/build_docs.sh'
 
-docs-serve:
+docs-serve: docs
 	$(DCD_EXEC) bash -lc 'python3 -m venv /workspace/tmp/venv-docs && /workspace/tmp/venv-docs/bin/pip install -r docs/requirements.txt >/dev/null && /workspace/tmp/venv-docs/bin/mkdocs serve -f mkdocs.yml -a 0.0.0.0:8000'
 
 hooks:
