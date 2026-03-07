@@ -19,7 +19,8 @@ func (n *Node) Unlink(ctx context.Context, name string) syscall.Errno {
 	if n == nil {
 		return fs.ToErrno(&errkind.NilError{What: "node"})
 	}
-	if n.rt == nil {
+	rt, log := n.runtime()
+	if rt == nil {
 		return fs.ToErrno(&errkind.NilError{What: "router"})
 	}
 
@@ -37,7 +38,7 @@ func (n *Node) Unlink(ctx context.Context, name string) syscall.Errno {
 		return errno
 	}
 
-	targets, err := n.rt.ResolveReadTargets(virtualPath)
+	targets, err := rt.ResolveReadTargets(virtualPath)
 	if err != nil {
 		return toErrno(err)
 	}
@@ -73,15 +74,15 @@ func (n *Node) Unlink(ctx context.Context, name string) syscall.Errno {
 			}
 			errno := fs.ToErrno(syscall.Unlink(physicalPath))
 			if errno != 0 {
-				n.log.Error().Str("op", "unlink").Str("path", virtualPath).Str("storage_id", t.ID).Err(errno).Msg("failed to unlink")
+				log.Error().Str("op", "unlink").Str("path", virtualPath).Str("storage_id", t.ID).Err(errno).Msg("failed to unlink")
 			} else {
-				n.log.Debug().Str("op", "unlink").Str("path", virtualPath).Str("storage_id", t.ID).Bool("indexed", false).Msg("unlink")
+				log.Debug().Str("op", "unlink").Str("path", virtualPath).Str("storage_id", t.ID).Bool("indexed", false).Msg("unlink")
 			}
 			return errno
 		}
 
 		if n.db == nil {
-			n.log.Error().Str("op", "unlink").Str("path", virtualPath).Str("storage_id", t.ID).Msg("failed to unlink: db is nil for indexed target")
+			log.Error().Str("op", "unlink").Str("path", virtualPath).Str("storage_id", t.ID).Msg("failed to unlink: db is nil for indexed target")
 			return syscall.EIO
 		}
 		f, ok, err := n.db.GetEffectiveFile(ctx, t.ID, virtualPath)
@@ -120,10 +121,10 @@ func (n *Node) Unlink(ctx context.Context, name string) syscall.Errno {
 			continue
 		}
 		if err := eventlog.Append(ctx, n.mountName, eventlog.DeleteEvent{Type: eventlog.TypeDelete, StorageID: t.ID, Path: virtualPath, IsDir: false, TS: time.Now().Unix()}); err != nil {
-			n.log.Error().Str("op", "unlink").Str("path", virtualPath).Str("storage_id", t.ID).Err(err).Msg("failed to append eventlog")
+			log.Error().Str("op", "unlink").Str("path", virtualPath).Str("storage_id", t.ID).Err(err).Msg("failed to append eventlog")
 			return syscall.EIO
 		}
-		n.log.Debug().Str("op", "unlink").Str("path", virtualPath).Str("storage_id", t.ID).Bool("indexed", true).Msg("unlink")
+		log.Debug().Str("op", "unlink").Str("path", virtualPath).Str("storage_id", t.ID).Bool("indexed", true).Msg("unlink")
 		return 0
 	}
 
@@ -135,7 +136,8 @@ func (n *Node) Rmdir(ctx context.Context, name string) syscall.Errno {
 	if n == nil {
 		return fs.ToErrno(&errkind.NilError{What: "node"})
 	}
-	if n.rt == nil {
+	rt, log := n.runtime()
+	if rt == nil {
 		return fs.ToErrno(&errkind.NilError{What: "router"})
 	}
 
@@ -153,7 +155,7 @@ func (n *Node) Rmdir(ctx context.Context, name string) syscall.Errno {
 		return errno
 	}
 
-	targets, err := n.rt.ResolveReadTargets(virtualPath)
+	targets, err := rt.ResolveReadTargets(virtualPath)
 	if err != nil {
 		return toErrno(err)
 	}
@@ -189,15 +191,15 @@ func (n *Node) Rmdir(ctx context.Context, name string) syscall.Errno {
 			}
 			errno := fs.ToErrno(syscall.Rmdir(physicalPath))
 			if errno != 0 {
-				n.log.Error().Str("op", "rmdir").Str("path", virtualPath).Str("storage_id", t.ID).Err(errno).Msg("failed to rmdir")
+				log.Error().Str("op", "rmdir").Str("path", virtualPath).Str("storage_id", t.ID).Err(errno).Msg("failed to rmdir")
 			} else {
-				n.log.Debug().Str("op", "rmdir").Str("path", virtualPath).Str("storage_id", t.ID).Bool("indexed", false).Msg("rmdir")
+				log.Debug().Str("op", "rmdir").Str("path", virtualPath).Str("storage_id", t.ID).Bool("indexed", false).Msg("rmdir")
 			}
 			return errno
 		}
 
 		if n.db == nil {
-			n.log.Error().Str("op", "rmdir").Str("path", virtualPath).Str("storage_id", t.ID).Msg("failed to rmdir: db is nil for indexed target")
+			log.Error().Str("op", "rmdir").Str("path", virtualPath).Str("storage_id", t.ID).Msg("failed to rmdir: db is nil for indexed target")
 			return syscall.EIO
 		}
 		f, ok, err := n.db.GetEffectiveFile(ctx, t.ID, virtualPath)
@@ -236,10 +238,10 @@ func (n *Node) Rmdir(ctx context.Context, name string) syscall.Errno {
 			continue
 		}
 		if err := eventlog.Append(ctx, n.mountName, eventlog.DeleteEvent{Type: eventlog.TypeDelete, StorageID: t.ID, Path: virtualPath, IsDir: true, TS: time.Now().Unix()}); err != nil {
-			n.log.Error().Str("op", "rmdir").Str("path", virtualPath).Str("storage_id", t.ID).Err(err).Msg("failed to append eventlog")
+			log.Error().Str("op", "rmdir").Str("path", virtualPath).Str("storage_id", t.ID).Err(err).Msg("failed to append eventlog")
 			return syscall.EIO
 		}
-		n.log.Debug().Str("op", "rmdir").Str("path", virtualPath).Str("storage_id", t.ID).Bool("indexed", true).Msg("rmdir")
+		log.Debug().Str("op", "rmdir").Str("path", virtualPath).Str("storage_id", t.ID).Bool("indexed", true).Msg("rmdir")
 		return 0
 	}
 

@@ -114,14 +114,34 @@ type LogConfig struct {
 	File   string `yaml:"file"`
 }
 
+// MountLogConfig overrides global logging settings for a specific mount.
+type MountLogConfig struct {
+	Level string `yaml:"level"`
+}
+
 // MountConfig defines a single mount instance configuration.
 type MountConfig struct {
 	MountPoint    string              `yaml:"mountpoint"`
+	Log           MountLogConfig      `yaml:"log"`
 	StoragePaths  []StoragePath       `yaml:"storage_paths"`
 	StorageGroups map[string][]string `yaml:"storage_groups"`
 	RoutingRules  []RoutingRule       `yaml:"routing_rules"`
 	Indexer       IndexerConfig       `yaml:"indexer"`
 	Mover         MoverConfig         `yaml:"mover"`
+}
+
+// EffectiveLogConfig returns the log config that should be used for this mount.
+//
+// Mount-scoped fields override the root config when non-empty.
+func (m *MountConfig) EffectiveLogConfig(root LogConfig) LogConfig {
+	if m == nil {
+		return root
+	}
+	out := root
+	if strings.TrimSpace(m.Log.Level) != "" {
+		out.Level = m.Log.Level
+	}
+	return out
 }
 
 // MoverConfig controls mover jobs for a mount.

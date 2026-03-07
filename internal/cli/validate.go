@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 
 	"github.com/hieutdo/policyfs/internal/config"
 )
@@ -57,6 +58,14 @@ func resolveMount(rootCfg *config.RootConfig, mountName string) (*config.MountCo
 	mountCfg, err := rootCfg.Mount(mountName)
 	if err != nil {
 		return nil, "", &usageError{err: err}
+	}
+	if lvl := strings.TrimSpace(mountCfg.Log.Level); lvl != "" {
+		switch lvl {
+		case "debug", "info", "warn", "error", "off":
+			// ok
+		default:
+			return nil, "", fmt.Errorf("config: mount %q: log.level is invalid", mountName)
+		}
 	}
 	if mountCfg.MountPoint == "" {
 		return nil, "", fmt.Errorf("config: mount %q: mountpoint is required", mountName)

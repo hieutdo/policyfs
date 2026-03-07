@@ -138,11 +138,11 @@ The daemon handles the hot path. Three maintenance jobs handle everything else â
 
 The daemon and maintenance jobs run as separate processes. They coordinate through locks, a control socket, and shared files:
 
-| Mechanism         | How it works                                                                                                                                                                                         |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `daemon.sock`     | The daemon exposes open file counts via a control socket. The mover queries it to skip files currently being read or written. If the socket is unavailable, the mover proceeds anyway (best-effort). |
-| Event log locking | The daemon appends events under a shared lock (`LOCK_SH`). Prune truncates under an exclusive lock (`LOCK_EX`) to avoid the race where truncation drops freshly-appended events.                     |
-| SQLite index      | The daemon reads from the index. The indexer writes to it. SQLite WAL mode allows concurrent readers with a single writer.                                                                           |
+| Mechanism         | How it works                                                                                                                                                                                                                                   |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `daemon.sock`     | The daemon exposes open file counts and accepts `pfs reload <mount>` requests via a control socket. The mover queries it to skip files currently being read or written. If the socket is unavailable, the mover proceeds anyway (best-effort). |
+| Event log locking | The daemon appends events under a shared lock (`LOCK_SH`). Prune truncates under an exclusive lock (`LOCK_EX`) to avoid the race where truncation drops freshly-appended events.                                                               |
+| SQLite index      | The daemon reads from the index. The indexer writes to it. SQLite WAL mode allows concurrent readers with a single writer.                                                                                                                     |
 
 ## Storage paths
 

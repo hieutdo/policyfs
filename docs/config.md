@@ -99,6 +99,16 @@ Each mount under `mounts.<name>` has:
 
 Absolute path where the FUSE filesystem is mounted (e.g. `/mnt/pfs/media`).
 
+### `log`
+
+Optional mount-scoped logging overrides.
+
+| Field   | Type   | Default | Description                                                                   |
+| ------- | ------ | ------- | ----------------------------------------------------------------------------- |
+| `level` | string | (empty) | If set, overrides top-level `log.level` for this mount only (empty inherits). |
+
+Changes to `mounts.<name>.log.level` can be applied to a running daemon with `pfs reload <mount>`.
+
 ### `storage_paths`
 
 List of physical storage roots. Each entry:
@@ -135,6 +145,8 @@ List of routing rules evaluated top-to-bottom. First match wins.
 
 !!! warning "Catch-all rule required"
 The last rule **must** be `match: '**'`. PolicyFS rejects configs without a catch-all rule, and only one catch-all is allowed.
+
+Changes to `mounts.<name>.routing_rules` can be applied to a running daemon with `pfs reload <mount>`.
 
 ### `indexer`
 

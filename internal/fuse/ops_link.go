@@ -17,7 +17,8 @@ func (n *Node) Link(ctx context.Context, target fs.InodeEmbedder, name string, o
 	if n == nil {
 		return nil, fs.ToErrno(&errkind.NilError{What: "node"})
 	}
-	if n.rt == nil {
+	rt, log := n.runtime()
+	if rt == nil {
 		return nil, fs.ToErrno(&errkind.NilError{What: "router"})
 	}
 	if target == nil {
@@ -25,7 +26,7 @@ func (n *Node) Link(ctx context.Context, target fs.InodeEmbedder, name string, o
 	}
 
 	if tn, ok := target.(*Node); ok {
-		if tn.rt != n.rt {
+		if tn.state != n.state {
 			return nil, syscall.EXDEV
 		}
 	}
@@ -54,18 +55,18 @@ func (n *Node) Link(ctx context.Context, target fs.InodeEmbedder, name string, o
 		oldVirtualPath = ""
 	}
 	// Source must exist on some read target; we hardlink from the first existing physical file.
-	srcTarget, srcPhysicalPath, errno := firstExistingPhysical(n.rt, oldVirtualPath)
+	srcTarget, srcPhysicalPath, errno := firstExistingPhysical(rt, oldVirtualPath)
 	if errno != 0 {
 		return nil, errno
 	}
 	// Indexed targets are not writable yet.
 	if srcTarget.Indexed {
-		n.log.Debug().Str("op", "link").Str("path", newVirtualPath).Str("storage_id", srcTarget.ID).Msg("link blocked: indexed target is read-only")
+		log.Debug().Str("op", "link").Str("path", newVirtualPath).Str("storage_id", srcTarget.ID).Msg("link blocked: indexed target is read-only")
 		return nil, syscall.EROFS
 	}
 
 	// Cross-target hardlinks are not allowed; destination path must be writable on the same target.
-	allowed, err := n.rt.ResolveWriteTargets(newVirtualPath)
+	allowed, err := rt.ResolveWriteTargets(newVirtualPath)
 	if err != nil {
 		return nil, toErrno(err)
 	}
@@ -77,7 +78,7 @@ func (n *Node) Link(ctx context.Context, target fs.InodeEmbedder, name string, o
 		}
 	}
 	if !allowedSameTarget {
-		n.log.Debug().Str("op", "link").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Msg("link blocked: cross-target")
+		log.Debug().Str("op", "link").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Msg("link blocked: cross-target")
 		return nil, syscall.EXDEV
 	}
 
@@ -100,7 +101,7 @@ func (n *Node) Link(ctx context.Context, target fs.InodeEmbedder, name string, o
 		}
 	}
 	if err := syscall.Link(srcPhysicalPath, dstPhysicalPath); err != nil {
-		n.log.Error().Str("op", "link").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Err(err).Msg("failed to link")
+		log.Error().Str("op", "link").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Err(err).Msg("failed to link")
 		return nil, fs.ToErrno(err)
 	}
 
@@ -110,7 +111,7 @@ func (n *Node) Link(ctx context.Context, target fs.InodeEmbedder, name string, o
 	}
 	out.FromStat(&st)
 
-	ch := newChildInode(ctx, n.EmbeddedInode(), n.RootData, n.mountName, n.rt, n.db, n.log, n.disk, n.open, srcTarget.ID, newVirtualPath, uint32(st.Mode))
-	n.log.Debug().Str("op", "link").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Msg("link")
+	ch := newChildInode(ctx, n.EmbeddedInode(), n.RootData, n.mountName, n.state, n.reload, n.db, n.disk, n.open, srcTarget.ID, newVirtualPath, uint32(st.Mode))
+	log.Debug().Str("op", "link").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Msg("link")
 	return ch, 0
 }

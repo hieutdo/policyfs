@@ -25,7 +25,7 @@ pfs mount <mount> [flags]
 
 - Acquires `daemon.lock` — only one daemon per mount can run at a time (exit code 75 if busy).
 - Opens the SQLite index database if any storage path has `indexed: true`.
-- Starts a daemon control socket at `/run/pfs/<mount>/daemon.sock` for open-file tracking.
+- Starts a daemon control socket at `/run/pfs/<mount>/daemon.sock` for open-file tracking and config reload.
 - Mounts the FUSE filesystem with `default_permissions` and optionally `allow_other`.
 
 ## Exit codes

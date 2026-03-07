@@ -76,8 +76,7 @@ func TestQueryOpenFileSet_withServer_shouldReturnOpenFiles(t *testing.T) {
 		},
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	srv, err := daemonctl.StartServer(ctx, sock, provider, zerolog.Nop())
 	require.NoError(t, err)
@@ -109,8 +108,7 @@ func TestQueryOpenFileSet_emptyCandidates_shouldReturnEmptySet(t *testing.T) {
 
 	provider := &stubOpenCountsProvider{}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	srv, err := daemonctl.StartServer(ctx, sock, provider, zerolog.Nop())
 	require.NoError(t, err)

@@ -6,6 +6,7 @@ PolicyFS exposes a single `pfs` binary.
 
 - Daemon/lifecycle:
   - `pfs mount <mount>`
+  - `pfs reload <mount>`
   - `pfs unmount <mount>`
 - Maintenance jobs:
   - `pfs index <mount>`

@@ -55,6 +55,29 @@ mounts:
 	require.Contains(t, stderr, "cause: unsupported log format")
 }
 
+// TestMount_MountLogLevelOverride_Invalid_returnsFail verifies mounts.<name>.log.level is validated.
+func TestMount_MountLogLevelOverride_Invalid_returnsFail(t *testing.T) {
+	cfgDir := t.TempDir()
+	cfgPath := filepath.Join(cfgDir, "pfs.yaml")
+	mountpoint := filepath.Join(cfgDir, "missing-mount")
+
+	require.NoError(t, os.WriteFile(cfgPath, []byte(`
+mounts:
+  media:
+    log:
+      level: nope
+    mountpoint: `+mountpoint+`
+    storage_paths:
+      - id: ssd1
+        path: /tmp
+`), 0o644))
+
+	code, _, stderr := runCLI(t, []string{"--config", cfgPath, "mount", "media"})
+	require.Equal(t, ExitFail, code)
+	require.Contains(t, stderr, "error: invalid config")
+	require.Contains(t, stderr, "cause: config: mount \"media\": log.level is invalid")
+}
+
 // TestMount_LogFileDirMissing_returnsFail verifies missing log file directories are reported as CLI errors.
 func TestMount_LogFileDirMissing_returnsFail(t *testing.T) {
 	cfgDir := t.TempDir()

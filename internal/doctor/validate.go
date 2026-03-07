@@ -48,6 +48,14 @@ func ValidateConfigAll(c *config.RootConfig) []error {
 		if mountName == "" {
 			errList = append(errList, errors.New("config: mount name must not be empty"))
 		}
+		if strings.TrimSpace(m.Log.Level) != "" {
+			switch strings.TrimSpace(m.Log.Level) {
+			case "debug", "info", "warn", "error", "off":
+				// ok
+			default:
+				errList = append(errList, &MountConfigError{Mount: mountName, Msg: "log.level is invalid"})
+			}
+		}
 		if m.MountPoint == "" {
 			errList = append(errList, &MountConfigError{Mount: mountName, Msg: "mountpoint is required"})
 		}

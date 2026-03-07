@@ -15,10 +15,11 @@ func attachOpenTracking(ctx context.Context, n *Node, virtualPath string, h *Fil
 	if n.open == nil {
 		return
 	}
+	_, log := n.runtime()
 
 	st := syscall.Stat_t{}
 	if err := syscall.Fstat(h.fd, &st); err != nil {
-		n.log.Error().Str("op", "open").Str("path", virtualPath).Str("storage_id", h.storageID).Err(err).Msg("failed to fstat open handle")
+		log.Error().Str("op", "open").Str("path", virtualPath).Str("storage_id", h.storageID).Err(err).Msg("failed to fstat open handle")
 		return
 	}
 	attachOpenTrackingFromStat(n, virtualPath, h, write, &st)

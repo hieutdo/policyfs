@@ -19,6 +19,9 @@ import (
 const (
 	// OpOpenCounts is the request op for querying open counts.
 	OpOpenCounts = "open_counts"
+
+	// OpReload is the request op for hot-reloading mount-scoped config.
+	OpReload = "reload"
 )
 
 var (
@@ -76,9 +79,26 @@ type OpenCountsResponse struct {
 	Error string     `json:"error,omitempty"`
 }
 
+// ReloadRequest is a daemon.sock request.
+type ReloadRequest struct {
+	Op         string `json:"op"`
+	ConfigPath string `json:"config_path"`
+}
+
+// ReloadResponse is a daemon.sock response.
+type ReloadResponse struct {
+	Changed bool   `json:"changed"`
+	Error   string `json:"error,omitempty"`
+}
+
 // OpenCountsProvider exposes open-count information to the control server.
 type OpenCountsProvider interface {
 	OpenCounts(ctx context.Context, files []OpenFileID) ([]OpenStat, error)
+}
+
+// ReloadProvider applies a config reload request.
+type ReloadProvider interface {
+	Reload(ctx context.Context, configPath string) (bool, error)
 }
 
 // Server is a unix domain socket server for daemon control/status queries.
@@ -111,6 +131,11 @@ func StartServer(ctx context.Context, sockPath string, provider OpenCountsProvid
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen on daemon socket: %w", err)
+	}
+	if err := os.Chmod(sockPath, 0o600); err != nil {
+		_ = ln.Close()
+		_ = os.Remove(sockPath)
+		return nil, fmt.Errorf("failed to chmod daemon socket: %w", err)
 	}
 
 	s := &Server{sockPath: sockPath, ln: ln, provider: provider, log: log, ctx: ctx}
@@ -194,23 +219,69 @@ func (s *Server) handleConn(c net.Conn) {
 	_ = c.SetDeadline(time.Now().Add(2 * time.Second))
 
 	dec := json.NewDecoder(c)
-	var req OpenCountsRequest
-	if err := dec.Decode(&req); err != nil {
+	var raw json.RawMessage
+	if err := dec.Decode(&raw); err != nil {
 		s.log.Error().Str("op", "decode").Err(err).Msg("failed to decode daemonctl request")
 		return
 	}
-	if strings.TrimSpace(req.Op) != OpOpenCounts {
-		_ = writeResponse(c, OpenCountsResponse{Error: "unsupported op"})
+
+	type baseRequest struct {
+		Op string `json:"op"`
+	}
+	type errorResponse struct {
+		Error string `json:"error,omitempty"`
+	}
+
+	var base baseRequest
+	if err := json.Unmarshal(raw, &base); err != nil {
+		s.log.Error().Str("op", "decode").Err(err).Msg("failed to decode daemonctl request")
 		return
 	}
 
-	stats, err := s.provider.OpenCounts(s.ctx, req.Files)
-	if err != nil {
-		s.log.Error().Str("op", "open_counts").Err(err).Msg("failed to fetch open counts")
-		_ = writeResponse(c, OpenCountsResponse{Error: "failed to fetch open counts"})
+	switch strings.TrimSpace(base.Op) {
+	case OpOpenCounts:
+		var req OpenCountsRequest
+		if err := json.Unmarshal(raw, &req); err != nil {
+			s.log.Error().Str("op", "decode").Err(err).Msg("failed to decode daemonctl request")
+			return
+		}
+
+		stats, err := s.provider.OpenCounts(s.ctx, req.Files)
+		if err != nil {
+			s.log.Error().Str("op", "open_counts").Err(err).Msg("failed to fetch open counts")
+			_ = writeResponse(c, OpenCountsResponse{Error: "failed to fetch open counts"})
+			return
+		}
+		_ = writeResponse(c, OpenCountsResponse{Files: stats})
+		return
+	case OpReload:
+		var req ReloadRequest
+		if err := json.Unmarshal(raw, &req); err != nil {
+			s.log.Error().Str("op", "decode").Err(err).Msg("failed to decode daemonctl request")
+			return
+		}
+		if strings.TrimSpace(req.ConfigPath) == "" {
+			_ = writeResponse(c, errorResponse{Error: "config_path is required"})
+			return
+		}
+		rp, ok := s.provider.(ReloadProvider)
+		if !ok {
+			_ = writeResponse(c, errorResponse{Error: "unsupported op"})
+			return
+		}
+
+		changed, err := rp.Reload(s.ctx, req.ConfigPath)
+		if err != nil {
+			s.log.Error().Str("op", "reload").Str("path", req.ConfigPath).Err(err).Msg("failed to reload config")
+			_ = writeResponse(c, ReloadResponse{Error: err.Error()})
+			return
+		}
+		_ = writeResponse(c, ReloadResponse{Changed: changed})
+		return
+	default:
+		_ = writeResponse(c, errorResponse{Error: "unsupported op"})
 		return
 	}
-	_ = writeResponse(c, OpenCountsResponse{Files: stats})
 }
 
 // QueryOpenCounts queries daemon.sock for open counts.
@@ -248,8 +319,46 @@ func QueryOpenCounts(ctx context.Context, sockPath string, files []OpenFileID) (
 	return resp.Files, nil
 }
 
+// Reload requests that the daemon reloads its mount-scoped configuration.
+func Reload(ctx context.Context, sockPath string, configPath string) (bool, error) {
+	if strings.TrimSpace(sockPath) == "" {
+		return false, &errkind.RequiredError{What: "sock path"}
+	}
+	if strings.TrimSpace(configPath) == "" {
+		return false, &errkind.RequiredError{What: "config path"}
+	}
+
+	d := net.Dialer{Timeout: 200 * time.Millisecond}
+	c, err := d.DialContext(ctx, "unix", sockPath)
+	if err != nil {
+		return false, &errkind.KindError{Kind: ErrDialDaemonSocket, Msg: "failed to dial daemon socket", Cause: err}
+	}
+	defer func() { _ = c.Close() }()
+
+	deadline := time.Now().Add(2 * time.Second)
+	if dl, ok := ctx.Deadline(); ok && dl.Before(deadline) {
+		deadline = dl
+	}
+	_ = c.SetDeadline(deadline)
+
+	enc := json.NewEncoder(c)
+	if err := enc.Encode(ReloadRequest{Op: OpReload, ConfigPath: configPath}); err != nil {
+		return false, fmt.Errorf("failed to encode daemonctl request: %w", err)
+	}
+
+	dec := json.NewDecoder(c)
+	var resp ReloadResponse
+	if err := dec.Decode(&resp); err != nil {
+		return false, fmt.Errorf("failed to decode daemonctl response: %w", err)
+	}
+	if strings.TrimSpace(resp.Error) != "" {
+		return false, &RemoteError{Msg: resp.Error}
+	}
+	return resp.Changed, nil
+}
+
 // writeResponse writes a single JSON response.
-func writeResponse(w net.Conn, resp OpenCountsResponse) error {
+func writeResponse(w net.Conn, resp any) error {
 	enc := json.NewEncoder(w)
 	if err := enc.Encode(resp); err != nil {
 		return fmt.Errorf("failed to encode daemonctl response: %w", err)

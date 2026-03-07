@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,6 +43,25 @@ func (s *stubProvider) OpenCounts(_ context.Context, files []OpenFileID) ([]Open
 		out[i] = OpenStat{OpenFileID: f}
 	}
 	return out, nil
+}
+
+// stubReloadProvider implements both OpenCountsProvider and ReloadProvider for testing.
+type stubReloadProvider struct {
+	stubProvider
+
+	changed bool
+	err     error
+}
+
+// Reload returns the configured test result for a reload request.
+func (s *stubReloadProvider) Reload(_ context.Context, configPath string) (bool, error) {
+	if strings.TrimSpace(configPath) == "" {
+		return false, &errkind.RequiredError{What: "config path"}
+	}
+	if s.err != nil {
+		return false, s.err
+	}
+	return s.changed, nil
 }
 
 func testLogger() zerolog.Logger {
@@ -85,14 +105,14 @@ func TestStartServer_nilProvider_shouldReturnNilError(t *testing.T) {
 
 func TestStartServer_valid_shouldListenAndClose(t *testing.T) {
 	sock := testSock(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	srv, err := StartServer(ctx, sock, &stubProvider{}, testLogger())
 	require.NoError(t, err)
 
-	_, err = os.Stat(sock)
+	st, err := os.Stat(sock)
 	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o600), st.Mode()&os.ModePerm)
 
 	require.NoError(t, srv.Close())
 	_, err = os.Stat(sock)
@@ -102,13 +122,11 @@ func TestStartServer_valid_shouldListenAndClose(t *testing.T) {
 // TestStartServer_sockPathIsDirectory_shouldCleanupAndListen verifies StartServer
 // can recover from a stale directory artifact at the socket path.
 func TestStartServer_sockPathIsDirectory_shouldCleanupAndListen(t *testing.T) {
-	dir := t.TempDir()
-	sock := filepath.Join(dir, "d.sock")
+	sock := testSock(t)
 
 	require.NoError(t, os.MkdirAll(sock, 0o755))
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	srv, err := StartServer(ctx, sock, &stubProvider{}, testLogger())
 	require.NoError(t, err)
@@ -165,6 +183,80 @@ func TestQueryOpenCounts_noServer_shouldReturnDialError(t *testing.T) {
 	require.ErrorIs(t, err, ErrDialDaemonSocket)
 }
 
+// --- Reload ---
+
+// TestReload_emptySockPath_shouldReturnRequiredError verifies sock path is required.
+func TestReload_emptySockPath_shouldReturnRequiredError(t *testing.T) {
+	_, err := Reload(context.Background(), "", "/etc/pfs/pfs.yaml")
+	require.Error(t, err)
+	var re *errkind.RequiredError
+	require.True(t, errors.As(err, &re))
+}
+
+// TestReload_emptyConfigPath_shouldReturnRequiredError verifies config path is required.
+func TestReload_emptyConfigPath_shouldReturnRequiredError(t *testing.T) {
+	_, err := Reload(context.Background(), "/tmp/daemon.sock", "")
+	require.Error(t, err)
+	var re *errkind.RequiredError
+	require.True(t, errors.As(err, &re))
+}
+
+// TestReload_noServer_shouldReturnDialError verifies dial errors are classified.
+func TestReload_noServer_shouldReturnDialError(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "x.sock")
+	_, err := Reload(context.Background(), sock, "/etc/pfs/pfs.yaml")
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrDialDaemonSocket)
+}
+
+// TestReload_serverWithoutReloadProvider_shouldReturnRemoteError verifies unsupported op mapping.
+func TestReload_serverWithoutReloadProvider_shouldReturnRemoteError(t *testing.T) {
+	sock := testSock(t)
+	provider := &stubProvider{}
+
+	ctx := t.Context()
+
+	srv, err := StartServer(ctx, sock, provider, testLogger())
+	require.NoError(t, err)
+	defer func() { _ = srv.Close() }()
+
+	_, err = Reload(ctx, sock, "/etc/pfs/pfs.yaml")
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrRemote)
+}
+
+// TestReload_roundTrip_shouldReturnChanged verifies a successful reload round-trip.
+func TestReload_roundTrip_shouldReturnChanged(t *testing.T) {
+	sock := testSock(t)
+	provider := &stubReloadProvider{changed: true}
+
+	ctx := t.Context()
+
+	srv, err := StartServer(ctx, sock, provider, testLogger())
+	require.NoError(t, err)
+	defer func() { _ = srv.Close() }()
+
+	changed, err := Reload(ctx, sock, "/etc/pfs/pfs.yaml")
+	require.NoError(t, err)
+	require.True(t, changed)
+}
+
+// TestReload_providerError_shouldReturnRemoteError verifies provider errors are surfaced as remote errors.
+func TestReload_providerError_shouldReturnRemoteError(t *testing.T) {
+	sock := testSock(t)
+	provider := &stubReloadProvider{err: errors.New("boom")}
+
+	ctx := t.Context()
+
+	srv, err := StartServer(ctx, sock, provider, testLogger())
+	require.NoError(t, err)
+	defer func() { _ = srv.Close() }()
+
+	_, err = Reload(ctx, sock, "/etc/pfs/pfs.yaml")
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrRemote)
+}
+
 // --- Round-trip integration ---
 
 func TestQueryOpenCounts_roundTrip_shouldReturnCounts(t *testing.T) {
@@ -180,8 +272,7 @@ func TestQueryOpenCounts_roundTrip_shouldReturnCounts(t *testing.T) {
 		},
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	srv, err := StartServer(ctx, sock, provider, testLogger())
 	require.NoError(t, err)
@@ -199,8 +290,7 @@ func TestQueryOpenCounts_emptyFileList_shouldReturnEmpty(t *testing.T) {
 	sock := testSock(t)
 	provider := &stubProvider{}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	srv, err := StartServer(ctx, sock, provider, testLogger())
 	require.NoError(t, err)
@@ -215,8 +305,7 @@ func TestQueryOpenCounts_providerError_shouldReturnError(t *testing.T) {
 	sock := testSock(t)
 	provider := &stubProvider{err: errors.New("boom")}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	srv, err := StartServer(ctx, sock, provider, testLogger())
 	require.NoError(t, err)
@@ -232,8 +321,7 @@ func TestServer_unsupportedOp_shouldReturnError(t *testing.T) {
 	sock := testSock(t)
 	provider := &stubProvider{}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	srv, err := StartServer(ctx, sock, provider, testLogger())
 	require.NoError(t, err)
@@ -253,8 +341,7 @@ func TestQueryOpenCounts_multipleSequential_shouldWork(t *testing.T) {
 		stats: []OpenStat{{OpenFileID: id, OpenCount: 5}},
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	srv, err := StartServer(ctx, sock, provider, testLogger())
 	require.NoError(t, err)

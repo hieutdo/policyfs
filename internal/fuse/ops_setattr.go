@@ -20,7 +20,8 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 	if n == nil {
 		return fs.ToErrno(&errkind.NilError{What: "node"})
 	}
-	if n.rt == nil {
+	rt, log := n.runtime()
+	if rt == nil {
 		return fs.ToErrno(&errkind.NilError{What: "router"})
 	}
 
@@ -44,7 +45,7 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 		indexed = h.indexed
 		indexedStorageID = h.storageID
 	} else {
-		targets, err := n.rt.ResolveReadTargets(virtualPath)
+		targets, err := rt.ResolveReadTargets(virtualPath)
 		if err != nil {
 			return toErrno(err)
 		}
@@ -67,7 +68,7 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 			}
 
 			if n.db == nil {
-				n.log.Error().Str("op", "setattr").Str("path", virtualPath).Str("storage_id", t.ID).Msg("failed to setattr: db is nil for indexed target")
+				log.Error().Str("op", "setattr").Str("path", virtualPath).Str("storage_id", t.ID).Msg("failed to setattr: db is nil for indexed target")
 				return syscall.EIO
 			}
 			_, ok, err := n.db.GetEffectiveFile(ctx, t.ID, virtualPath)
@@ -98,7 +99,7 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 	// Indexed targets use deferred SETATTR (no physical ops).
 	if indexed {
 		if n.db == nil {
-			n.log.Error().Str("op", "setattr").Str("path", virtualPath).Str("storage_id", indexedStorageID).Msg("failed to setattr: db is nil for indexed target")
+			log.Error().Str("op", "setattr").Str("path", virtualPath).Str("storage_id", indexedStorageID).Msg("failed to setattr: db is nil for indexed target")
 			return syscall.EIO
 		}
 		cur, ok, err := n.db.GetEffectiveFile(ctx, indexedStorageID, virtualPath)
@@ -110,7 +111,7 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 		}
 
 		if _, ok := in.GetSize(); ok {
-			n.log.Debug().Str("op", "setattr").Str("path", virtualPath).Str("storage_id", indexedStorageID).Msg("setattr blocked: truncate on indexed target")
+			log.Debug().Str("op", "setattr").Str("path", virtualPath).Str("storage_id", indexedStorageID).Msg("setattr blocked: truncate on indexed target")
 			return syscall.EROFS
 		}
 
@@ -163,7 +164,7 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 			}
 			if updated {
 				if err := eventlog.Append(ctx, n.mountName, eventlog.SetattrEvent{Type: eventlog.TypeSetattr, StorageID: indexedStorageID, Path: virtualPath, Mode: modePtr, UID: uidPtr, GID: gidPtr, MTime: mtimePtr, TS: time.Now().Unix()}); err != nil {
-					n.log.Error().Str("op", "setattr").Str("path", virtualPath).Str("storage_id", indexedStorageID).Err(err).Msg("failed to append eventlog")
+					log.Error().Str("op", "setattr").Str("path", virtualPath).Str("storage_id", indexedStorageID).Err(err).Msg("failed to append eventlog")
 					return syscall.EIO
 				}
 			}
@@ -183,7 +184,7 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 		out.Nlink = 1
 		out.Uid = cur.UID
 		out.Gid = cur.GID
-		ev := n.log.Debug().Str("op", "setattr").Str("path", virtualPath).Str("storage_id", indexedStorageID).Bool("indexed", true)
+		ev := log.Debug().Str("op", "setattr").Str("path", virtualPath).Str("storage_id", indexedStorageID).Bool("indexed", true)
 		if modePtr != nil {
 			ev = ev.Bool("chmod", true)
 		}
@@ -322,7 +323,7 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 		return fs.ToErrno(err)
 	}
 	out.FromStat(&st)
-	ev := n.log.Debug().Str("op", "setattr").Str("path", virtualPath).Bool("indexed", false)
+	ev := log.Debug().Str("op", "setattr").Str("path", virtualPath).Bool("indexed", false)
 	if _, ok := in.GetMode(); ok {
 		ev = ev.Bool("chmod", true)
 	}

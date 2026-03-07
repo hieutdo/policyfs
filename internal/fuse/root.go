@@ -20,11 +20,19 @@ import (
 type Node struct {
 	*fs.LoopbackNode
 	mountName string
-	rt        *router.Router
+	state     *runtimeState
+	reload    *reloadState
 	db        *indexdb.DB
-	log       zerolog.Logger
 	disk      *diskAccessLogger
 	open      *OpenTracker
+}
+
+// runtime returns a stable snapshot of the current router/logger for this mount.
+func (n *Node) runtime() (*router.Router, zerolog.Logger) {
+	if n == nil || n.state == nil {
+		return nil, zerolog.Logger{}
+	}
+	return n.state.Snapshot()
 }
 
 // NewRoot creates the PolicyFS root node for mounting.
@@ -32,12 +40,19 @@ type Node struct {
 // Currently this is a thin wrapper around go-fuse's loopback root to keep behavior
 // identical while we incrementally add PolicyFS operations.
 func NewRoot(mountName string, m *config.MountConfig, primaryRootPath string, db *indexdb.DB, baseLog zerolog.Logger, diskCfg DiskAccessConfig) (fs.InodeEmbedder, error) {
+	return NewRootWithReload(mountName, m, primaryRootPath, db, baseLog, diskCfg, false, config.LogConfig{})
+}
+
+// NewRootWithReload creates the PolicyFS root node for mounting, including reload state.
+func NewRootWithReload(mountName string, m *config.MountConfig, primaryRootPath string, db *indexdb.DB, baseLog zerolog.Logger, diskCfg DiskAccessConfig, fuseAllowOther bool, rootLogCfg config.LogConfig) (fs.InodeEmbedder, error) {
 	rt, err := router.New(m)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create router: %w", err)
 	}
 
 	fuseLog := baseLog.With().Str("component", "fuse").Str("mount", mountName).Logger()
+	state := newRuntimeState(rt, fuseLog)
+	reload := newReloadState(mountName, m, primaryRootPath, fuseAllowOther, rootLogCfg)
 	diskLog := newDiskAccessLogger(fuseLog, diskCfg)
 
 	op, err := fs.NewLoopbackRoot(primaryRootPath)
@@ -51,7 +66,7 @@ func NewRoot(mountName string, m *config.MountConfig, primaryRootPath string, db
 		return op, nil
 	}
 
-	n := &Node{LoopbackNode: lb, mountName: mountName, rt: rt, db: db, log: fuseLog, disk: diskLog, open: NewOpenTracker()}
+	n := &Node{LoopbackNode: lb, mountName: mountName, state: state, reload: reload, db: db, disk: diskLog, open: NewOpenTracker()}
 	if lb.RootData != nil {
 		lb.RootData.RootNode = n
 	}
@@ -64,7 +79,7 @@ func (n *Node) WrapChild(ctx context.Context, ops fs.InodeEmbedder) fs.InodeEmbe
 	if !ok {
 		return ops
 	}
-	return &Node{LoopbackNode: lb, mountName: n.mountName, rt: n.rt, db: n.db, log: n.log, disk: n.disk, open: n.open}
+	return &Node{LoopbackNode: lb, mountName: n.mountName, state: n.state, reload: n.reload, db: n.db, disk: n.disk, open: n.open}
 }
 
 // OpenCounts implements daemonctl.OpenCountsProvider for the daemon control socket.
@@ -77,63 +92,68 @@ func (n *Node) OpenCounts(ctx context.Context, files []daemonctl.OpenFileID) ([]
 
 // Lookup resolves a child entry using the router's read target order.
 func (n *Node) Lookup(ctx context.Context, name string, out *gofuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	ch, errno := lookupChild(ctx, n.EmbeddedInode(), n.RootData, n.mountName, n.rt, n.db, n.log, n.disk, n.open, name, out)
+	rt, log := n.runtime()
+	ch, errno := lookupChild(ctx, n.EmbeddedInode(), n.RootData, n.mountName, n.state, n.reload, rt, n.db, log, n.disk, n.open, name, out)
 	if errno != 0 && errno != syscall.ENOENT {
-		n.log.Error().Str("op", "lookup").Str("path", filepath.Join(n.Path(n.Root()), name)).Err(errno).Msg("failed to lookup")
+		log.Error().Str("op", "lookup").Str("path", filepath.Join(n.Path(n.Root()), name)).Err(errno).Msg("failed to lookup")
 	}
 	return ch, errno
 }
 
 // Getattr reads attributes using the router's read target order.
 func (n *Node) Getattr(ctx context.Context, f fs.FileHandle, out *gofuse.AttrOut) syscall.Errno {
-	return getattrPath(ctx, n.EmbeddedInode(), n.rt, n.db, out)
+	rt, _ := n.runtime()
+	return getattrPath(ctx, n.EmbeddedInode(), rt, n.db, out)
 }
 
 // Readdir returns a union of directory entries across read targets, deduped by name.
 func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
+	rt, log := n.runtime()
 	start := time.Now()
-	ds, errno := readdirPath(ctx, n.EmbeddedInode(), n.rt, n.db)
+	ds, errno := readdirPath(ctx, n.EmbeddedInode(), rt, n.db)
 	if errno != 0 {
-		n.log.Error().Str("op", "readdir").Str("path", n.Path(n.Root())).Err(errno).Msg("failed to readdir")
+		log.Error().Str("op", "readdir").Str("path", n.Path(n.Root())).Err(errno).Msg("failed to readdir")
 	} else {
-		n.log.Debug().Str("op", "readdir").Str("path", n.Path(n.Root())).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("readdir")
+		log.Debug().Str("op", "readdir").Str("path", n.Path(n.Root())).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("readdir")
 	}
 	return ds, errno
 }
 
 // OpendirHandle returns a directory handle that merges entries across read targets.
 func (n *Node) OpendirHandle(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
+	rt, log := n.runtime()
 	start := time.Now()
-	entries, errno := listDirEntries(ctx, n.EmbeddedInode(), n.rt, n.db)
+	entries, errno := listDirEntries(ctx, n.EmbeddedInode(), rt, n.db)
 	if errno != 0 {
-		n.log.Error().Str("op", "opendir").Str("path", n.Path(n.Root())).Err(errno).Msg("failed to opendir")
+		log.Error().Str("op", "opendir").Str("path", n.Path(n.Root())).Err(errno).Msg("failed to opendir")
 		return nil, 0, errno
 	}
-	n.log.Debug().Str("op", "opendir").Str("path", n.Path(n.Root())).Int("entries", len(entries)).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("opendir")
+	log.Debug().Str("op", "opendir").Str("path", n.Path(n.Root())).Int("entries", len(entries)).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("opendir")
 	return &DirHandle{entries: entries}, 0, 0
 }
 
 // Open opens a file and returns a cached FileHandle.
 func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
+	rt, log := n.runtime()
 	virtualPath := n.Path(n.Root())
 	write := flags&gofuse.O_ANYWRITE != 0
 
 	start := time.Now()
-	fh, openFlags, errno := openFirst(ctx, n.rt, n.db, virtualPath, int(flags), write)
+	fh, openFlags, errno := openFirst(ctx, rt, n.db, virtualPath, int(flags), write)
 	if errno != 0 {
 		if errno == syscall.EROFS {
-			n.log.Debug().Str("op", "open").Str("path", virtualPath).Bool("write", write).Msg("open blocked: indexed target is read-only")
+			log.Debug().Str("op", "open").Str("path", virtualPath).Bool("write", write).Msg("open blocked: indexed target is read-only")
 		} else if errno != syscall.ENOENT {
-			n.log.Error().Str("op", "open").Str("path", virtualPath).Bool("write", write).Err(errno).Msg("failed to open")
+			log.Error().Str("op", "open").Str("path", virtualPath).Bool("write", write).Err(errno).Msg("failed to open")
 		}
 		return nil, 0, errno
 	}
 	if h, ok := fh.(*FileHandle); ok {
 		attachOpenTracking(ctx, n, virtualPath, h, write)
 		if h.fallback {
-			n.log.Warn().Str("op", "open").Str("path", virtualPath).Str("storage_id", h.storageID).Msg("open: stale real_path fallback triggered")
+			log.Warn().Str("op", "open").Str("path", virtualPath).Str("storage_id", h.storageID).Msg("open: stale real_path fallback triggered")
 		}
-		n.log.Debug().Str("op", "open").Str("path", virtualPath).Str("storage_id", h.storageID).Bool("indexed", h.indexed).Bool("write", write).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("open")
+		log.Debug().Str("op", "open").Str("path", virtualPath).Str("storage_id", h.storageID).Bool("indexed", h.indexed).Bool("write", write).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("open")
 		if n.disk != nil {
 			n.disk.RecordOpen(ctx, h.storageID, virtualPath, h.indexed)
 		}
@@ -148,11 +168,12 @@ func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 // targets via the router so that tools like df and sabnzbd see the correct free
 // space for the filesystem that will receive writes at this path.
 func (n *Node) Statfs(ctx context.Context, out *gofuse.StatfsOut) syscall.Errno {
+	rt, _ := n.runtime()
 	virtualPath := n.Path(n.Root())
 	if errno := validateVirtualPath(virtualPath); errno != 0 {
 		return errno
 	}
-	if statfsWriteTarget(n.rt, virtualPath, out) {
+	if statfsWriteTarget(rt, virtualPath, out) {
 		return 0
 	}
 	// Fallback: delegate to loopback (uses primaryRootPath).

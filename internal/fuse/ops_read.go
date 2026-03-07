@@ -17,7 +17,7 @@ import (
 )
 
 // lookupChild looks up a child by name using router read targets.
-func lookupChild(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoot, mountName string, rt *router.Router, db *indexdb.DB, log zerolog.Logger, disk *diskAccessLogger, open *OpenTracker, name string, out *gofuse.EntryOut) (*fs.Inode, syscall.Errno) {
+func lookupChild(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoot, mountName string, state *runtimeState, reload *reloadState, rt *router.Router, db *indexdb.DB, log zerolog.Logger, disk *diskAccessLogger, open *OpenTracker, name string, out *gofuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	if parent == nil {
 		return nil, fs.ToErrno(&errkind.NilError{What: "parent inode"})
 	}
@@ -50,7 +50,7 @@ func lookupChild(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoo
 			out.FromStat(&st)
 
 			typeMode := uint32(st.Mode & syscall.S_IFMT)
-			child := &Node{LoopbackNode: &fs.LoopbackNode{RootData: rootData}, mountName: mountName, rt: rt, db: db, log: log, disk: disk, open: open}
+			child := &Node{LoopbackNode: &fs.LoopbackNode{RootData: rootData}, mountName: mountName, state: state, reload: reload, db: db, disk: disk, open: open}
 			ch := parent.NewInode(ctx, child, fs.StableAttr{Mode: typeMode, Ino: stableIno(t.ID, childPath), Gen: 1})
 			return ch, 0
 		}
@@ -74,7 +74,7 @@ func lookupChild(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoo
 			out.Gid = f.GID
 
 			typeMode := uint32(f.Mode & uint32(syscall.S_IFMT))
-			child := &Node{LoopbackNode: &fs.LoopbackNode{RootData: rootData}, mountName: mountName, rt: rt, db: db, log: log, disk: disk, open: open}
+			child := &Node{LoopbackNode: &fs.LoopbackNode{RootData: rootData}, mountName: mountName, state: state, reload: reload, db: db, disk: disk, open: open}
 			ch := parent.NewInode(ctx, child, fs.StableAttr{Mode: typeMode, Ino: stableIno(t.ID, childPath), Gen: 1})
 			return ch, 0
 		}
@@ -92,7 +92,7 @@ func lookupChild(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoo
 			out.Uid = 0
 			out.Gid = 0
 
-			child := &Node{LoopbackNode: &fs.LoopbackNode{RootData: rootData}, mountName: mountName, rt: rt, db: db, log: log, disk: disk, open: open}
+			child := &Node{LoopbackNode: &fs.LoopbackNode{RootData: rootData}, mountName: mountName, state: state, reload: reload, db: db, disk: disk, open: open}
 			ch := parent.NewInode(ctx, child, fs.StableAttr{Mode: uint32(syscall.S_IFDIR), Ino: stableIno(t.ID, childPath), Gen: 1})
 			return ch, 0
 		}

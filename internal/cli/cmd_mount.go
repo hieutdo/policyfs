@@ -62,6 +62,20 @@ This command is typically managed by systemd as a service.`,
 				return &CLIError{Code: ExitFail, Cmd: "mount", Headline: fmt.Sprintf("invalid config: %s", *configPath), Cause: rootCause(err)}
 			}
 
+			// Configure logging and create command logger.
+			effectiveLogCfg := mountCfg.EffectiveLogConfig(rootCfg.Log)
+			cfgLog, closer, err := NewLogger(effectiveLogCfg, logFile)
+			if err != nil {
+				if _, ok := errors.AsType[*OpenLogFileError](err); ok {
+					return &CLIError{Code: ExitFail, Cmd: "mount", Headline: "failed to open log file", Cause: rootCause(err)}
+				}
+				return &CLIError{Code: ExitFail, Cmd: "mount", Headline: fmt.Sprintf("invalid config: %s", *configPath), Cause: rootCause(err)}
+			}
+			if closer != nil {
+				defer func() { _ = closer() }()
+			}
+			cmdLog := cfgLog.With().Str("component", "cli").Str("op", "mount").Logger()
+
 			if os.Geteuid() != 0 {
 				return &CLIError{Code: ExitFail, Cmd: "mount", Headline: "permission denied", Cause: errors.New("must be run as root"), Hint: "run as root"}
 			}
@@ -74,19 +88,6 @@ This command is typically managed by systemd as a service.`,
 				return &CLIError{Code: ExitFail, Cmd: "mount", Headline: "unexpected error", Cause: rootCause(err)}
 			}
 			defer func() { _ = dlk.Close() }()
-
-			// Configure logging and create command logger.
-			cfgLog, closer, err := NewLogger(rootCfg.Log, logFile)
-			if err != nil {
-				if _, ok := errors.AsType[*OpenLogFileError](err); ok {
-					return &CLIError{Code: ExitFail, Cmd: "mount", Headline: "failed to open log file", Cause: rootCause(err)}
-				}
-				return &CLIError{Code: ExitFail, Cmd: "mount", Headline: fmt.Sprintf("invalid config: %s", *configPath), Cause: rootCause(err)}
-			}
-			if closer != nil {
-				defer func() { _ = closer() }()
-			}
-			cmdLog := cfgLog.With().Str("component", "cli").Str("op", "mount").Logger()
 
 			dedupTTLChanged := false
 			if f := cmd.Flags().Lookup("dedup-ttl"); f != nil {
@@ -141,7 +142,7 @@ This command is typically managed by systemd as a service.`,
 				defer func() { _ = idxDB.Close() }()
 			}
 
-			root, err := pfsfuse.NewRoot(mountName, mountCfg, source, idxDB, cfgLog, diskCfg)
+			root, err := pfsfuse.NewRootWithReload(mountName, mountCfg, source, idxDB, cfgLog, diskCfg, rootCfg.Fuse.AllowOther, rootCfg.Log)
 			if err != nil {
 				return &CLIError{Code: ExitFail, Cmd: "mount", Headline: fmt.Sprintf("invalid config: %s", *configPath), Cause: rootCause(err)}
 			}
@@ -213,9 +214,9 @@ This command is typically managed by systemd as a service.`,
 				Str("runtime_dir", config.RuntimeDir()).
 				Str("mount_state_dir", config.MountStateDir(mountName)).
 				Str("mount_runtime_dir", config.MountRuntimeDir(mountName)).
-				Str("log_level", rootCfg.Log.Level).
-				Str("log_format", rootCfg.Log.Format).
-				Str("log_file", effectiveLogFilePath(rootCfg.Log, logFile)).
+				Str("log_level", effectiveLogCfg.Level).
+				Str("log_format", effectiveLogCfg.Format).
+				Str("log_file", effectiveLogFilePath(effectiveLogCfg, logFile)).
 				Bool("disk_access_enabled", diskCfg.Enabled).
 				Int("disk_access_dedup_ttl_sec", dedupTTLSec).
 				Int("disk_access_summary_sec", diskAccessSummarySec).

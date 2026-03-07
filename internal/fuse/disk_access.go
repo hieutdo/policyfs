@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
@@ -41,7 +42,7 @@ type DiskAccessConfig struct {
 //
 // It is safe for concurrent use.
 type diskAccessLogger struct {
-	log zerolog.Logger
+	log atomic.Value // zerolog.Logger
 	cfg DiskAccessConfig
 
 	mu      sync.Mutex
@@ -76,15 +77,23 @@ func newDiskAccessLogger(log zerolog.Logger, cfg DiskAccessConfig) *diskAccessLo
 		return nil
 	}
 	l := &diskAccessLogger{
-		log:     log,
 		cfg:     cfg,
 		last:    map[diskAccessKey]time.Time{},
 		counts:  map[diskAccessSummaryKey]uint64{},
 		limiter: newRateLimiter(60, time.Minute),
 		procs:   newProcNameCache(5 * time.Minute),
 	}
+	l.log.Store(log)
 
 	return l
+}
+
+// SetLog replaces the logger used by the disk access logger.
+func (l *diskAccessLogger) SetLog(log zerolog.Logger) {
+	if l == nil {
+		return
+	}
+	l.log.Store(log)
 }
 
 // RecordOpen records a disk access event for an open(2) on an indexed storage target.
@@ -141,7 +150,8 @@ func (l *diskAccessLogger) RecordOpen(ctx context.Context, storageID string, vir
 	}
 
 	if shouldLog && !dedupHit {
-		l.log.Info().
+		log := l.log.Load().(zerolog.Logger)
+		log.Info().
 			Str("op", op).
 			Str("storage_id", storageID).
 			Str("path", virtualPath).
@@ -184,7 +194,8 @@ func (l *diskAccessLogger) emitSummaryLocked(interval time.Duration) {
 		}
 	}
 
-	l.log.Info().
+	log := l.log.Load().(zerolog.Logger)
+	log.Info().
 		Str("op", "open").
 		Int64("interval_sec", int64(interval/time.Second)).
 		Uint64("total", total).
