@@ -16,6 +16,7 @@ import (
 // stubReloadServer implements the daemonctl providers needed for the reload socket.
 type stubReloadServer struct {
 	changed bool
+	fields  []string
 	err     error
 }
 
@@ -25,14 +26,14 @@ func (s *stubReloadServer) OpenCounts(_ context.Context, _ []daemonctl.OpenFileI
 }
 
 // Reload returns the configured result.
-func (s *stubReloadServer) Reload(_ context.Context, configPath string) (bool, error) {
+func (s *stubReloadServer) Reload(_ context.Context, configPath string) (bool, []string, error) {
 	if configPath == "" {
-		return false, errors.New("config path is required")
+		return false, nil, errors.New("config path is required")
 	}
 	if s.err != nil {
-		return false, s.err
+		return false, nil, s.err
 	}
-	return s.changed, nil
+	return s.changed, s.fields, nil
 }
 
 // setShortRuntimeDir sets PFS_RUNTIME_DIR to a short /tmp path (macOS unix socket path limit).
@@ -149,7 +150,7 @@ func TestReload_noChanges_shouldExit3(t *testing.T) {
 
 	code, stdout, stderr := runCLI(t, []string{"--config", cfgPath, "reload", "media"})
 	require.Equal(t, ExitNoChanges, code)
-	require.Equal(t, "", stdout)
+	require.Contains(t, stdout, "reload no changes")
 	require.Equal(t, "", stderr)
 }
 
@@ -169,13 +170,14 @@ func TestReload_changed_shouldExit0(t *testing.T) {
 
 	ctx := t.Context()
 
-	provider := &stubReloadServer{changed: true}
+	provider := &stubReloadServer{changed: true, fields: []string{"mounts.media.routing_rules"}}
 	srv, err := daemonctl.StartServer(ctx, sockPath, provider, zerolog.Nop())
 	require.NoError(t, err)
 	defer func() { _ = srv.Close() }()
 
 	code, stdout, stderr := runCLI(t, []string{"--config", cfgPath, "reload", "media"})
 	require.Equal(t, ExitOK, code)
-	require.Equal(t, "", stdout)
+	require.Contains(t, stdout, "reload applied")
+	require.Contains(t, stdout, "\"changed_fields\"")
 	require.Equal(t, "", stderr)
 }

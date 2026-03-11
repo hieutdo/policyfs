@@ -100,22 +100,23 @@ func newLogger(cfg config.LogConfig, logFileFlag string, jsonOut io.Writer, text
 	switch cfg.Format {
 	case "text":
 		cw := zerolog.ConsoleWriter{Out: textOut, TimeFormat: "2006-01-02 15:04:05"}
+		cw.PartsOrder = []string{zerolog.LevelFieldName, zerolog.MessageFieldName}
 		cw.FormatLevel = func(i any) string {
 			v := strings.ToLower(fmt.Sprintf("%v", i))
 			switch v {
-			case "inf":
+			case "inf", "info":
 				return "[info]"
-			case "dbg":
+			case "dbg", "debug":
 				return "[debug]"
-			case "wrn":
+			case "wrn", "warn", "warning":
 				return "[warn]"
-			case "err":
+			case "err", "error":
 				return "[error]"
-			case "ftl":
+			case "ftl", "fatal":
 				return "[fatal]"
-			case "pnk":
+			case "pnk", "panic":
 				return "[panic]"
-			case "trc":
+			case "trc", "trace":
 				return "[trace]"
 			default:
 				return v

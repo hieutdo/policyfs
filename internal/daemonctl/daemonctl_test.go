@@ -50,18 +50,19 @@ type stubReloadProvider struct {
 	stubProvider
 
 	changed bool
+	fields  []string
 	err     error
 }
 
 // Reload returns the configured test result for a reload request.
-func (s *stubReloadProvider) Reload(_ context.Context, configPath string) (bool, error) {
+func (s *stubReloadProvider) Reload(_ context.Context, configPath string) (bool, []string, error) {
 	if strings.TrimSpace(configPath) == "" {
-		return false, &errkind.RequiredError{What: "config path"}
+		return false, nil, &errkind.RequiredError{What: "config path"}
 	}
 	if s.err != nil {
-		return false, s.err
+		return false, nil, s.err
 	}
-	return s.changed, nil
+	return s.changed, s.fields, nil
 }
 
 func testLogger() zerolog.Logger {
@@ -187,7 +188,7 @@ func TestQueryOpenCounts_noServer_shouldReturnDialError(t *testing.T) {
 
 // TestReload_emptySockPath_shouldReturnRequiredError verifies sock path is required.
 func TestReload_emptySockPath_shouldReturnRequiredError(t *testing.T) {
-	_, err := Reload(context.Background(), "", "/etc/pfs/pfs.yaml")
+	_, _, err := Reload(context.Background(), "", "/etc/pfs/pfs.yaml")
 	require.Error(t, err)
 	var re *errkind.RequiredError
 	require.True(t, errors.As(err, &re))
@@ -195,7 +196,7 @@ func TestReload_emptySockPath_shouldReturnRequiredError(t *testing.T) {
 
 // TestReload_emptyConfigPath_shouldReturnRequiredError verifies config path is required.
 func TestReload_emptyConfigPath_shouldReturnRequiredError(t *testing.T) {
-	_, err := Reload(context.Background(), "/tmp/daemon.sock", "")
+	_, _, err := Reload(context.Background(), "/tmp/daemon.sock", "")
 	require.Error(t, err)
 	var re *errkind.RequiredError
 	require.True(t, errors.As(err, &re))
@@ -204,7 +205,7 @@ func TestReload_emptyConfigPath_shouldReturnRequiredError(t *testing.T) {
 // TestReload_noServer_shouldReturnDialError verifies dial errors are classified.
 func TestReload_noServer_shouldReturnDialError(t *testing.T) {
 	sock := filepath.Join(t.TempDir(), "x.sock")
-	_, err := Reload(context.Background(), sock, "/etc/pfs/pfs.yaml")
+	_, _, err := Reload(context.Background(), sock, "/etc/pfs/pfs.yaml")
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrDialDaemonSocket)
 }
@@ -220,7 +221,7 @@ func TestReload_serverWithoutReloadProvider_shouldReturnRemoteError(t *testing.T
 	require.NoError(t, err)
 	defer func() { _ = srv.Close() }()
 
-	_, err = Reload(ctx, sock, "/etc/pfs/pfs.yaml")
+	_, _, err = Reload(ctx, sock, "/etc/pfs/pfs.yaml")
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrRemote)
 }
@@ -228,7 +229,7 @@ func TestReload_serverWithoutReloadProvider_shouldReturnRemoteError(t *testing.T
 // TestReload_roundTrip_shouldReturnChanged verifies a successful reload round-trip.
 func TestReload_roundTrip_shouldReturnChanged(t *testing.T) {
 	sock := testSock(t)
-	provider := &stubReloadProvider{changed: true}
+	provider := &stubReloadProvider{changed: true, fields: []string{"mounts.media.routing_rules"}}
 
 	ctx := t.Context()
 
@@ -236,9 +237,10 @@ func TestReload_roundTrip_shouldReturnChanged(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = srv.Close() }()
 
-	changed, err := Reload(ctx, sock, "/etc/pfs/pfs.yaml")
+	changed, fields, err := Reload(ctx, sock, "/etc/pfs/pfs.yaml")
 	require.NoError(t, err)
 	require.True(t, changed)
+	require.Equal(t, []string{"mounts.media.routing_rules"}, fields)
 }
 
 // TestReload_providerError_shouldReturnRemoteError verifies provider errors are surfaced as remote errors.
@@ -252,7 +254,7 @@ func TestReload_providerError_shouldReturnRemoteError(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = srv.Close() }()
 
-	_, err = Reload(ctx, sock, "/etc/pfs/pfs.yaml")
+	_, _, err = Reload(ctx, sock, "/etc/pfs/pfs.yaml")
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrRemote)
 }

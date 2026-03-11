@@ -87,8 +87,9 @@ type ReloadRequest struct {
 
 // ReloadResponse is a daemon.sock response.
 type ReloadResponse struct {
-	Changed bool   `json:"changed"`
-	Error   string `json:"error,omitempty"`
+	Changed       bool     `json:"changed"`
+	ChangedFields []string `json:"changed_fields,omitempty"`
+	Error         string   `json:"error,omitempty"`
 }
 
 // OpenCountsProvider exposes open-count information to the control server.
@@ -98,7 +99,7 @@ type OpenCountsProvider interface {
 
 // ReloadProvider applies a config reload request.
 type ReloadProvider interface {
-	Reload(ctx context.Context, configPath string) (bool, error)
+	Reload(ctx context.Context, configPath string) (bool, []string, error)
 }
 
 // Server is a unix domain socket server for daemon control/status queries.
@@ -270,13 +271,13 @@ func (s *Server) handleConn(c net.Conn) {
 			return
 		}
 
-		changed, err := rp.Reload(s.ctx, req.ConfigPath)
+		changed, changedFields, err := rp.Reload(s.ctx, req.ConfigPath)
 		if err != nil {
 			s.log.Error().Str("op", "reload").Str("path", req.ConfigPath).Err(err).Msg("failed to reload config")
 			_ = writeResponse(c, ReloadResponse{Error: err.Error()})
 			return
 		}
-		_ = writeResponse(c, ReloadResponse{Changed: changed})
+		_ = writeResponse(c, ReloadResponse{Changed: changed, ChangedFields: changedFields})
 		return
 	default:
 		_ = writeResponse(c, errorResponse{Error: "unsupported op"})
@@ -320,18 +321,18 @@ func QueryOpenCounts(ctx context.Context, sockPath string, files []OpenFileID) (
 }
 
 // Reload requests that the daemon reloads its mount-scoped configuration.
-func Reload(ctx context.Context, sockPath string, configPath string) (bool, error) {
+func Reload(ctx context.Context, sockPath string, configPath string) (bool, []string, error) {
 	if strings.TrimSpace(sockPath) == "" {
-		return false, &errkind.RequiredError{What: "sock path"}
+		return false, nil, &errkind.RequiredError{What: "sock path"}
 	}
 	if strings.TrimSpace(configPath) == "" {
-		return false, &errkind.RequiredError{What: "config path"}
+		return false, nil, &errkind.RequiredError{What: "config path"}
 	}
 
 	d := net.Dialer{Timeout: 200 * time.Millisecond}
 	c, err := d.DialContext(ctx, "unix", sockPath)
 	if err != nil {
-		return false, &errkind.KindError{Kind: ErrDialDaemonSocket, Msg: "failed to dial daemon socket", Cause: err}
+		return false, nil, &errkind.KindError{Kind: ErrDialDaemonSocket, Msg: "failed to dial daemon socket", Cause: err}
 	}
 	defer func() { _ = c.Close() }()
 
@@ -343,18 +344,18 @@ func Reload(ctx context.Context, sockPath string, configPath string) (bool, erro
 
 	enc := json.NewEncoder(c)
 	if err := enc.Encode(ReloadRequest{Op: OpReload, ConfigPath: configPath}); err != nil {
-		return false, fmt.Errorf("failed to encode daemonctl request: %w", err)
+		return false, nil, fmt.Errorf("failed to encode daemonctl request: %w", err)
 	}
 
 	dec := json.NewDecoder(c)
 	var resp ReloadResponse
 	if err := dec.Decode(&resp); err != nil {
-		return false, fmt.Errorf("failed to decode daemonctl response: %w", err)
+		return false, nil, fmt.Errorf("failed to decode daemonctl response: %w", err)
 	}
 	if strings.TrimSpace(resp.Error) != "" {
-		return false, &RemoteError{Msg: resp.Error}
+		return false, nil, &RemoteError{Msg: resp.Error}
 	}
-	return resp.Changed, nil
+	return resp.Changed, resp.ChangedFields, nil
 }
 
 // writeResponse writes a single JSON response.

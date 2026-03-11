@@ -61,9 +61,10 @@ mounts:
 	n, ok := root.(*Node)
 	require.True(t, ok)
 
-	changed, err := n.Reload(context.Background(), cfgPath)
+	changed, fields, err := n.Reload(context.Background(), cfgPath)
 	require.NoError(t, err)
 	require.False(t, changed)
+	require.Nil(t, fields)
 }
 
 // TestNodeReload_routerChange_shouldSwapRouter verifies routing rule changes swap router atomically.
@@ -138,9 +139,10 @@ mounts:
 	require.Len(t, targetsBefore, 2)
 	require.Equal(t, "ssd1", targetsBefore[0].ID)
 
-	changed, err := n.Reload(context.Background(), cfgPath2)
+	changed, fields, err := n.Reload(context.Background(), cfgPath2)
 	require.NoError(t, err)
 	require.True(t, changed)
+	require.Equal(t, []string{"mounts.m1.routing_rules"}, fields)
 
 	rtAfter, _ := n.runtime()
 	targetsAfter, err := rtAfter.ResolveReadTargets("dir/file.txt")
@@ -220,14 +222,17 @@ mounts:
 	beforeLen := buf.Len()
 	require.Greater(t, beforeLen, 0)
 
-	changed, err := n.Reload(context.Background(), cfgPath2)
+	changed, fields, err := n.Reload(context.Background(), cfgPath2)
 	require.NoError(t, err)
 	require.True(t, changed)
+	require.Equal(t, []string{"mounts.m1.log.level"}, fields)
+	afterReloadLen := buf.Len()
+	require.Greater(t, afterReloadLen, beforeLen)
 
 	_, l2 := n.runtime()
 	l2.Debug().Str("op", "test").Msg("after")
 	afterLen := buf.Len()
-	require.Equal(t, beforeLen, afterLen)
+	require.Equal(t, afterReloadLen, afterLen)
 }
 
 // TestNodeReload_nonReloadableChange_shouldFail verifies non-reloadable changes are rejected.
@@ -294,7 +299,7 @@ mounts:
 	require.NoError(t, err)
 	n := root.(*Node)
 
-	_, err = n.Reload(context.Background(), cfgPath2)
+	_, _, err = n.Reload(context.Background(), cfgPath2)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, ErrReloadRequiresRestart))
 }
@@ -359,7 +364,7 @@ mounts:
 				if (g+i)%2 == 1 {
 					p = cfgPathB
 				}
-				_, err := n.Reload(context.Background(), p)
+				_, _, err := n.Reload(context.Background(), p)
 				if err != nil {
 					t.Errorf("g=%d i=%d: %v", g, i, err)
 					return
@@ -459,7 +464,7 @@ func TestNodeReload_nonReloadableFields_shouldRejectAll(t *testing.T) {
 			require.NoError(t, err)
 			n := root.(*Node)
 
-			_, err = n.Reload(context.Background(), cfgPath2)
+			_, _, err = n.Reload(context.Background(), cfgPath2)
 			require.Error(t, err)
 			require.True(t, errors.Is(err, ErrReloadRequiresRestart), "expected ErrReloadRequiresRestart, got: %v", err)
 		})
@@ -533,7 +538,7 @@ mounts:
 	require.NotNil(t, rtBefore)
 
 	// Attempt reload with bad routing config.
-	_, err = n.Reload(context.Background(), cfgPath2)
+	_, _, err = n.Reload(context.Background(), cfgPath2)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, errkind.ErrRequired), "expected required error kind, got: %v", err)
 
@@ -542,7 +547,7 @@ mounts:
 	require.Same(t, rtBefore, rtAfter, "router pointer should be unchanged after failed reload")
 
 	// A subsequent valid reload must still work.
-	changed, err := n.Reload(context.Background(), cfgPath1)
+	changed, _, err := n.Reload(context.Background(), cfgPath1)
 	require.NoError(t, err)
 	require.False(t, changed, "reload with same config should be a no-op")
 }

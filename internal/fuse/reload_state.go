@@ -1,6 +1,7 @@
 package fuse
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"sync"
@@ -159,6 +160,28 @@ func (s *reloadState) isNoop(next reloadSnapshot) bool {
 		return true
 	}
 	return reflect.DeepEqual(s.last, next)
+}
+
+func (s *reloadState) changedFields(next reloadSnapshot) []string {
+	if s == nil {
+		return nil
+	}
+
+	prefix := fmt.Sprintf("mounts.%s.", strings.TrimSpace(s.mountName))
+	fields := make([]string, 0, 3)
+	if !reflect.DeepEqual(s.last.StorageGroups, next.StorageGroups) {
+		fields = append(fields, prefix+"storage_groups")
+	}
+	if !reflect.DeepEqual(s.last.RoutingRules, next.RoutingRules) {
+		fields = append(fields, prefix+"routing_rules")
+	}
+	if s.last.EffectiveLogLevel != next.EffectiveLogLevel {
+		fields = append(fields, prefix+"log.level")
+	}
+	if len(fields) == 0 {
+		return nil
+	}
+	return fields
 }
 
 // applySnapshot updates the last-applied snapshot.
