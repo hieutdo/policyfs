@@ -26,7 +26,7 @@ PolicyFS (pfs) unifies multiple disks into one mount and uses rules to control w
    sudo apt-get install -y fuse3
    ```
 
-2. Install the `.deb` from GitHub Releases.
+2. Download and install the `.deb` from GitHub Releases.
 
 3. Edit the config:
    - `/etc/pfs/pfs.yaml` (created from the example on first install)

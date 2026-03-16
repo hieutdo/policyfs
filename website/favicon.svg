@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- 3 input dots (simplified for favicon clarity) -->
+  <circle cx="5" cy="8"  r="2.5" fill="#48bb78"/>
+  <circle cx="5" cy="16" r="2.5" fill="#94a3b8"/>
+  <circle cx="5" cy="24" r="2.5" fill="#94a3b8"/>
+  <!-- connector lines -->
+  <path d="M 7.5,8  C 14,8  14,16 20,16" stroke="#c8d4e4" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+  <path d="M 7.5,16 L 20,16"              stroke="#c8d4e4" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+  <path d="M 7.5,24 C 14,24 14,16 20,16"  stroke="#c8d4e4" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+  <!-- output circle -->
+  <circle cx="27" cy="16" r="5" fill="#3b6ff0"/>
+</svg>
