@@ -2,9 +2,12 @@ name: docs-build
 
 on:
   pull_request:
-  push:
-    branches:
-      - main
+    paths:
+      - 'docs/**'
+      - 'docsroot/**'
+      - 'mkdocs.yml'
+      - 'scripts/build_docs.sh'
+      - 'docs/requirements.txt'
 
 jobs:
   build:
@@ -16,7 +19,7 @@ jobs:
       - name: setup python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: '3.12'
 
       - name: install
         run: pip install -r docs/requirements.txt

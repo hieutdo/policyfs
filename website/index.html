@@ -6,12 +6,21 @@
     <title>PolicyFS — Explicit storage routing for Linux</title>
     <meta
       name="description"
-      content="PolicyFS unifies multiple disks under a single FUSE mountpoint with policy-based routing, a SQLite metadata index, and built-in maintenance jobs."
+      content="PolicyFS is a Linux FUSE storage daemon with explicit routing rules, an optional SQLite metadata index, and built-in maintenance jobs."
     />
     <link rel="stylesheet" href="style.css" />
     <link rel="icon" href="favicon.svg" type="image/svg+xml" />
     <!-- Prevent flash of wrong theme: read preference before first paint -->
-    <script>(function(){var s=localStorage.getItem('pfs-theme');if(s){document.documentElement.setAttribute('data-theme',s);}else if(window.matchMedia&&window.matchMedia('(prefers-color-scheme:dark)').matches){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+    <script>
+      ;(function () {
+        var s = localStorage.getItem('pfs-theme')
+        if (s) {
+          document.documentElement.setAttribute('data-theme', s)
+        } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme:dark)').matches) {
+          document.documentElement.setAttribute('data-theme', 'dark')
+        }
+      })()
+    </script>
   </head>
   <body>
     <!-- ─── NAV ─────────────────────────────────────────────────────────────── -->
@@ -72,13 +81,41 @@
           <a href="https://github.com/hieutdo/policyfs">GitHub</a>
           <button id="theme-toggle" class="theme-toggle" aria-label="Switch to dark mode">
             <!-- Moon: visible in light mode -->
-            <svg class="icon-moon" width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-              <path d="M14 10.5A6.5 6.5 0 1 1 5.5 2 5 5 0 0 0 14 10.5z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <svg
+              class="icon-moon"
+              width="14"
+              height="14"
+              viewBox="0 0 16 16"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+              aria-hidden="true"
+            >
+              <path
+                d="M14 10.5A6.5 6.5 0 1 1 5.5 2 5 5 0 0 0 14 10.5z"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
             </svg>
             <!-- Sun: visible in dark mode (hidden until JS runs) -->
-            <svg class="icon-sun" width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style="display:none">
-              <circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.5"/>
-              <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.22 3.22l1.42 1.42M11.36 11.36l1.42 1.42M3.22 12.78l1.42-1.42M11.36 4.64l1.42-1.42" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+            <svg
+              class="icon-sun"
+              width="14"
+              height="14"
+              viewBox="0 0 16 16"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+              aria-hidden="true"
+              style="display: none"
+            >
+              <circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.5" />
+              <path
+                d="M8 1v2M8 13v2M1 8h2M13 8h2M3.22 3.22l1.42 1.42M11.36 11.36l1.42 1.42M3.22 12.78l1.42-1.42M11.36 4.64l1.42-1.42"
+                stroke="currentColor"
+                stroke-width="1.4"
+                stroke-linecap="round"
+              />
             </svg>
           </button>
         </div>
@@ -92,8 +129,8 @@
         <div class="hero-text">
           <h1>One mount.<br />Many disks.<br />Explicit rules.</h1>
           <p class="hero-sub">
-            PolicyFS unifies multiple storage paths under a single FUSE mountpoint. Routing rules control exactly where
-            reads and writes go — and an optional SQLite index keeps your HDDs asleep during metadata-heavy workloads.
+            PolicyFS unifies multiple storage paths under a single FUSE mountpoint. Routing rules control where reads
+            and writes go. An optional SQLite index reduces HDD wakeups during metadata-heavy workloads.
           </p>
           <div class="hero-ctas">
             <a href="https://docs.policyfs.org/v1/install/debian/" class="btn-primary">Get started →</a>
@@ -338,7 +375,7 @@
               text-anchor="middle"
               font-weight="600"
             >
-              /mnt/media
+              /mnt/pfs/media
             </text>
             <text
               x="590"
@@ -374,8 +411,8 @@
             <h3>Policy-based routing</h3>
             <p>
               Route reads and writes by path pattern — one rule for <code>photos/**</code>, another for everything else.
-              Write policies (<code>first_found</code>, <code>most_free</code>, <code>least_free</code>) control target
-              selection. Path-preserving mode keeps related files on the same disk.
+              Write policies (<code>first_found</code>, <code>most_free</code>, <code>least_free</code>) choose a write
+              target. Path-preserving mode prefers targets where the parent directory exists to reduce scattering.
             </p>
           </div>
 
@@ -388,9 +425,10 @@
             </div>
             <h3>SQLite metadata index</h3>
             <p>
-              Mark a storage path <code>indexed: true</code> and <code>readdir</code>/<code>getattr</code> calls are
-              served from a local SQLite database — no disk spin-up. Metadata mutations (delete, rename, chmod) are
-              deferred to an event log and applied later by <code>pfs prune</code>.
+              Mark a storage path <code>indexed: true</code> and <code>readdir</code>/<code>getattr</code> can be served
+              from a local SQLite index, reducing HDD wakeups for metadata-heavy operations. Metadata mutations (delete,
+              rename, permission/timestamp changes) are recorded to an event log and applied later by
+              <code>pfs prune</code>.
             </p>
           </div>
 
@@ -410,8 +448,8 @@
             <h3>Built-in maintenance cycle</h3>
             <p>
               <code>pfs move</code> tiers files from fast SSD to bulk HDD. <code>pfs prune</code> applies deferred
-              mutations. <code>pfs index</code> refreshes metadata. <code>pfs maint</code> runs all three in the right
-              order — ready for a daily systemd timer.
+              mutations. <code>pfs index</code> refreshes metadata. <code>pfs maint</code> runs move → prune → index
+              under one lock — ideal for a daily systemd timer.
             </p>
           </div>
         </div>
@@ -428,27 +466,749 @@
           <div class="step">
             <div class="step-num">1</div>
             <h4>POSIX syscall</h4>
-            <p>Your application opens a file normally — pfs is transparent to userspace.</p>
+            <p>Your application issues a normal POSIX syscall — pfs is transparent to userspace.</p>
           </div>
 
           <div class="step">
             <div class="step-num">2</div>
             <h4>FUSE dispatch</h4>
-            <p>The kernel forwards the call over FUSE to the running pfs daemon process.</p>
+            <p>The kernel forwards the call over FUSE to the pfs daemon.</p>
           </div>
 
           <div class="step">
             <div class="step-num">3</div>
             <h4>Routing &amp; index</h4>
-            <p>The router matches the path to a rule. Metadata is served from SQLite; HDDs stay asleep.</p>
+            <p>The router matches the path to a rule. Metadata may be served from SQLite to reduce HDD wakeups.</p>
           </div>
 
           <div class="step">
             <div class="step-num">4</div>
             <h4>Physical I/O</h4>
-            <p>Data reads and writes hit the physical storage directly via a cached file descriptor.</p>
+            <p>File I/O hits physical storage through pfs, typically via a cached file descriptor.</p>
           </div>
         </div>
+      </div>
+    </section>
+
+    <!-- ─── INDEXING DIAGRAM ─────────────────────────────────────────────────── -->
+
+    <section class="indexing">
+      <div class="container">
+        <p class="section-label">Indexed storage</p>
+        <h2 class="section-title">How <code class="title-code">pfs index</code> reduces HDD wakeups</h2>
+        <p class="indexing-intro">
+          With <code>indexed: true</code>, <code>pfs index</code> scans physical storage and upserts metadata into
+          <code>index.db</code>. <code>readdir</code> and <code>getattr</code> for indexed storage can be served from
+          the database, reducing HDD wakeups. File content I/O still hits the underlying storage. Non-indexed storage
+          paths (<code>indexed: false</code>) are accessed via the filesystem directly (no metadata index).
+        </p>
+
+        <!--
+          ViewBox 0 0 800 305
+          HDD track  y=18–175   pfs index center(215,79)  index.db center(385,79)
+          Separator  y=182
+          SSD track  y=190–280
+          pfs daemon x=530–680  y=18–290
+        -->
+        <svg
+          id="index-svg"
+          viewBox="0 0 800 305"
+          xmlns="http://www.w3.org/2000/svg"
+          aria-label="Indexing flow: pfs index scans indexed storage and upserts metadata into index.db; the pfs daemon can serve metadata reads from index.db and performs file content I/O against physical storage; non-indexed storage is accessed without the index."
+        >
+          <!-- ── arrowhead markers ───────────────────────────────────────── -->
+          <defs>
+            <marker id="arr-amber" markerWidth="6" markerHeight="4" refX="5.5" refY="2" orient="auto">
+              <polygon class="arr-amber-fill" points="0 0, 6 2, 0 4" />
+            </marker>
+            <marker id="arr-blue" markerWidth="6" markerHeight="4" refX="5.5" refY="2" orient="auto">
+              <polygon class="arr-blue-fill" points="0 0, 6 2, 0 4" />
+            </marker>
+            <marker id="arr-gray-r" markerWidth="6" markerHeight="4" refX="5.5" refY="2" orient="auto">
+              <polygon class="arr-gray-fill" points="0 0, 6 2, 0 4" />
+            </marker>
+            <marker id="arr-green" markerWidth="6" markerHeight="4" refX="5.5" refY="2" orient="auto">
+              <polygon class="arr-green-fill" points="0 0, 6 2, 0 4" />
+            </marker>
+          </defs>
+
+          <!-- ── HDD track separator ─────────────────────────────────────── -->
+          <line x1="0" y1="182" x2="608" y2="182" class="idx-separator" />
+
+          <!-- ── HDD group label ────────────────────────────────────────── -->
+          <text
+            x="10"
+            y="22"
+            font-family="monospace"
+            font-size="10"
+            font-weight="600"
+            letter-spacing="1.2"
+            class="idx-group-hdd"
+          >
+            HDD · indexed: true
+          </text>
+
+          <!-- HDD boxes -->
+          <rect x="10" y="30" width="90" height="28" rx="4" class="idx-hdd-box" />
+          <text
+            x="55"
+            y="48"
+            font-family="monospace"
+            font-size="12"
+            text-anchor="middle"
+            font-weight="600"
+            class="idx-hdd-label"
+          >
+            hdd1
+          </text>
+
+          <rect x="10" y="72" width="90" height="28" rx="4" class="idx-hdd-box" />
+          <text
+            x="55"
+            y="90"
+            font-family="monospace"
+            font-size="12"
+            text-anchor="middle"
+            font-weight="600"
+            class="idx-hdd-label"
+          >
+            hdd2
+          </text>
+
+          <rect x="10" y="114" width="90" height="28" rx="4" class="idx-hdd-box" />
+          <text
+            x="55"
+            y="132"
+            font-family="monospace"
+            font-size="12"
+            text-anchor="middle"
+            font-weight="600"
+            class="idx-hdd-label"
+          >
+            hdd3
+          </text>
+
+          <!-- HDD → pfs index  (animated amber flow) -->
+          <path d="M 100,44  C 128,44  128,79 155,79" class="idx-flow-amber" />
+          <path d="M 100,86  C 128,86  128,79 155,79" class="idx-flow-amber" style="animation-delay: -0.5s" />
+          <path d="M 100,128 C 128,128 128,79 155,79" class="idx-flow-amber" style="animation-delay: -1s" />
+          <!-- arrowhead at convergence point -->
+          <polygon points="149,76 155,79 149,82" class="arr-amber-fill" />
+
+          <!-- pfs index job box -->
+          <rect x="155" y="55" width="150" height="48" rx="6" class="idx-job-box" />
+          <text
+            x="230"
+            y="76"
+            font-family="monospace"
+            font-size="13"
+            text-anchor="middle"
+            font-weight="700"
+            class="idx-job-label"
+          >
+            pfs index
+          </text>
+          <text
+            x="230"
+            y="93"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="idx-job-sub"
+          >
+            periodic · systemd timer
+          </text>
+
+          <!-- pfs index → index.db  (animated amber) -->
+          <path d="M 305,79 L 418,79" class="idx-flow-amber" style="animation-delay: -0.3s" />
+          <polygon points="412,76 418,79 412,82" class="arr-amber-fill" />
+          <text
+            x="362"
+            y="69"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="idx-lbl-amber"
+          >
+            scan &amp; upsert
+          </text>
+
+          <!-- index.db box -->
+          <rect x="420" y="52" width="90" height="54" rx="6" class="idx-db-box" />
+          <text
+            x="465"
+            y="77"
+            font-family="monospace"
+            font-size="13"
+            text-anchor="middle"
+            font-weight="700"
+            class="idx-db-label"
+          >
+            index.db
+          </text>
+          <text
+            x="465"
+            y="94"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="idx-db-sub"
+          >
+            SQLite
+          </text>
+
+          <!-- index.db → pfs daemon  (animated blue, metadata) -->
+          <path d="M 510,79 L 608,79" class="idx-flow-blue" />
+          <polygon points="602,76 608,79 602,82" class="arr-blue-fill" />
+          <text
+            x="559"
+            y="69"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="idx-lbl-blue"
+          >
+            readdir / getattr
+          </text>
+
+          <!-- pfs daemon → HDD  (dashed gray, data bytes only) -->
+          <path d="M 610,122 C 490,162 250,166 102,128" class="idx-flow-data" />
+          <polygon points="107,125 101,128 107,131" class="arr-gray-fill" />
+          <text
+            x="340"
+            y="173"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="idx-lbl-data"
+          >
+            open/read/write · file content I/O
+          </text>
+
+          <!-- ── SSD group label ────────────────────────────────────────── -->
+          <text
+            x="10"
+            y="199"
+            font-family="monospace"
+            font-size="10"
+            font-weight="600"
+            letter-spacing="1.2"
+            class="idx-group-ssd"
+          >
+            SSD · indexed: false
+          </text>
+
+          <!-- SSD boxes -->
+          <rect x="10" y="207" width="90" height="28" rx="4" class="idx-ssd-box" />
+          <text
+            x="55"
+            y="225"
+            font-family="monospace"
+            font-size="12"
+            text-anchor="middle"
+            font-weight="600"
+            class="idx-ssd-label"
+          >
+            ssd1
+          </text>
+
+          <rect x="10" y="249" width="90" height="28" rx="4" class="idx-ssd-box" />
+          <text
+            x="55"
+            y="267"
+            font-family="monospace"
+            font-size="12"
+            text-anchor="middle"
+            font-weight="600"
+            class="idx-ssd-label"
+          >
+            ssd2
+          </text>
+
+          <!-- SSD → pfs daemon  (animated green, direct) -->
+          <path d="M 100,221 L 608,221" class="idx-flow-green" />
+          <polygon points="602,218 608,221 602,224" class="arr-green-fill" />
+
+          <path d="M 100,263 L 608,263" class="idx-flow-green" style="animation-delay: -0.7s" />
+          <polygon points="602,260 608,263 602,266" class="arr-green-fill" />
+
+          <text
+            x="354"
+            y="213"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="idx-lbl-green"
+          >
+            filesystem I/O · no index
+          </text>
+
+          <!-- ── pfs daemon box ──────────────────────────────────────────── -->
+          <rect x="610" y="18" width="160" height="272" rx="8" class="idx-daemon-box" />
+
+          <text
+            x="690"
+            y="48"
+            font-family="monospace"
+            font-size="18"
+            text-anchor="middle"
+            font-weight="700"
+            class="idx-daemon-title"
+          >
+            pfs
+          </text>
+          <text
+            x="690"
+            y="65"
+            font-family="system-ui, sans-serif"
+            font-size="11"
+            text-anchor="middle"
+            class="idx-daemon-sub"
+          >
+            daemon
+          </text>
+
+          <line x1="628" y1="80" x2="752" y2="80" class="idx-daemon-div" />
+
+          <text
+            x="690"
+            y="96"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="idx-daemon-note-blue"
+          >
+            metadata reads
+          </text>
+          <text
+            x="690"
+            y="110"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="idx-daemon-note"
+          >
+            via index.db
+          </text>
+          <text
+            x="690"
+            y="130"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="idx-daemon-note"
+          >
+            data bytes →
+          </text>
+          <text
+            x="690"
+            y="144"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="idx-daemon-note"
+          >
+            HDD direct
+          </text>
+
+          <line x1="628" y1="190" x2="752" y2="190" class="idx-daemon-div" />
+
+          <text
+            x="690"
+            y="230"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="idx-daemon-note-green"
+          >
+            SSD: direct I/O
+          </text>
+          <text
+            x="690"
+            y="246"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="idx-daemon-note"
+          >
+            reads &amp; writes
+          </text>
+          <text
+            x="690"
+            y="262"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="idx-daemon-note"
+          >
+            no index
+          </text>
+        </svg>
+      </div>
+    </section>
+
+    <!-- ─── PRUNE DIAGRAM ──────────────────────────────────────────────────────── -->
+
+    <section class="prune-section">
+      <div class="container">
+        <p class="section-label">Deferred operations</p>
+        <h2 class="section-title">How <code class="title-code">pfs prune</code> replays deferred operations</h2>
+        <p class="prune-intro">
+          On indexed storage, delete/rename/setattr operations are recorded to <code>events.ndjson</code> and reflected
+          in the index without immediately touching the physical file. <code>pfs prune</code> replays the log and
+          applies pending operations to physical storage, freeing space and making changes persistent.
+        </p>
+
+        <!--
+          ViewBox 0 0 760 210
+          daemon x=10–120  events x=190–320  prune x=390–540  HDDs x=614–704
+        -->
+        <svg
+          id="prune-svg"
+          viewBox="0 0 730 210"
+          xmlns="http://www.w3.org/2000/svg"
+          aria-label="Prune flow: pfs daemon appends deferred operations to events.ndjson; pfs prune reads the log and applies DELETE, RENAME, and SETATTR operations to physical storage paths."
+        >
+          <!-- ── arrowhead marker ───────────────────────────────────────── -->
+          <defs>
+            <marker id="arr-violet" markerWidth="6" markerHeight="4" refX="5.5" refY="2" orient="auto">
+              <polygon class="arr-violet-fill" points="0 0, 6 2, 0 4" />
+            </marker>
+          </defs>
+
+          <!-- pfs daemon box -->
+          <rect x="10" y="70" width="110" height="80" rx="8" class="prn-daemon-box" />
+          <text
+            x="65"
+            y="107"
+            font-family="monospace"
+            font-size="16"
+            text-anchor="middle"
+            font-weight="700"
+            class="prn-daemon-title"
+          >
+            pfs
+          </text>
+          <text
+            x="65"
+            y="124"
+            font-family="system-ui, sans-serif"
+            font-size="11"
+            text-anchor="middle"
+            class="prn-daemon-sub"
+          >
+            daemon
+          </text>
+
+          <!-- daemon → events.ndjson -->
+          <path d="M 120,110 L 188,110" class="prn-flow-violet" />
+          <polygon points="182,107 188,110 182,113" class="arr-violet-fill" />
+          <text
+            x="154"
+            y="100"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="prn-lbl-violet"
+          >
+            defer ops
+          </text>
+
+          <!-- events.ndjson box -->
+          <rect x="190" y="58" width="130" height="104" rx="6" class="prn-events-box" />
+          <text
+            x="255"
+            y="85"
+            font-family="monospace"
+            font-size="12"
+            text-anchor="middle"
+            font-weight="700"
+            class="prn-events-label"
+          >
+            events.ndjson
+          </text>
+          <text
+            x="255"
+            y="101"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="prn-events-sub"
+          >
+            event log
+          </text>
+          <line x1="205" y1="110" x2="305" y2="110" class="prn-events-div" />
+          <text x="255" y="127" font-family="monospace" font-size="9" text-anchor="middle" class="prn-events-type">
+            DELETE
+          </text>
+          <text x="255" y="140" font-family="monospace" font-size="9" text-anchor="middle" class="prn-events-type">
+            RENAME
+          </text>
+          <text x="255" y="153" font-family="monospace" font-size="9" text-anchor="middle" class="prn-events-type">
+            SETATTR
+          </text>
+
+          <!-- events.ndjson → pfs prune -->
+          <path d="M 320,110 L 388,110" class="prn-flow-violet" style="animation-delay: -0.5s" />
+          <polygon points="382,107 388,110 382,113" class="arr-violet-fill" />
+          <text
+            x="354"
+            y="100"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="prn-lbl-violet"
+          >
+            reads log
+          </text>
+
+          <!-- pfs prune job box -->
+          <rect x="390" y="70" width="150" height="80" rx="6" class="prn-job-box" />
+          <text
+            x="465"
+            y="107"
+            font-family="monospace"
+            font-size="13"
+            text-anchor="middle"
+            font-weight="700"
+            class="prn-job-label"
+          >
+            pfs prune
+          </text>
+          <text
+            x="465"
+            y="124"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="prn-job-sub"
+          >
+            periodic · systemd timer
+          </text>
+
+          <!-- prune → HDDs fan-out -->
+          <path d="M 540,110 C 568,110 568,42  612,42" class="prn-flow-violet" style="animation-delay: -0.2s" />
+          <path d="M 540,110 L 612,110" class="prn-flow-violet" style="animation-delay: -0.8s" />
+          <path d="M 540,110 C 568,110 568,178 612,178" class="prn-flow-violet" style="animation-delay: -1.3s" />
+
+          <polygon points="606,39 612,42 606,45" class="arr-violet-fill" />
+          <polygon points="606,107 612,110 606,113" class="arr-violet-fill" />
+          <polygon points="606,175 612,178 606,181" class="arr-violet-fill" />
+
+          <!-- HDD boxes -->
+          <rect x="614" y="28" width="90" height="28" rx="4" class="prn-hdd-box" />
+          <text
+            x="659"
+            y="46"
+            font-family="monospace"
+            font-size="12"
+            text-anchor="middle"
+            font-weight="600"
+            class="prn-hdd-label"
+          >
+            hdd1
+          </text>
+
+          <rect x="614" y="96" width="90" height="28" rx="4" class="prn-hdd-box" />
+          <text
+            x="659"
+            y="114"
+            font-family="monospace"
+            font-size="12"
+            text-anchor="middle"
+            font-weight="600"
+            class="prn-hdd-label"
+          >
+            hdd2
+          </text>
+
+          <rect x="614" y="164" width="90" height="28" rx="4" class="prn-hdd-box" />
+          <text
+            x="659"
+            y="182"
+            font-family="monospace"
+            font-size="12"
+            text-anchor="middle"
+            font-weight="600"
+            class="prn-hdd-label"
+          >
+            hdd3
+          </text>
+        </svg>
+      </div>
+    </section>
+
+    <!-- ─── MOVE DIAGRAM ───────────────────────────────────────────────────────── -->
+
+    <section class="move-section">
+      <div class="container">
+        <p class="section-label">Tiered storage</p>
+        <h2 class="section-title">How <code class="title-code">pfs move</code> migrates files</h2>
+        <p class="move-intro">
+          As new files land on SSD storage, the write tier fills up.
+          <code>pfs move</code> copies eligible files (age/size/usage) from the write tier to destination storage (often
+          an indexed HDD archive). If the daemon control socket is available, open files can be skipped.
+        </p>
+
+        <!--
+          ViewBox 0 0 620 192
+          SSDs x=10–100  pfs move x=128–286  HDDs x=350–440
+          SSDs x=10–100  pfs move x=158–316  HDDs x=400–490  daemon.sock below move center
+        -->
+        <svg
+          id="move-svg"
+          viewBox="0 0 560 192"
+          xmlns="http://www.w3.org/2000/svg"
+          aria-label="Move flow: candidates are evaluated by pfs move (age/size/usage) and copied to destination storage; if daemon.sock is available, open files are skipped."
+        >
+          <!-- ── SSD group label ────────────────────────────────────────── -->
+          <text
+            x="10"
+            y="20"
+            font-family="monospace"
+            font-size="10"
+            font-weight="600"
+            letter-spacing="1.2"
+            class="mv-group-ssd"
+          >
+            SSD · write tier
+          </text>
+
+          <!-- SSD boxes -->
+          <rect x="10" y="28" width="90" height="28" rx="4" class="mv-ssd-box" />
+          <text
+            x="55"
+            y="46"
+            font-family="monospace"
+            font-size="12"
+            text-anchor="middle"
+            font-weight="600"
+            class="mv-ssd-label"
+          >
+            ssd1
+          </text>
+
+          <rect x="10" y="70" width="90" height="28" rx="4" class="mv-ssd-box" />
+          <text
+            x="55"
+            y="88"
+            font-family="monospace"
+            font-size="12"
+            text-anchor="middle"
+            font-weight="600"
+            class="mv-ssd-label"
+          >
+            ssd2
+          </text>
+
+          <!-- SSDs → pfs move (fan in) -->
+          <path d="M 100,42 C 128,42 128,65 156,65" class="mv-flow-teal" />
+          <path d="M 100,84 C 128,84 128,65 156,65" class="mv-flow-teal" style="animation-delay: -0.6s" />
+          <polygon points="150,62 156,65 150,68" class="arr-teal-fill" />
+
+          <!-- pfs move box -->
+          <rect x="158" y="38" width="158" height="54" rx="6" class="mv-job-box" />
+          <text
+            x="237"
+            y="62"
+            font-family="monospace"
+            font-size="13"
+            text-anchor="middle"
+            font-weight="700"
+            class="mv-job-label"
+          >
+            pfs move
+          </text>
+          <text
+            x="237"
+            y="79"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="mv-job-sub"
+          >
+            age · size · usage
+          </text>
+
+          <!-- pfs move → HDDs (fan out) -->
+          <path d="M 316,65 C 348,65 348,42  398,42" class="mv-flow-teal" style="animation-delay: -0.3s" />
+          <path d="M 316,65 C 348,65 348,84  398,84" class="mv-flow-teal" style="animation-delay: -0.9s" />
+          <path d="M 316,65 C 348,65 348,126 398,126" class="mv-flow-teal" style="animation-delay: -1.5s" />
+          <polygon points="392,39 398,42 392,45" class="arr-teal-fill" />
+          <polygon points="392,81 398,84 392,87" class="arr-teal-fill" />
+          <polygon points="392,123 398,126 392,129" class="arr-teal-fill" />
+
+          <!-- HDD group label -->
+          <text
+            x="400"
+            y="20"
+            font-family="monospace"
+            font-size="10"
+            font-weight="600"
+            letter-spacing="1.2"
+            class="mv-group-hdd"
+          >
+            HDD · archive tier
+          </text>
+
+          <!-- HDD boxes -->
+          <rect x="400" y="28" width="90" height="28" rx="4" class="mv-hdd-box" />
+          <text
+            x="445"
+            y="46"
+            font-family="monospace"
+            font-size="12"
+            text-anchor="middle"
+            font-weight="600"
+            class="mv-hdd-label"
+          >
+            hdd1
+          </text>
+
+          <rect x="400" y="70" width="90" height="28" rx="4" class="mv-hdd-box" />
+          <text
+            x="445"
+            y="88"
+            font-family="monospace"
+            font-size="12"
+            text-anchor="middle"
+            font-weight="600"
+            class="mv-hdd-label"
+          >
+            hdd2
+          </text>
+
+          <rect x="400" y="112" width="90" height="28" rx="4" class="mv-hdd-box" />
+          <text
+            x="445"
+            y="130"
+            font-family="monospace"
+            font-size="12"
+            text-anchor="middle"
+            font-weight="600"
+            class="mv-hdd-label"
+          >
+            hdd3
+          </text>
+
+          <!-- daemon.sock query (dashed vertical) -->
+          <line x1="237" y1="92" x2="237" y2="148" class="mv-sock-line" />
+          <polygon points="234,144 237,150 240,144" class="arr-teal-fill" />
+
+          <!-- daemon.sock box -->
+          <rect x="177" y="150" width="120" height="26" rx="4" class="mv-sock-box" />
+          <text
+            x="237"
+            y="167"
+            font-family="monospace"
+            font-size="11"
+            text-anchor="middle"
+            font-weight="600"
+            class="mv-sock-label"
+          >
+            daemon.sock
+          </text>
+        </svg>
       </div>
     </section>
 
@@ -459,9 +1219,9 @@
         <p class="section-label">Comparison</p>
         <h2 class="section-title">pfs vs mergerfs</h2>
         <p class="comparison-intro">
-          mergerfs is a mature, battle-tested FUSE union filesystem with broad POSIX coverage and a large install base.
-          pfs is a narrower tool focused on making storage placement and metadata access explicit. If you need maximum
-          compatibility or are running complex workloads, mergerfs is likely the better fit.
+          mergerfs is a mature FUSE union filesystem with broad POSIX coverage and a large install base. pfs is narrower
+          and focuses on explicit storage placement and metadata behavior. If you need maximum compatibility or complex
+          workloads, mergerfs is likely a better fit.
         </p>
         <div class="comparison-table-wrap">
           <table class="comparison-table">
@@ -489,7 +1249,7 @@
                 <td><span class="check">✓</span></td>
               </tr>
               <tr>
-                <td>SQLite metadata index (HDD sleep)</td>
+                <td>SQLite metadata index (reduced HDD wakeups)</td>
                 <td><span class="check">✓</span></td>
                 <td><span class="cross">—</span></td>
               </tr>
@@ -517,8 +1277,8 @@
           </table>
         </div>
         <p class="comparison-caption">
-          pfs trades POSIX breadth for explicit, inspectable behavior. mergerfs covers more edge cases and has a much
-          longer track record.
+          pfs trades POSIX breadth for explicit, inspectable behavior. mergerfs covers more edge cases and has a longer
+          track record.
         </p>
       </div>
     </section>
@@ -528,15 +1288,15 @@
     <section class="config-snippet">
       <div class="container">
         <p class="section-label">Configuration</p>
-        <h2 class="section-title">One YAML file, one mount</h2>
+        <h2 class="section-title">One YAML file, multiple mounts</h2>
         <div class="snippet-wrap">
           <p style="color: var(--text-muted); font-size: 14px; margin-bottom: 4px">
-            A minimal two-tier setup: SSD as a fast write cache, HDDs as indexed archive storage.
+            A minimal two-tier setup: SSD as a write cache, HDDs as indexed archive storage.
           </p>
           <pre><span class="y-comment"># /etc/pfs/pfs.yaml</span>
 <span class="y-key">mounts</span><span class="y-punct">:</span>
-  <span class="y-punct">-</span> <span class="y-key">name</span><span class="y-punct">:</span> <span class="y-str">media</span>
-    <span class="y-key">mountpoint</span><span class="y-punct">:</span> <span class="y-str">/mnt/media</span>
+  <span class="y-key">media</span><span class="y-punct">:</span>
+    <span class="y-key">mountpoint</span><span class="y-punct">:</span> <span class="y-str">/mnt/pfs/media</span>
 
     <span class="y-key">storage_paths</span><span class="y-punct">:</span>
       <span class="y-punct">-</span> <span class="y-key">id</span><span class="y-punct">:</span>   <span class="y-str">ssd1</span>
@@ -564,10 +1324,12 @@
       <div class="container">
         <div>
           <h2>Install on Debian / Ubuntu</h2>
-          <p>Package and systemd units included. Runs as an unprivileged service.</p>
+          <p>
+            Download a .deb from <a href="https://github.com/hieutdo/policyfs/releases">GitHub Releases</a>. Includes
+            systemd units.
+          </p>
         </div>
         <div class="install-cmd">
-          <code>apt install pfs</code>
           <a href="https://docs.policyfs.org/v1/install/debian/" class="btn-primary">Install guide →</a>
         </div>
       </div>
