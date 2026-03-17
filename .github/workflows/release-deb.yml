@@ -47,6 +47,18 @@ jobs:
         run: |
           bash scripts/package_deb.sh
 
+      - name: add latest-friendly filenames
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          deb_path="$(ls -1 dist/pfs_*_amd64.deb | head -n 1)"
+          if [[ -z "${deb_path}" ]]; then
+            echo "pfs: error: deb not found in dist/" >&2
+            exit 1
+          fi
+          cp "${deb_path}" "dist/pfs_amd64.deb"
+          cp "${deb_path}.sha256" "dist/pfs_amd64.deb.sha256"
+
       - name: release
         uses: softprops/action-gh-release@v2
         with:

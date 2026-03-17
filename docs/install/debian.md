@@ -30,10 +30,8 @@ user_allow_other
 Download the `.deb` from GitHub Releases and install it:
 
 ```bash
-VERSION="<version>"
-TAG="v${VERSION}"
-curl -L -o "pfs_${VERSION}_amd64.deb" "https://github.com/hieutdo/policyfs/releases/download/${TAG}/pfs_${VERSION}_amd64.deb"
-sudo dpkg -i "./pfs_${VERSION}_amd64.deb"
+curl -L -o "pfs_amd64.deb" "https://github.com/hieutdo/policyfs/releases/latest/download/pfs_amd64.deb"
+sudo dpkg -i "./pfs_amd64.deb"
 ```
 
 On first install, the package creates:
