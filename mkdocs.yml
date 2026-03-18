@@ -54,6 +54,7 @@ nav:
   - Use cases: use-cases.md
   - Configure: config.md
   - Systemd: systemd.md
+  - Disk spindown: spindown.md
   - Commands:
       - CLI overview: cli.md
       - mount: commands/mount.md

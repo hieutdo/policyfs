@@ -116,6 +116,13 @@ Not all filesystem operations reach the physical disk immediately. The behavior 
 
 File creation and data writes always go to the physical disk — the deferred path only applies to metadata mutations (delete, rename, setattr). This means an indexed HDD only needs to spin up when new files are written to it, not when existing files are deleted or renamed.
 
+## Disk spindown (power saving)
+
+PolicyFS can reduce disk wake-ups caused by metadata operations by using `indexed: true`, but it does not control drive power states.
+To actually spin down HDDs and save power, configure OS-level disk power management (for example `hd-idle`).
+
+See [Disk spindown (power saving)](spindown.md).
+
 ## The maintenance cycle
 
 The daemon handles the hot path. Three maintenance jobs handle everything else — and they form a cycle:
