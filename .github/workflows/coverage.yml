@@ -30,7 +30,7 @@ jobs:
 
       - name: coverage (unit + integration)
         run: |
-          docker compose -f docker-compose.dev.yaml exec -T dev bash /workspace/scripts/coverage.sh
+          docker compose -f docker-compose.dev.yaml exec -T -e GOFLAGS=-buildvcs=false dev bash /workspace/scripts/coverage.sh
 
       - name: dev down
         if: ${{ always() }}
