@@ -6,7 +6,7 @@
     <title>PolicyFS — Linux FUSE storage daemon</title>
     <meta
       name="description"
-      content="PolicyFS is a Linux FUSE storage daemon with explicit routing rules, an optional SQLite metadata index, and built-in maintenance jobs."
+      content="PolicyFS is a Linux FUSE storage daemon that unifies multiple storage paths under one mountpoint with explicit read/write routing rules, an optional SQLite metadata index, and built-in maintenance jobs."
     />
     <link rel="stylesheet" href="style.css" />
     <link rel="icon" href="favicon.svg" type="image/svg+xml" />
@@ -76,10 +76,12 @@
           </svg>
         </a>
         <div class="nav-links">
-          <a href="https://docs.policyfs.org/v1/">Docs</a>
-          <a href="https://docs.policyfs.org/v1/concepts/">Concepts</a>
-          <a href="https://github.com/hieutdo/policyfs">GitHub</a>
-          <button id="theme-toggle" class="theme-toggle" aria-label="Switch to dark mode">
+          <div class="nav-links-list">
+            <a href="https://docs.policyfs.org/v1/">Documentation</a>
+            <a href="https://docs.policyfs.org/v1/concepts/">Concepts</a>
+            <a href="https://github.com/hieutdo/policyfs">GitHub</a>
+          </div>
+          <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Switch to dark mode">
             <!-- Moon: visible in light mode -->
             <svg
               class="icon-moon"
@@ -118,7 +120,33 @@
               />
             </svg>
           </button>
+          <button
+            id="nav-menu-toggle"
+            class="nav-menu-toggle"
+            type="button"
+            aria-label="Open menu"
+            aria-expanded="false"
+            aria-controls="nav-mobile-menu"
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 16 16"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+              aria-hidden="true"
+            >
+              <path d="M2.5 4h11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+              <path d="M2.5 8h11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+              <path d="M2.5 12h11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+            </svg>
+          </button>
         </div>
+      </div>
+      <div id="nav-mobile-menu" class="nav-mobile-menu" hidden>
+        <a href="https://docs.policyfs.org/v1/">Documentation</a>
+        <a href="https://docs.policyfs.org/v1/concepts/">Concepts</a>
+        <a href="https://github.com/hieutdo/policyfs">GitHub</a>
       </div>
     </nav>
 
@@ -129,8 +157,9 @@
         <div class="hero-text">
           <h1>One mount.<br />Many disks.<br />Explicit rules.</h1>
           <p class="hero-sub">
-            PolicyFS unifies multiple storage paths under a single FUSE mountpoint. Routing rules control where reads
-            and writes go. An optional SQLite index reduces HDD wakeups during metadata-heavy workloads.
+            PolicyFS unifies multiple storage paths under one mountpoint. Routing rules control where reads and writes
+            go, and an optional SQLite metadata index reduces HDD wakeups for metadata-heavy workloads. Maintenance jobs
+            index, move, and apply deferred mutations.
           </p>
           <div class="hero-ctas">
             <a href="https://docs.policyfs.org/v1/install/debian/" class="btn-primary">Get started →</a>
@@ -1387,17 +1416,17 @@
           </svg>
         </a>
         <div class="footer-links">
-          <a href="https://docs.policyfs.org/v1/">Docs</a>
+          <a href="https://docs.policyfs.org/v1/">Documentation</a>
           <a href="https://docs.policyfs.org/v1/concepts/">Concepts</a>
           <a href="https://docs.policyfs.org/v1/use-cases/">Use cases</a>
-          <a href="https://docs.policyfs.org/v1/config/">Configuration</a>
           <a href="https://github.com/hieutdo/policyfs">GitHub</a>
         </div>
-        <span class="footer-copy">PolicyFS — Linux FUSE storage daemon</span>
+        <span class="footer-copy">Apache-2.0 licensed</span>
       </div>
     </footer>
 
     <script src="theme.js"></script>
+    <script src="nav.js"></script>
     <script src="animation.js"></script>
   </body>
 </html>

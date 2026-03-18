@@ -1,8 +1,9 @@
 # PolicyFS
 
 [![codecov](https://codecov.io/gh/hieutdo/policyfs/branch/main/graph/badge.svg)](https://codecov.io/gh/hieutdo/policyfs)
+[![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-PolicyFS (pfs) unifies multiple disks into one mount and uses rules to control where files go, with maintenance jobs to index, move, and prune data.
+PolicyFS is a Linux FUSE storage daemon that unifies multiple storage paths under one mountpoint with explicit read/write routing rules, an optional SQLite metadata index, and built-in maintenance jobs.
 
 ## What it does
 

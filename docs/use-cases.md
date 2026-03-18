@@ -26,13 +26,7 @@ mounts:
         path_preserving: true
 ```
 
-- **Pros**
-  - Simple mental model (one mount).
-  - Easy to expand capacity by adding another `storage_path`.
-- **Cons**
-  - Writes are still “one target per file” (not striping).
-
-**Recommendation:** Use `write_policy: most_free` + `path_preserving: true` for the usual “fill the emptiest disk but keep directories together” behavior.
+**Recommendation:** Use `write_policy: most_free` + `path_preserving: true` for the usual “fill the emptiest disk but keep directories together” behavior. This use case is not meant to reduce disk spinups; for reducing metadata-driven spinups, see the cases that set `indexed: true`.
 
 ## 2) Media library (SSD for hot writes, HDD for capacity)
 
@@ -73,7 +67,8 @@ mounts:
         write_policy: most_free
         path_preserving: true
       - match: '**'
-        targets: [ssds, hdds]
+        read_targets: [ssds, hdds]
+        write_targets: [ssds]
         write_policy: most_free
         path_preserving: true
     mover:
@@ -94,12 +89,6 @@ mounts:
           conditions:
             min_age: 24h
 ```
-
-- **Pros**
-  - SSD absorbs “churn” (new files, renames, lots of small metadata operations).
-  - HDD can stay idle longer because listings come from the index.
-- **Cons**
-  - PolicyFS does not spin down disks by itself; you still need OS-level HDD power management.
 
 **Recommendation:** Mark HDDs as `indexed: true` to reduce metadata disk touches. Use mover thresholds so the SSDs do not fill up.
 
@@ -143,45 +132,9 @@ mounts:
             min_age: 24h
 ```
 
-- **Pros**
-  - Keeps HDD from being hammered by small, frequent writes.
-  - Retention policy is explicit (age threshold in config).
-- **Cons**
-  - The “when to run” is your responsibility (timer/scheduler).
+**Recommendation:** Start with `trigger.type: manual` and run `pfs move <mount> --job archive-footage` from a timer you control (e.g., systemd timer, cron, etc.).
 
-**Recommendation:** Start with `trigger.type: manual` and run `pfs move <mount> --job archive-footage` from a timer you control.
-
-## 4) Photo management & preview (fast browsing)
-
-**Goal:** Make directory listings and metadata browsing fast without touching archival disks for metadata.
-
-**Suggested config:**
-
-```yaml
-mounts:
-  photos:
-    storage_paths:
-      - { id: hdd1, path: /mnt/hdd1/photos, indexed: true }
-      - { id: hdd2, path: /mnt/hdd2/photos, indexed: true }
-      - { id: hdd3, path: /mnt/hdd3/photos, indexed: true }
-    storage_groups:
-      archive: [hdd1, hdd2, hdd3]
-    routing_rules:
-      - match: '**'
-        targets: [archive]
-        write_policy: most_free
-        path_preserving: true
-```
-
-- **Pros**
-  - `readdir/getattr` comes from SQLite (fast, no metadata spin-ups).
-  - Works well for “browse first, open occasionally”.
-- **Cons**
-  - Opening the actual photo file still requires disk access.
-
-**Recommendation:** Keep archival storages `indexed: true` and run `pfs index` (or `pfs maint`) on a schedule.
-
-## 5) Seedbox hybrid (download + archive)
+## 4) Seedbox hybrid (download + archive)
 
 **Goal:** Download and seed from SSD, then archive to HDD later without breaking paths.
 
@@ -206,7 +159,8 @@ mounts:
         write_policy: most_free
         path_preserving: true
       - match: '**'
-        targets: [hot, archive]
+        read_targets: [hot, archive]
+        write_targets: [hot]
         write_policy: most_free
         path_preserving: true
     mover:
@@ -225,11 +179,5 @@ mounts:
           conditions:
             min_age: 7d
 ```
-
-- **Pros**
-  - High write and read performance for active torrents.
-  - Stable paths for apps (no bind-mount gymnastics).
-- **Cons**
-  - Ratio-based policies are app-specific; PolicyFS only sees filesystem state.
 
 **Recommendation:** Trigger the move job from your seedbox tooling (when it decides a torrent is “cold”). Keep `trigger.type: manual` and call `pfs move seedbox --job archive-downloads`.
