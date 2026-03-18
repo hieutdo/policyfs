@@ -42,3 +42,56 @@ jobs:
           files: coverage.out
           flags: unit
           fail_ci_if_error: false
+
+  integration-coverage:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: prepare FUSE
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fuse3
+          sudo modprobe fuse || true
+          ls -l /dev/fuse
+
+      - name: docker info
+        run: |
+          docker version
+          docker info
+
+      - name: build dev image
+        run: |
+          docker build -f Dockerfile.dev -t pfs-dev .
+
+      - name: integration tests (coverage)
+        run: |
+          rm -rf coverage
+          mkdir -p coverage/covdata-integration
+          docker run --rm \
+            --privileged \
+            --device /dev/fuse \
+            -v "${GITHUB_WORKSPACE}:/workspace" \
+            -w /workspace \
+            -e PFS_INTEGRATION_COVER=1 \
+            -e GOCOVERDIR=/workspace/coverage/covdata-integration \
+            pfs-dev \
+            bash -lc 'go test -count=1 -tags=integration ./tests/integration/...'
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/workspace" \
+            -w /workspace \
+            pfs-dev \
+            bash -lc 'go tool covdata textfmt -i=/workspace/coverage/covdata-integration -o /workspace/coverage/integration.out'
+
+      - name: upload to Codecov
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        if: ${{ env.CODECOV_TOKEN != '' }}
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ env.CODECOV_TOKEN }}
+          files: coverage/integration.out
+          flags: integration
+          fail_ci_if_error: false
