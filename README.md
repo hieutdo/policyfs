@@ -1,5 +1,7 @@
 # PolicyFS
 
+[![codecov](https://codecov.io/gh/hieutdo/policyfs/branch/main/graph/badge.svg)](https://codecov.io/gh/hieutdo/policyfs)
+
 PolicyFS (pfs) unifies multiple disks into one mount and uses rules to control where files go, with maintenance jobs to index, move, and prune data.
 
 ## What it does
