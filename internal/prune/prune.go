@@ -60,6 +60,19 @@ type Hooks struct {
 	Verbose func(e VerboseEvent)
 }
 
+// eventReader abstracts eventlog.Reader for deterministic unit tests.
+type eventReader interface {
+	Next() (line []byte, nextOffset int64, err error)
+	Offset() int64
+	Close() error
+}
+
+// openEventReader opens an event reader for a mount.
+// It is a variable so tests can inject reader failures deterministically.
+var openEventReader = func(mountName string, offset int64) (eventReader, error) {
+	return eventlog.OpenReader(mountName, offset)
+}
+
 // RunOneshot processes deferred event log mutations for a mount.
 func RunOneshot(ctx context.Context, mountName string, mountCfg *config.MountConfig, opts Opts, hooks Hooks) (Summary, error) {
 	start := time.Now()
@@ -83,7 +96,7 @@ func RunOneshot(ctx context.Context, mountName string, mountCfg *config.MountCon
 		return out, fmt.Errorf("failed to read event offset: %w", err)
 	}
 
-	r, err := eventlog.OpenReader(mountName, off)
+	r, err := openEventReader(mountName, off)
 	if err != nil {
 		return out, fmt.Errorf("failed to open event log reader: %w", err)
 	}

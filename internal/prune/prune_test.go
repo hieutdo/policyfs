@@ -2,16 +2,34 @@ package prune
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/hieutdo/policyfs/internal/config"
+	"github.com/hieutdo/policyfs/internal/errkind"
 	"github.com/hieutdo/policyfs/internal/eventlog"
 	"github.com/hieutdo/policyfs/internal/indexdb"
 	"github.com/stretchr/testify/require"
 )
+
+// errFakeReader is a deterministic reader error used to exercise RunOneshot error branches.
+var errFakeReader = errors.New("fake reader error")
+
+// fakeErrReader is a minimal prune.eventReader that always returns a non-EOF error.
+type fakeErrReader struct{}
+
+// Next implements prune.eventReader.
+func (fakeErrReader) Next() ([]byte, int64, error) { return nil, 0, errFakeReader }
+
+// Offset implements prune.eventReader.
+func (fakeErrReader) Offset() int64 { return 0 }
+
+// Close implements prune.eventReader.
+func (fakeErrReader) Close() error { return nil }
 
 // setupPruneTestEnv configures per-test runtime/state dirs for prune and returns the mount state dir.
 func setupPruneTestEnv(t *testing.T, mountName string) string {
@@ -33,6 +51,425 @@ func mustWriteFile(t *testing.T, p string, content []byte) {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
 	require.NoError(t, os.WriteFile(p, content, 0o644))
+}
+
+// fakeEvent is a minimal eventlog.Event implementation used to exercise unknown-type branches.
+type fakeEvent struct{}
+
+// EventType implements eventlog.Event.
+func (fakeEvent) EventType() eventlog.Type { return "BOGUS" }
+
+// TestValidateEventVirtualPath_shouldRejectInvalidAndAllowValid verifies validateEventVirtualPath
+// rejects unsafe/invalid virtual paths and allows normal relative paths.
+func TestValidateEventVirtualPath_shouldRejectInvalidAndAllowValid(t *testing.T) {
+	t.Run("should accept normal relative", func(t *testing.T) {
+		require.NoError(t, validateEventVirtualPath("a/b/c.txt"))
+	})
+
+	cases := []struct {
+		name string
+		path string
+	}{
+		{name: "empty", path: ""},
+		{name: "dot", path: "."},
+		{name: "absolute", path: "/abs"},
+		{name: "trailing slash", path: "a/"},
+		{name: "double slash", path: "a//b"},
+		{name: "dot segment", path: "a/./b"},
+		{name: "dotdot segment", path: "a/../b"},
+		{name: "null byte", path: "a\x00b"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateEventVirtualPath(tc.path)
+			require.Error(t, err)
+			require.ErrorIs(t, err, errkind.ErrInvalid)
+		})
+	}
+}
+
+// TestPhysicalPathFor_shouldResolveAndValidate verifies physicalPathFor resolves the absolute
+// physical path, validates the storage root, and rejects invalid storage/path inputs.
+func TestPhysicalPathFor_shouldResolveAndValidate(t *testing.T) {
+	t.Run("should return not found when storage id missing", func(t *testing.T) {
+		_, err := physicalPathFor(map[string]string{"hdd1": t.TempDir()}, "ghost", "a.txt")
+		require.Error(t, err)
+		require.ErrorIs(t, err, errkind.ErrNotFound)
+	})
+
+	t.Run("should reject relative storage root", func(t *testing.T) {
+		_, err := physicalPathFor(map[string]string{"hdd1": "relative"}, "hdd1", "a.txt")
+		require.Error(t, err)
+		require.ErrorIs(t, err, errkind.ErrInvalid)
+	})
+
+	t.Run("should reject invalid event path", func(t *testing.T) {
+		_, err := physicalPathFor(map[string]string{"hdd1": t.TempDir()}, "hdd1", "../x")
+		require.Error(t, err)
+		require.ErrorIs(t, err, errkind.ErrInvalid)
+	})
+
+	t.Run("should resolve under root", func(t *testing.T) {
+		root := t.TempDir()
+		got, err := physicalPathFor(map[string]string{"hdd1": root}, "hdd1", "a/b.txt")
+		require.NoError(t, err)
+		require.Equal(t, filepath.Join(root, "a", "b.txt"), got)
+	})
+}
+
+// TestBuildVerboseEvent_shouldSetResultAndFields verifies the verbose hook payload uses stable
+// result strings and pulls the correct fields from each event type.
+func TestBuildVerboseEvent_shouldSetResultAndFields(t *testing.T) {
+	t.Run("should set ok for succeeded", func(t *testing.T) {
+		v := buildVerboseEvent(eventlog.DeleteEvent{Type: eventlog.TypeDelete, StorageID: "hdd1", Path: "a"}, true, applyResult{succeeded: 1})
+		require.Equal(t, "ok", v.Result)
+		require.True(t, v.DryRun)
+		require.Equal(t, eventlog.TypeDelete, v.Type)
+		require.Equal(t, "hdd1", v.StorageID)
+		require.Equal(t, "a", v.Path)
+	})
+
+	t.Run("should set skipped for skipped", func(t *testing.T) {
+		v := buildVerboseEvent(eventlog.RenameEvent{Type: eventlog.TypeRename, StorageID: "hdd1", OldPath: "a", NewPath: "b"}, false, applyResult{skipped: 1})
+		require.Equal(t, "skipped", v.Result)
+		require.False(t, v.DryRun)
+		require.Equal(t, eventlog.TypeRename, v.Type)
+		require.Equal(t, "hdd1", v.StorageID)
+		require.Equal(t, "a", v.OldPath)
+		require.Equal(t, "b", v.NewPath)
+	})
+
+	t.Run("should default to failed", func(t *testing.T) {
+		v := buildVerboseEvent(eventlog.SetattrEvent{Type: eventlog.TypeSetattr, StorageID: "hdd1", Path: "a"}, false, applyResult{failed: 1})
+		require.Equal(t, "failed", v.Result)
+		require.Equal(t, eventlog.TypeSetattr, v.Type)
+		require.Equal(t, "hdd1", v.StorageID)
+		require.Equal(t, "a", v.Path)
+	})
+}
+
+// TestApplyOneEvent_shouldHandleNilDBAndUnknownType verifies dispatcher error handling does not
+// rely on string matching and returns stable typed errors.
+func TestApplyOneEvent_shouldHandleNilDBAndUnknownType(t *testing.T) {
+	t.Run("should return nil error kind when db is nil", func(t *testing.T) {
+		res, warnings, advance, retryLater, err := applyOneEvent(context.Background(), nil, nil, eventlog.DeleteEvent{Type: eventlog.TypeDelete, StorageID: "hdd1", Path: "a"}, false)
+		require.Equal(t, int64(1), res.failed)
+		require.Empty(t, warnings)
+		require.False(t, advance)
+		require.True(t, retryLater)
+		require.Error(t, err)
+		require.ErrorIs(t, err, errkind.ErrNil)
+	})
+
+	t.Run("should return invalid error kind for unknown event type", func(t *testing.T) {
+		mount := "media"
+		_ = setupPruneTestEnv(t, mount)
+
+		db, err := indexdb.Open(mount)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = db.Close() })
+
+		res, warnings, advance, retryLater, err := applyOneEvent(context.Background(), nil, db, fakeEvent{}, false)
+		require.Equal(t, int64(1), res.failed)
+		require.Empty(t, warnings)
+		require.True(t, advance)
+		require.False(t, retryLater)
+		require.Error(t, err)
+		require.ErrorIs(t, err, errkind.ErrInvalid)
+	})
+}
+
+// TestMaybeTruncateEvents_shouldTruncateWhenOffsetMatches verifies truncation occurs only when
+// the reader offset equals the file size, and writes offset=0.
+func TestMaybeTruncateEvents_shouldTruncateWhenOffsetMatches(t *testing.T) {
+	mount := "media"
+	_ = setupPruneTestEnv(t, mount)
+
+	logPath := filepath.Join(config.MountStateDir(mount), "events.ndjson")
+	require.NoError(t, os.MkdirAll(filepath.Dir(logPath), 0o755))
+	content := []byte("line1\nline2\n")
+	require.NoError(t, os.WriteFile(logPath, content, eventlog.FileMode))
+
+	truncated, err := maybeTruncateEvents(mount, int64(len(content)))
+	require.NoError(t, err)
+	require.True(t, truncated)
+
+	st, err := os.Stat(logPath)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), st.Size())
+
+	off, err := eventlog.ReadOffset(mount)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), off)
+}
+
+// TestMaybeTruncateEvents_shouldNotTruncateOnMismatchOrMissing verifies mismatch offsets or missing
+// log files do not error and do not truncate.
+func TestMaybeTruncateEvents_shouldNotTruncateOnMismatchOrMissing(t *testing.T) {
+	mount := "media"
+	_ = setupPruneTestEnv(t, mount)
+
+	logPath := filepath.Join(config.MountStateDir(mount), "events.ndjson")
+	require.NoError(t, os.MkdirAll(filepath.Dir(logPath), 0o755))
+	content := []byte("line1\n")
+	require.NoError(t, os.WriteFile(logPath, content, eventlog.FileMode))
+
+	truncated, err := maybeTruncateEvents(mount, int64(len(content)-1))
+	require.NoError(t, err)
+	require.False(t, truncated)
+
+	st, err := os.Stat(logPath)
+	require.NoError(t, err)
+	require.Equal(t, int64(len(content)), st.Size())
+
+	require.NoError(t, os.Remove(logPath))
+	truncated, err = maybeTruncateEvents(mount, 123)
+	require.NoError(t, err)
+	require.False(t, truncated)
+}
+
+// TestMaybeTruncateEvents_shouldReturnTypedErrors verifies invalid mount names are rejected and
+// underlying open errors are wrapped.
+func TestMaybeTruncateEvents_shouldReturnTypedErrors(t *testing.T) {
+	_, err := maybeTruncateEvents("", 1)
+	require.Error(t, err)
+	require.ErrorIs(t, err, errkind.ErrRequired)
+
+	mount := "media"
+	_ = setupPruneTestEnv(t, mount)
+
+	logPath := filepath.Join(config.MountStateDir(mount), "events.ndjson")
+	require.NoError(t, os.MkdirAll(logPath, 0o755))
+
+	_, err = maybeTruncateEvents(mount, 1)
+	require.Error(t, err)
+	require.ErrorIs(t, err, syscall.EISDIR)
+}
+
+// TestApplyDelete_shouldSkipWhenENOENT verifies DELETE treats missing files as already-deleted and
+// advances the offset while finalizing DB state.
+func TestApplyDelete_shouldSkipWhenENOENT(t *testing.T) {
+	mount := "media"
+	_ = setupPruneTestEnv(t, mount)
+
+	root := t.TempDir()
+	storageRoots := map[string]string{"hdd1": root}
+
+	db, err := indexdb.Open(mount)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	ev := eventlog.DeleteEvent{Type: eventlog.TypeDelete, StorageID: "hdd1", Path: "missing.txt", IsDir: false, TS: 1}
+	res, warnings, advance, retryLater, err := applyDelete(context.Background(), storageRoots, db, ev, false)
+
+	require.NoError(t, err)
+	require.True(t, advance)
+	require.False(t, retryLater)
+	require.Equal(t, int64(1), res.skipped)
+	require.Empty(t, warnings)
+}
+
+// TestApplyDelete_shouldReturnHardErrorOnUnlinkDir verifies DELETE returns a hard error when
+// unlink fails with an unhandled errno (commonly EISDIR/EPERM when attempting to unlink a dir).
+func TestApplyDelete_shouldReturnHardErrorOnUnlinkDir(t *testing.T) {
+	mount := "media"
+	_ = setupPruneTestEnv(t, mount)
+
+	root := t.TempDir()
+	rel := "d"
+	dir := filepath.Join(root, rel)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+
+	storageRoots := map[string]string{"hdd1": root}
+	db, err := indexdb.Open(mount)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	ev := eventlog.DeleteEvent{Type: eventlog.TypeDelete, StorageID: "hdd1", Path: rel, IsDir: false, TS: 1}
+	res, warnings, advance, retryLater, err := applyDelete(context.Background(), storageRoots, db, ev, false)
+
+	require.Error(t, err)
+	require.True(t, errors.Is(err, syscall.EISDIR) || errors.Is(err, syscall.EPERM), "expected EISDIR/EPERM, got: %v", err)
+	require.False(t, advance)
+	require.True(t, retryLater)
+	require.Equal(t, int64(1), res.failed)
+	require.Empty(t, warnings)
+
+	require.DirExists(t, dir)
+}
+
+// TestApplyDelete_shouldWarnOnPermissionDeniedFile verifies DELETE emits a warning and advances
+// when unlink fails with EPERM/EACCES. This typically requires running as non-root.
+func TestApplyDelete_shouldWarnOnPermissionDeniedFile(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("test requires non-root to trigger EPERM/EACCES on unlink")
+	}
+
+	mount := "media"
+	_ = setupPruneTestEnv(t, mount)
+
+	root := t.TempDir()
+	targetRel := "a.txt"
+	target := filepath.Join(root, targetRel)
+	mustWriteFile(t, target, []byte("x"))
+
+	// Make the storage root non-writable so unlink fails.
+	require.NoError(t, os.Chmod(root, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(root, 0o755) })
+
+	storageRoots := map[string]string{"hdd1": root}
+	db, err := indexdb.Open(mount)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	ev := eventlog.DeleteEvent{Type: eventlog.TypeDelete, StorageID: "hdd1", Path: targetRel, IsDir: false, TS: 1}
+	res, warnings, advance, retryLater, err := applyDelete(context.Background(), storageRoots, db, ev, false)
+
+	require.NoError(t, err)
+	require.True(t, advance)
+	require.False(t, retryLater)
+	require.Equal(t, int64(1), res.failed)
+	require.Equal(t, []string{fmt.Sprintf("unlink permission denied: storage_id=%s path=%s", "hdd1", targetRel)}, warnings)
+
+	require.FileExists(t, target)
+}
+
+// TestApplyDelete_shouldReturnHardErrorOnENOTDIR verifies dir DELETE returns a hard error when
+// rmdir fails with an unhandled errno (e.g., ENOTDIR when the target is a file).
+func TestApplyDelete_shouldReturnHardErrorOnENOTDIR(t *testing.T) {
+	mount := "media"
+	_ = setupPruneTestEnv(t, mount)
+
+	root := t.TempDir()
+	rel := "a.txt"
+	mustWriteFile(t, filepath.Join(root, rel), []byte("x"))
+
+	storageRoots := map[string]string{"hdd1": root}
+	db, err := indexdb.Open(mount)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	ev := eventlog.DeleteEvent{Type: eventlog.TypeDelete, StorageID: "hdd1", Path: rel, IsDir: true, TS: 1}
+	res, warnings, advance, retryLater, err := applyDelete(context.Background(), storageRoots, db, ev, false)
+
+	require.Error(t, err)
+	require.ErrorIs(t, err, syscall.ENOTDIR)
+	require.False(t, advance)
+	require.True(t, retryLater)
+	require.Equal(t, int64(1), res.failed)
+	require.Empty(t, warnings)
+}
+
+// TestApplyRename_shouldSkipWhenOldENOENT verifies RENAME treats missing old paths as already-applied
+// and advances the offset after finalizing DB state.
+func TestApplyRename_shouldSkipWhenOldENOENT(t *testing.T) {
+	mount := "media"
+	_ = setupPruneTestEnv(t, mount)
+
+	root := t.TempDir()
+	storageRoots := map[string]string{"hdd1": root}
+
+	db, err := indexdb.Open(mount)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	ev := eventlog.RenameEvent{Type: eventlog.TypeRename, StorageID: "hdd1", OldPath: "missing.txt", NewPath: "new.txt", TS: 1}
+	res, warnings, advance, retryLater, err := applyRename(context.Background(), storageRoots, db, ev, false)
+
+	require.NoError(t, err)
+	require.True(t, advance)
+	require.False(t, retryLater)
+	require.Equal(t, int64(1), res.skipped)
+	require.Empty(t, warnings)
+}
+
+// TestApplyRename_shouldFailWhenMkdirAllFails verifies a hard failure occurs when destination parent
+// cannot be created.
+func TestApplyRename_shouldFailWhenMkdirAllFails(t *testing.T) {
+	mount := "media"
+	_ = setupPruneTestEnv(t, mount)
+
+	root := t.TempDir()
+	storageRoots := map[string]string{"hdd1": root}
+
+	// Old file exists.
+	oldRel := "a.txt"
+	mustWriteFile(t, filepath.Join(root, oldRel), []byte("x"))
+
+	// Block MkdirAll by placing a file where the destination parent dir should be.
+	blocker := filepath.Join(root, "dest")
+	mustWriteFile(t, blocker, []byte("not-a-dir"))
+
+	db, err := indexdb.Open(mount)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	ev := eventlog.RenameEvent{Type: eventlog.TypeRename, StorageID: "hdd1", OldPath: oldRel, NewPath: "dest/new.txt", TS: 1}
+	res, warnings, advance, retryLater, err := applyRename(context.Background(), storageRoots, db, ev, false)
+
+	require.Error(t, err)
+	var pe *os.PathError
+	require.ErrorAs(t, err, &pe)
+
+	require.False(t, advance)
+	require.True(t, retryLater)
+	require.Equal(t, int64(1), res.failed)
+	require.Empty(t, warnings)
+}
+
+// TestApplyRename_shouldWarnOnNotEmpty verifies rename emits a warning and advances when renaming
+// over a non-empty directory (ENOTEMPTY).
+func TestApplyRename_shouldWarnOnNotEmpty(t *testing.T) {
+	mount := "media"
+	_ = setupPruneTestEnv(t, mount)
+
+	root := t.TempDir()
+	storageRoots := map[string]string{"hdd1": root}
+
+	oldRel := "src"
+	oldP := filepath.Join(root, oldRel)
+	require.NoError(t, os.MkdirAll(oldP, 0o755))
+
+	newRel := "dst"
+	newP := filepath.Join(root, newRel)
+	require.NoError(t, os.MkdirAll(newP, 0o755))
+	mustWriteFile(t, filepath.Join(newP, "child.txt"), []byte("x"))
+
+	db, err := indexdb.Open(mount)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	ev := eventlog.RenameEvent{Type: eventlog.TypeRename, StorageID: "hdd1", OldPath: oldRel, NewPath: newRel, TS: 1}
+	res, warnings, advance, retryLater, err := applyRename(context.Background(), storageRoots, db, ev, false)
+
+	require.NoError(t, err)
+	require.True(t, advance)
+	require.False(t, retryLater)
+	require.Equal(t, int64(1), res.failed)
+	require.Equal(t, []string{fmt.Sprintf("rename not empty: storage_id=%s old_path=%s new_path=%s", "hdd1", oldRel, newRel)}, warnings)
+
+	require.DirExists(t, oldP)
+}
+
+// TestRunOneshot_shouldReturnErrorWhenReaderNextFails verifies the event loop returns a wrapped
+// error when the event reader returns a non-EOF error.
+func TestRunOneshot_shouldReturnErrorWhenReaderNextFails(t *testing.T) {
+	mount := "media"
+	_ = setupPruneTestEnv(t, mount)
+
+	prev := openEventReader
+	openEventReader = func(mountName string, offset int64) (eventReader, error) {
+		_ = mountName
+		_ = offset
+		return fakeErrReader{}, nil
+	}
+	t.Cleanup(func() { openEventReader = prev })
+
+	_, err := RunOneshot(context.Background(), mount, &config.MountConfig{}, Opts{}, Hooks{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to read next event")
+	require.ErrorIs(t, err, errFakeReader)
 }
 
 // TestRunOneshot_DeleteFile_shouldDeletePhysicalAndTruncateLog verifies a successful DELETE unlinks the physical file and truncates the log.
