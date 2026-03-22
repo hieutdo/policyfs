@@ -279,13 +279,17 @@ a:hover {
   font-size: 26px;
   font-weight: 700;
   letter-spacing: -0.4px;
-  margin-bottom: 36px;
+  margin-bottom: 24px;
   color: var(--text);
 }
 
 /* ─── FEATURES ────────────────────────────────────────────────────────────── */
 
 .features {
+  padding: 72px 0;
+}
+
+.use-cases {
   padding: 72px 0;
 }
 
@@ -1390,14 +1394,12 @@ footer {
 
 @media (max-width: 900px) {
   .hero,
+  .page-header,
   .features,
-  .how-it-works,
-  .indexing,
-  .prune-section,
-  .move-section,
+  .steps,
   .comparison,
-  .config-snippet,
-  .install-cta {
+  .install-cta,
+  .not-for-section {
     padding: 40px 0;
   }
   .hero .container {
@@ -1431,6 +1433,15 @@ footer {
 
   .section-title {
     margin-bottom: 24px;
+  }
+
+  footer .container {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .footer-links {
+    width: 100%;
   }
 }
 
@@ -1474,7 +1485,7 @@ footer {
   }
 
   footer .container {
-    flex-direction: row;
+    flex-direction: column;
     align-items: flex-start;
   }
 
@@ -1485,9 +1496,5 @@ footer {
   .footer-copy {
     font-size: 11px;
     color: var(--text-muted);
-  }
-
-  .footer-links a:not(:first-child):not(:last-child) {
-    display: none;
   }
 }

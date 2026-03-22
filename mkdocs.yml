@@ -48,8 +48,10 @@ markdown_extensions:
 
 nav:
   - Overview: index.md
+  - Quickstart: quickstart.md
   - Install:
       - Debian/Ubuntu: install/debian.md
+  - How it works: how-it-works.md
   - Concepts: concepts.md
   - Use cases: use-cases.md
   - Configure: config.md

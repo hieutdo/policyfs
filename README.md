@@ -22,6 +22,8 @@ PolicyFS is a Linux FUSE storage daemon that unifies multiple storage paths unde
 
 ## Quickstart (Debian/Ubuntu)
 
+For the full step-by-step quickstart, see: https://docs.policyfs.org/v1/quickstart/
+
 1. Install runtime dependencies:
 
    ```bash

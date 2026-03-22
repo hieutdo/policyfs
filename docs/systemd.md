@@ -55,6 +55,24 @@ PolicyFS uses standard Linux locations:
 - Runtime: `/run/pfs/<mount>/`
 - Logs: journald by default; optional file logging can be enabled via config.
 
+## Check job output
+
+View the last run of a maintenance job:
+
+```bash
+journalctl -u pfs-maint@media.service -n 50
+```
+
+Example output:
+
+```
+Mar 22 00:30:12 host pfs[1234]: move: moved 3 files (2.1 GB) from ssd1 → hdd1
+Mar 22 00:30:15 host pfs[1234]: prune: applied 7 events (4 deletes, 3 renames)
+Mar 22 00:30:18 host pfs[1234]: index: indexed 12483 files across hdd1, hdd2
+```
+
+Exit code 3 means the job ran but found nothing to do — this is normal when disks are not above the threshold or there are no deferred events.
+
 ## Common operations
 
 Start/restart a mount:

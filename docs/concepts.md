@@ -6,6 +6,16 @@ An optional SQLite index lets metadata operations skip spinning disks entirely.
 
 A single config file (`/etc/pfs/pfs.yaml`) can define **multiple mounts**, each with its own storage paths, routing rules, and maintenance jobs. Each mount runs as an independent daemon with its own systemd service.
 
+## Three things to know before you configure
+
+- **Storage path** — a physical directory on one of your disks (e.g. `/mnt/hdd1/media`). You list these under `storage_paths`. Setting `indexed: true` on a path means PolicyFS will serve its metadata from a local SQLite database — so directory listings and stat calls don't spin up the disk.
+
+- **Routing rule** — maps a glob pattern (e.g. `library/**`) to which storage paths handle reads and writes for matching virtual paths. Rules are evaluated top-to-bottom, first match wins. Every config must end with a catch-all rule (`**`).
+
+- **Maintenance cycle** — three scheduled jobs (`pfs move`, `pfs prune`, `pfs index`) that run on a schedule (typically nightly) to tier files to archive disks, apply deferred changes, and refresh the index. Run as a single `pfs maint` command or via the `pfs-maint@<mount>.timer` systemd unit.
+
+See [Use cases](use-cases.md) to see these concepts in action before reading the full reference below.
+
 ## Architecture
 
 ```mermaid
@@ -63,8 +73,7 @@ At a high level:
 
 !!! warning "Not for application state"
 PolicyFS is optimized for media libraries and other mostly-static files.
-Avoid using the mountpoint for databases (SQLite/Postgres/MySQL), mmap-heavy files, Docker/VM storage, package/build caches, or torrent clients.
-These workloads are latency/lock/fsync heavy and are not a supported or well-tested target for PolicyFS.
+For unsupported workloads and limitations, see [How pfs works](how-it-works.md#not-a-good-fit-for).
 
 | Daemon component            | Responsibility                                               | Why it exists                                           |
 | --------------------------- | ------------------------------------------------------------ | ------------------------------------------------------- |
@@ -125,21 +134,16 @@ See [Disk spindown (power saving)](spindown.md).
 
 ## The maintenance cycle
 
-The daemon handles the hot path. Three maintenance jobs handle everything else — and they form a cycle:
+PolicyFS relies on three maintenance jobs: `pfs move`, `pfs prune`, and `pfs index`.
 
-1. `pfs move`: migrate files between storages (typical use: SSD to HDD).
-2. `pfs prune`: apply deferred mutations (`events.ndjson`) to disk.
-3. `pfs index`: refresh the SQLite index after the disk state changed.
+See [How pfs works](how-it-works.md#maintenance-cycle) for the sequence and what each job does.
 
-[`pfs maint`](commands/maint.md) runs mover first, then (when mover made changes) runs prune and index under a single `job.lock`, reducing disk wake-ups.
+Command references:
 
-### Why each job exists
-
-**[Mover](commands/move.md)** — You need this when you have tiered storage (fast write tier + large archive tier). The mover copies files from source to destination based on age, size, and disk usage conditions. Without it, your write tier fills up.
-
-**[Prune](commands/prune.md)** — You need this whenever you have indexed storage. When files on indexed paths are deleted or renamed through the mount, the physical operation is deferred into an event log (`events.ndjson`). Prune reads the log and applies each operation to the physical disk. Without it, the event log grows forever and deleted files still occupy disk space.
-
-**[Indexer](commands/index.md)** — You need this whenever you have indexed storage. The indexer walks indexed storage paths and upserts file metadata into the SQLite database. It also removes stale entries for files that no longer exist. Without it, new files won't appear in metadata queries and deleted files linger in the index.
+- [`pfs maint`](commands/maint.md)
+- [`pfs move`](commands/move.md)
+- [`pfs prune`](commands/prune.md)
+- [`pfs index`](commands/index.md)
 
 ## Daemon and maintenance coordination
 
@@ -212,15 +216,12 @@ If no target has the parent directory, all candidates remain eligible and the wr
 
 This keeps related files together — for example, all files in `library/movies/MovieA/` will land on the same disk.
 
+**Example:** You have `hdd1` and `hdd2`. Jellyfin downloads a movie and creates `library/movies/Inception/` on `hdd1`. Later, a subtitle file arrives for the same movie. With `path_preserving: true`, PolicyFS writes `library/movies/Inception/Inception.en.srt` to `hdd1` — because the parent directory already exists there — rather than scattering it to `hdd2`.
+
 ## Directory listings
 
 Unlike reads and writes (first match wins), directory listings consider **all** routing rules whose pattern could match descendants of the listed directory.
 The result is the union of entries across all matching storage targets, deduplicated by name.
-
-## Indexed storage (recap)
-
-Storage paths with `indexed: true` are backed by a per-mount SQLite database for metadata operations.
-Deferred mutations are written to `events.ndjson` and applied later by [`pfs prune`](commands/prune.md).
 
 ## Locks
 

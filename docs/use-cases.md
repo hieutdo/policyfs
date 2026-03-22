@@ -1,11 +1,19 @@
 # Use cases
 
-This page collects practical configuration patterns.
-Each snippet is intentionally partial — merge it into your mount config and adjust paths/IDs.
+This page collects practical configuration patterns. Each snippet is a complete `mounts:` block — paste it into `/etc/pfs/pfs.yaml` (replacing the example that ships with the package) and adjust the paths to match your disks.
 
-## 1) Mergerfs alternative (single mount over many disks)
+```yaml
+# /etc/pfs/pfs.yaml — paste one of the configs below here
+fuse:
+  allow_other: true # required if Plex/Jellyfin run as a different user
 
-**Goal:** Present multiple disks as a single mountpoint, while distributing writes.
+mounts:
+  # ... paste a use-case config here
+```
+
+## 1) Mergerfs alternative (simplest starting point)
+
+**Goal:** Present multiple disks as a single mountpoint, while distributing writes. If you're new to PolicyFS, start here — no indexing, no tiering, just pooling.
 
 **Suggested config:**
 
@@ -28,15 +36,20 @@ mounts:
 
 **Recommendation:** Use `write_policy: most_free` + `path_preserving: true` for the usual “fill the emptiest disk but keep directories together” behavior. This use case is not meant to reduce disk spinups; for reducing metadata-driven spinups, see the cases that set `indexed: true`.
 
-## 2) Media library (SSD for hot writes, HDD for capacity)
+## 2) Media library (SSD for fast writes, HDD for capacity)
 
 **Goal:** Put new writes on SSD, keep reads/listings unified, then move older files to HDD.
+
+!!! note "About indexed storage"
+`indexed: true` is optional and only affects metadata operations (like directory listing). File content reads still come from the owning disk, and maintenance jobs will spin disks by design.
 
 **Recommended folder layout**
 
 Keep the same relative layout on every disk:
 
 ```text
+/mnt/ssd1/media/ingest/...
+/mnt/ssd2/media/ingest/...
 /mnt/ssd1/media/library/{movies,tv,music}/...
 /mnt/ssd2/media/library/{movies,tv,music}/...
 /mnt/hdd1/media/library/{movies,tv,music}/...
@@ -61,7 +74,16 @@ mounts:
       ssds: [ssd1, ssd2]
       hdds: [hdd1, hdd2, hdd3]
     routing_rules:
-      - match: 'library/**'
+      - match: 'library/music/**'
+        targets: [ssds]
+        write_policy: most_free
+        path_preserving: true
+      - match: 'library/{movies,tv}/**'
+        read_targets: [ssds, hdds]
+        write_targets: [ssds]
+        write_policy: most_free
+        path_preserving: true
+      - match: 'ingest/**'
         read_targets: [ssds, hdds]
         write_targets: [ssds]
         write_policy: most_free
@@ -77,11 +99,11 @@ mounts:
         - name: ssd-to-hdd
           trigger:
             type: usage
-            threshold_start: 80
-            threshold_stop: 70
+            threshold_start: 80 # start moving when any source disk reaches 80% full
+            threshold_stop: 70 # stop moving when all source disks are below 70% full
           source:
             groups: [ssds]
-            patterns: ['library/{movies,tv,music}/**']
+            patterns: ['library/{movies,tv}/**']
           destination:
             groups: [hdds]
             policy: most_free
@@ -107,12 +129,25 @@ mounts:
       - { id: hdd1, path: /mnt/hdd1/nvr, indexed: false }
       - { id: hdd2, path: /mnt/hdd2/nvr, indexed: false }
     storage_groups:
-      hot: [ssd1, ssd2]
-      archive: [hdd1, hdd2]
+      ssds: [ssd1, ssd2]
+      hdds: [hdd1, hdd2]
     routing_rules:
+      - match: 'clips/**'
+        targets: [ssds]
+        write_policy: most_free
+        path_preserving: true
+      - match: 'exports/**'
+        targets: [ssds]
+        write_policy: most_free
+        path_preserving: true
+      - match: 'recordings/**'
+        read_targets: [ssds, hdds]
+        write_targets: [ssds]
+        write_policy: most_free
+        path_preserving: true
       - match: '**'
-        read_targets: [hot, archive]
-        write_targets: [hot]
+        read_targets: [ssds, hdds]
+        write_targets: [ssds]
         write_policy: most_free
         path_preserving: true
     mover:
@@ -122,10 +157,10 @@ mounts:
           trigger:
             type: manual
           source:
-            groups: [hot]
-            patterns: ['**']
+            groups: [ssds]
+            patterns: ['recordings/**']
           destination:
-            groups: [archive]
+            groups: [hdds]
             policy: most_free
             path_preserving: true
           conditions:
@@ -134,9 +169,9 @@ mounts:
 
 **Recommendation:** Start with `trigger.type: manual` and run `pfs move <mount> --job archive-footage` from a timer you control (e.g., systemd timer, cron, etc.).
 
-## 4) Seedbox hybrid (download + archive)
+## 4) Seedbox hybrid (SSD + archive)
 
-**Goal:** Download and seed from SSD, then archive to HDD later without breaking paths.
+**Goal:** Write and seed on SSD, then archive to HDD later without breaking paths.
 
 **Suggested config:**
 
@@ -150,34 +185,34 @@ mounts:
       - { id: hdd2, path: /mnt/hdd2/seedbox, indexed: true }
       - { id: hdd3, path: /mnt/hdd3/seedbox, indexed: true }
     storage_groups:
-      hot: [ssd1, ssd2]
-      archive: [hdd1, hdd2, hdd3]
+      ssds: [ssd1, ssd2]
+      hdds: [hdd1, hdd2, hdd3]
     routing_rules:
-      - match: 'downloads/**'
-        read_targets: [hot, archive]
-        write_targets: [hot]
+      - match: 'incoming/**'
+        read_targets: [ssds, hdds]
+        write_targets: [ssds]
         write_policy: most_free
         path_preserving: true
       - match: '**'
-        read_targets: [hot, archive]
-        write_targets: [hot]
+        read_targets: [ssds, hdds]
+        write_targets: [ssds]
         write_policy: most_free
         path_preserving: true
     mover:
       enabled: true
       jobs:
-        - name: archive-downloads
+        - name: archive-incoming
           trigger:
             type: manual
           source:
-            groups: [hot]
-            patterns: ['downloads/**']
+            groups: [ssds]
+            patterns: ['incoming/**']
           destination:
-            groups: [archive]
+            groups: [hdds]
             policy: most_free
             path_preserving: true
           conditions:
             min_age: 7d
 ```
 
-**Recommendation:** Trigger the move job from your seedbox tooling (when it decides a torrent is “cold”). Keep `trigger.type: manual` and call `pfs move seedbox --job archive-downloads`.
+**Recommendation:** Keep `trigger.type: manual` and call `pfs move seedbox --job archive-incoming` from a timer or your seedbox tooling when you want to archive older data.

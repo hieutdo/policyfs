@@ -1,0 +1,1030 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>How PolicyFS works — PolicyFS</title>
+    <meta
+      name="description"
+      content="Technical deep dive: how PolicyFS routes filesystem calls, keeps HDDs asleep with an optional SQLite index, and runs maintenance jobs for tiering and housekeeping."
+    />
+    <link rel="stylesheet" href="style.css" />
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <script>
+      ;(function () {
+        var s = localStorage.getItem('pfs-theme')
+        if (s) {
+          document.documentElement.setAttribute('data-theme', s)
+        } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme:dark)').matches) {
+          document.documentElement.setAttribute('data-theme', 'dark')
+        }
+      })()
+    </script>
+    <style>
+      .page-header {
+        padding: 80px 0 64px;
+        background: var(--bg);
+        border-bottom: 1px solid var(--border);
+      }
+      .page-title {
+        font-size: 42px;
+        font-weight: 800;
+        letter-spacing: -1.2px;
+        line-height: 1.1;
+        margin: 8px 0 20px;
+        color: var(--text);
+      }
+      .page-intro {
+        max-width: 680px;
+        color: var(--text-muted);
+        font-size: 16px;
+        line-height: 1.7;
+      }
+      .not-for-section {
+        padding: 80px 0;
+        background: var(--bg);
+        border-top: 1px solid var(--border);
+      }
+      .not-for-list {
+        margin: 24px 0 0 0;
+        padding: 0;
+        list-style: none;
+        max-width: 780px;
+      }
+      .not-for-list li {
+        padding: 10px 0 10px 24px;
+        position: relative;
+        color: var(--text-muted);
+        border-bottom: 1px solid var(--border);
+        font-size: 15px;
+        line-height: 1.5;
+      }
+      .not-for-list li:first-child {
+        border-top: 1px solid var(--border);
+      }
+      .not-for-list li::before {
+        content: '—';
+        position: absolute;
+        left: 0;
+        color: var(--text-muted);
+        opacity: 0.5;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- ─── NAV ─────────────────────────────────────────────────────────────── -->
+
+    <nav class="nav">
+      <div class="nav-inner">
+        <a href="https://policyfs.org" class="nav-brand">
+          <svg width="80" height="27" viewBox="2 6 90 30" xmlns="http://www.w3.org/2000/svg" aria-label="PolicyFS">
+            <circle cx="5" cy="9" r="3" fill="#48bb78" />
+            <circle cx="5" cy="17" r="3" fill="#48bb78" />
+            <circle cx="5" cy="25" r="2.8" fill="#94a3b8" />
+            <circle cx="5" cy="33" r="2.8" fill="#94a3b8" />
+            <path
+              d="M 8,9  C 16,9  16,21 22,21"
+              stroke="#dde3ed"
+              stroke-width="1.5"
+              fill="none"
+              stroke-linecap="round"
+            />
+            <path
+              d="M 8,17 C 16,17 16,21 22,21"
+              stroke="#dde3ed"
+              stroke-width="1.5"
+              fill="none"
+              stroke-linecap="round"
+            />
+            <path
+              d="M 8,25 C 16,25 16,21 22,21"
+              stroke="#dde3ed"
+              stroke-width="1.5"
+              fill="none"
+              stroke-linecap="round"
+            />
+            <path
+              d="M 8,33 C 16,33 16,21 22,21"
+              stroke="#dde3ed"
+              stroke-width="1.5"
+              fill="none"
+              stroke-linecap="round"
+            />
+            <circle cx="28" cy="21" r="6" fill="#3b6ff0" />
+            <text
+              x="44"
+              y="28"
+              font-family="'JetBrains Mono','Fira Code','Courier New',monospace"
+              font-size="22"
+              font-weight="700"
+              fill="#1a202c"
+            >
+              pfs
+            </text>
+          </svg>
+        </a>
+        <div class="nav-links">
+          <div class="nav-links-list">
+            <a href="/how-it-works.html" aria-current="page">How it works</a>
+            <a href="/use-cases.html">Use cases</a>
+            <a href="https://docs.policyfs.org/v1/">Documentation</a>
+            <a href="https://github.com/hieutdo/policyfs">GitHub</a>
+          </div>
+          <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Switch to dark mode">
+            <svg
+              class="icon-moon"
+              width="14"
+              height="14"
+              viewBox="0 0 16 16"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+              aria-hidden="true"
+            >
+              <path
+                d="M14 10.5A6.5 6.5 0 1 1 5.5 2 5 5 0 0 0 14 10.5z"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            <svg
+              class="icon-sun"
+              width="14"
+              height="14"
+              viewBox="0 0 16 16"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+              aria-hidden="true"
+              style="display: none"
+            >
+              <circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.5" />
+              <path
+                d="M8 1v2M8 13v2M1 8h2M13 8h2M3.22 3.22l1.42 1.42M11.36 11.36l1.42 1.42M3.22 12.78l1.42-1.42M11.36 4.64l1.42-1.42"
+                stroke="currentColor"
+                stroke-width="1.4"
+                stroke-linecap="round"
+              />
+            </svg>
+          </button>
+          <button
+            id="nav-menu-toggle"
+            class="nav-menu-toggle"
+            type="button"
+            aria-label="Open menu"
+            aria-expanded="false"
+            aria-controls="nav-mobile-menu"
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 16 16"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+              aria-hidden="true"
+            >
+              <path d="M2.5 4h11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+              <path d="M2.5 8h11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+              <path d="M2.5 12h11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div id="nav-mobile-menu" class="nav-mobile-menu" hidden>
+        <a href="/how-it-works.html" aria-current="page">How it works</a>
+        <a href="/use-cases.html">Use cases</a>
+        <a href="https://docs.policyfs.org/v1/">Documentation</a>
+        <a href="https://github.com/hieutdo/policyfs">GitHub</a>
+      </div>
+    </nav>
+
+    <!-- ─── PAGE HEADER ───────────────────────────────────────────────────────── -->
+
+    <section class="page-header">
+      <div class="container">
+        <p class="section-label">Under the hood</p>
+        <h1 class="page-title">How PolicyFS works</h1>
+        <p class="page-intro">
+          PolicyFS is a FUSE daemon that sits between your apps and physical storage. It routes each filesystem call
+          based on explicit rules. For archive disks marked <code>indexed: true</code>, a local SQLite database serves
+          <code>readdir</code> and <code>getattr</code> calls so the HDD can stay spun down. Three maintenance jobs —
+          <code>pfs move</code>, <code>pfs prune</code>, and <code>pfs index</code> — run on a schedule and handle
+          housekeeping.
+        </p>
+      </div>
+    </section>
+
+    <section class="how-it-works">
+      <div class="container">
+        <p class="section-label">Architecture</p>
+        <h2 class="section-title">How pfs handles a filesystem call</h2>
+        <div class="steps">
+          <div class="step">
+            <div class="step-num">1</div>
+            <h4>POSIX syscall</h4>
+            <p>Your application issues a normal POSIX syscall — pfs is transparent to userspace.</p>
+          </div>
+
+          <div class="step">
+            <div class="step-num">2</div>
+            <h4>FUSE dispatch</h4>
+            <p>The kernel forwards the call over FUSE to the pfs daemon.</p>
+          </div>
+
+          <div class="step">
+            <div class="step-num">3</div>
+            <h4>Routing &amp; index</h4>
+            <p>The router matches the path to a rule. For indexed storage, metadata may be served from the index.</p>
+          </div>
+
+          <div class="step">
+            <div class="step-num">4</div>
+            <h4>Physical I/O</h4>
+            <p>File content I/O hits physical storage through pfs, typically via a cached file descriptor.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── INDEXING DIAGRAM ─────────────────────────────────────────────────── -->
+
+    <section class="indexing">
+      <div class="container">
+        <p class="section-label">Indexed storage</p>
+        <h2 class="section-title">How <code class="title-code">pfs index</code> reduces HDD wakeups</h2>
+        <p class="indexing-intro">
+          With <code>indexed: true</code>, <code>pfs index</code> scans physical storage and upserts metadata into
+          <code>index.db</code>. <code>readdir</code> and <code>getattr</code> for indexed storage can be served from
+          the database, reducing HDD wakeups. File content I/O still hits the underlying storage. Non-indexed storage
+          paths (<code>indexed: false</code>) are accessed via the filesystem directly (no metadata index).
+        </p>
+
+        <svg
+          id="index-svg"
+          viewBox="0 0 800 305"
+          xmlns="http://www.w3.org/2000/svg"
+          aria-label="Indexing flow: pfs index scans indexed storage and upserts metadata into index.db; the pfs daemon can serve metadata reads from index.db and performs file content I/O against physical storage; non-indexed storage is accessed without the index."
+        >
+          <defs>
+            <marker id="arr-amber" markerWidth="6" markerHeight="4" refX="5.5" refY="2" orient="auto">
+              <polygon class="arr-amber-fill" points="0 0, 6 2, 0 4" />
+            </marker>
+            <marker id="arr-blue" markerWidth="6" markerHeight="4" refX="5.5" refY="2" orient="auto">
+              <polygon class="arr-blue-fill" points="0 0, 6 2, 0 4" />
+            </marker>
+            <marker id="arr-gray-r" markerWidth="6" markerHeight="4" refX="5.5" refY="2" orient="auto">
+              <polygon class="arr-gray-fill" points="0 0, 6 2, 0 4" />
+            </marker>
+            <marker id="arr-green" markerWidth="6" markerHeight="4" refX="5.5" refY="2" orient="auto">
+              <polygon class="arr-green-fill" points="0 0, 6 2, 0 4" />
+            </marker>
+          </defs>
+
+          <line x1="0" y1="182" x2="608" y2="182" class="idx-separator" />
+
+          <text
+            x="10"
+            y="22"
+            font-family="monospace"
+            font-size="10"
+            font-weight="600"
+            letter-spacing="1.2"
+            class="idx-group-hdd"
+          >
+            HDD · indexed: true
+          </text>
+
+          <rect x="10" y="30" width="90" height="28" rx="4" class="idx-hdd-box" />
+          <text
+            x="55"
+            y="48"
+            font-family="monospace"
+            font-size="12"
+            text-anchor="middle"
+            font-weight="600"
+            class="idx-hdd-label"
+          >
+            hdd1
+          </text>
+
+          <rect x="10" y="72" width="90" height="28" rx="4" class="idx-hdd-box" />
+          <text
+            x="55"
+            y="90"
+            font-family="monospace"
+            font-size="12"
+            text-anchor="middle"
+            font-weight="600"
+            class="idx-hdd-label"
+          >
+            hdd2
+          </text>
+
+          <rect x="10" y="114" width="90" height="28" rx="4" class="idx-hdd-box" />
+          <text
+            x="55"
+            y="132"
+            font-family="monospace"
+            font-size="12"
+            text-anchor="middle"
+            font-weight="600"
+            class="idx-hdd-label"
+          >
+            hdd3
+          </text>
+
+          <path d="M 100,44  C 128,44  128,79 155,79" class="idx-flow-amber" />
+          <path d="M 100,86  C 128,86  128,79 155,79" class="idx-flow-amber" style="animation-delay: -0.5s" />
+          <path d="M 100,128 C 128,128 128,79 155,79" class="idx-flow-amber" style="animation-delay: -1s" />
+          <polygon points="149,76 155,79 149,82" class="arr-amber-fill" />
+
+          <rect x="155" y="55" width="150" height="48" rx="6" class="idx-job-box" />
+          <text
+            x="230"
+            y="76"
+            font-family="monospace"
+            font-size="13"
+            text-anchor="middle"
+            font-weight="700"
+            class="idx-job-label"
+          >
+            pfs index
+          </text>
+          <text
+            x="230"
+            y="93"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="idx-job-sub"
+          >
+            periodic · systemd timer
+          </text>
+
+          <path d="M 305,79 L 418,79" class="idx-flow-amber" style="animation-delay: -0.3s" />
+          <polygon points="412,76 418,79 412,82" class="arr-amber-fill" />
+          <text
+            x="362"
+            y="69"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="idx-lbl-amber"
+          >
+            scan &amp; upsert
+          </text>
+
+          <rect x="420" y="52" width="90" height="54" rx="6" class="idx-db-box" />
+          <text
+            x="465"
+            y="77"
+            font-family="monospace"
+            font-size="13"
+            text-anchor="middle"
+            font-weight="700"
+            class="idx-db-label"
+          >
+            index.db
+          </text>
+          <text
+            x="465"
+            y="94"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="idx-db-sub"
+          >
+            SQLite
+          </text>
+
+          <path d="M 510,79 L 608,79" class="idx-flow-blue" />
+          <polygon points="602,76 608,79 602,82" class="arr-blue-fill" />
+          <text
+            x="559"
+            y="69"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="idx-lbl-blue"
+          >
+            readdir / getattr
+          </text>
+
+          <path d="M 610,122 C 490,162 250,166 102,128" class="idx-flow-data" />
+          <polygon points="107,125 101,128 107,131" class="arr-gray-fill" />
+          <text
+            x="340"
+            y="173"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="idx-lbl-data"
+          >
+            open/read/write · file content I/O
+          </text>
+
+          <text
+            x="10"
+            y="199"
+            font-family="monospace"
+            font-size="10"
+            font-weight="600"
+            letter-spacing="1.2"
+            class="idx-group-ssd"
+          >
+            SSD · indexed: false
+          </text>
+
+          <rect x="10" y="207" width="90" height="28" rx="4" class="idx-ssd-box" />
+          <text
+            x="55"
+            y="225"
+            font-family="monospace"
+            font-size="12"
+            text-anchor="middle"
+            font-weight="600"
+            class="idx-ssd-label"
+          >
+            ssd1
+          </text>
+
+          <rect x="10" y="249" width="90" height="28" rx="4" class="idx-ssd-box" />
+          <text
+            x="55"
+            y="267"
+            font-family="monospace"
+            font-size="12"
+            text-anchor="middle"
+            font-weight="600"
+            class="idx-ssd-label"
+          >
+            ssd2
+          </text>
+
+          <path d="M 100,221 L 608,221" class="idx-flow-green" />
+          <polygon points="602,218 608,221 602,224" class="arr-green-fill" />
+
+          <path d="M 100,263 L 608,263" class="idx-flow-green" style="animation-delay: -0.7s" />
+          <polygon points="602,260 608,263 602,266" class="arr-green-fill" />
+
+          <text
+            x="354"
+            y="213"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="idx-lbl-green"
+          >
+            filesystem I/O · no index
+          </text>
+
+          <rect x="610" y="18" width="160" height="272" rx="8" class="idx-daemon-box" />
+          <text
+            x="690"
+            y="48"
+            font-family="monospace"
+            font-size="18"
+            text-anchor="middle"
+            font-weight="700"
+            class="idx-daemon-title"
+          >
+            pfs
+          </text>
+          <text
+            x="690"
+            y="65"
+            font-family="system-ui, sans-serif"
+            font-size="11"
+            text-anchor="middle"
+            class="idx-daemon-sub"
+          >
+            daemon
+          </text>
+          <line x1="628" y1="80" x2="752" y2="80" class="idx-daemon-div" />
+          <text
+            x="690"
+            y="96"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="idx-daemon-note-blue"
+          >
+            metadata reads
+          </text>
+          <text
+            x="690"
+            y="110"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="idx-daemon-note"
+          >
+            via index.db
+          </text>
+          <text
+            x="690"
+            y="130"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="idx-daemon-note"
+          >
+            data bytes →
+          </text>
+          <text
+            x="690"
+            y="144"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="idx-daemon-note"
+          >
+            HDD direct
+          </text>
+          <line x1="628" y1="190" x2="752" y2="190" class="idx-daemon-div" />
+          <text
+            x="690"
+            y="230"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="idx-daemon-note-green"
+          >
+            SSD: direct I/O
+          </text>
+          <text
+            x="690"
+            y="246"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="idx-daemon-note"
+          >
+            reads &amp; writes
+          </text>
+          <text
+            x="690"
+            y="262"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="idx-daemon-note"
+          >
+            no index
+          </text>
+        </svg>
+      </div>
+    </section>
+
+    <!-- ─── PRUNE DIAGRAM ──────────────────────────────────────────────────────── -->
+
+    <section class="prune-section">
+      <div class="container">
+        <p class="section-label">Deferred operations</p>
+        <h2 class="section-title">How <code class="title-code">pfs prune</code> replays deferred operations</h2>
+        <p class="prune-intro">
+          On indexed storage, delete/rename/setattr operations are recorded to <code>events.ndjson</code> and reflected
+          in the index without immediately touching the physical disk. <code>pfs prune</code> replays the log and
+          applies pending operations to physical storage, freeing space and making changes persistent.
+        </p>
+
+        <svg
+          id="prune-svg"
+          viewBox="0 0 730 210"
+          xmlns="http://www.w3.org/2000/svg"
+          aria-label="Prune flow: pfs daemon appends deferred operations to events.ndjson; pfs prune reads the log and applies DELETE, RENAME, and SETATTR operations to physical HDDs."
+        >
+          <defs>
+            <marker id="arr-violet" markerWidth="6" markerHeight="4" refX="5.5" refY="2" orient="auto">
+              <polygon class="arr-violet-fill" points="0 0, 6 2, 0 4" />
+            </marker>
+          </defs>
+
+          <rect x="10" y="70" width="110" height="80" rx="8" class="prn-daemon-box" />
+          <text
+            x="65"
+            y="107"
+            font-family="monospace"
+            font-size="16"
+            text-anchor="middle"
+            font-weight="700"
+            class="prn-daemon-title"
+          >
+            pfs
+          </text>
+          <text
+            x="65"
+            y="124"
+            font-family="system-ui, sans-serif"
+            font-size="11"
+            text-anchor="middle"
+            class="prn-daemon-sub"
+          >
+            daemon
+          </text>
+
+          <path d="M 120,110 L 188,110" class="prn-flow-violet" />
+          <polygon points="182,107 188,110 182,113" class="arr-violet-fill" />
+          <text
+            x="154"
+            y="100"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="prn-lbl-violet"
+          >
+            defer ops
+          </text>
+
+          <rect x="190" y="58" width="130" height="104" rx="6" class="prn-events-box" />
+          <text
+            x="255"
+            y="85"
+            font-family="monospace"
+            font-size="12"
+            text-anchor="middle"
+            font-weight="700"
+            class="prn-events-label"
+          >
+            events.ndjson
+          </text>
+          <text
+            x="255"
+            y="101"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="prn-events-sub"
+          >
+            event log
+          </text>
+          <line x1="205" y1="110" x2="305" y2="110" class="prn-events-div" />
+          <text x="255" y="127" font-family="monospace" font-size="9" text-anchor="middle" class="prn-events-type">
+            DELETE
+          </text>
+          <text x="255" y="140" font-family="monospace" font-size="9" text-anchor="middle" class="prn-events-type">
+            RENAME
+          </text>
+          <text x="255" y="153" font-family="monospace" font-size="9" text-anchor="middle" class="prn-events-type">
+            SETATTR
+          </text>
+
+          <path d="M 320,110 L 388,110" class="prn-flow-violet" style="animation-delay: -0.5s" />
+          <polygon points="382,107 388,110 382,113" class="arr-violet-fill" />
+          <text
+            x="354"
+            y="100"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="prn-lbl-violet"
+          >
+            reads log
+          </text>
+
+          <rect x="390" y="70" width="150" height="80" rx="6" class="prn-job-box" />
+          <text
+            x="465"
+            y="107"
+            font-family="monospace"
+            font-size="13"
+            text-anchor="middle"
+            font-weight="700"
+            class="prn-job-label"
+          >
+            pfs prune
+          </text>
+          <text
+            x="465"
+            y="124"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="prn-job-sub"
+          >
+            periodic · systemd timer
+          </text>
+
+          <path d="M 540,110 C 568,110 568,42  612,42" class="prn-flow-violet" style="animation-delay: -0.2s" />
+          <path d="M 540,110 L 612,110" class="prn-flow-violet" style="animation-delay: -0.8s" />
+          <path d="M 540,110 C 568,110 568,178 612,178" class="prn-flow-violet" style="animation-delay: -1.3s" />
+
+          <polygon points="606,39 612,42 606,45" class="arr-violet-fill" />
+          <polygon points="606,107 612,110 606,113" class="arr-violet-fill" />
+          <polygon points="606,175 612,178 606,181" class="arr-violet-fill" />
+
+          <rect x="614" y="28" width="90" height="28" rx="4" class="prn-hdd-box" />
+          <text
+            x="659"
+            y="46"
+            font-family="monospace"
+            font-size="12"
+            text-anchor="middle"
+            font-weight="600"
+            class="prn-hdd-label"
+          >
+            hdd1
+          </text>
+
+          <rect x="614" y="96" width="90" height="28" rx="4" class="prn-hdd-box" />
+          <text
+            x="659"
+            y="114"
+            font-family="monospace"
+            font-size="12"
+            text-anchor="middle"
+            font-weight="600"
+            class="prn-hdd-label"
+          >
+            hdd2
+          </text>
+
+          <rect x="614" y="164" width="90" height="28" rx="4" class="prn-hdd-box" />
+          <text
+            x="659"
+            y="182"
+            font-family="monospace"
+            font-size="12"
+            text-anchor="middle"
+            font-weight="600"
+            class="prn-hdd-label"
+          >
+            hdd3
+          </text>
+        </svg>
+      </div>
+    </section>
+
+    <!-- ─── MOVE DIAGRAM ───────────────────────────────────────────────────────── -->
+
+    <section class="move-section">
+      <div class="container">
+        <p class="section-label">Tiered storage</p>
+        <h2 class="section-title">How <code class="title-code">pfs move</code> migrates files</h2>
+        <p class="move-intro">
+          As new files land on SSD storage, the fast tier fills up.
+          <code>pfs move</code> copies eligible files — based on minimum age, size, and disk usage threshold — from the
+          fast tier to destination storage (typically an indexed HDD archive). If the daemon control socket is
+          available, open files are skipped.
+        </p>
+
+        <svg
+          id="move-svg"
+          viewBox="0 0 560 192"
+          xmlns="http://www.w3.org/2000/svg"
+          aria-label="Move flow: files on SSD fast tier are evaluated by pfs move (age, size, free space) and copied to HDD archive tier; daemon socket is queried to skip open files."
+        >
+          <text
+            x="10"
+            y="20"
+            font-family="monospace"
+            font-size="10"
+            font-weight="600"
+            letter-spacing="1.2"
+            class="mv-group-ssd"
+          >
+            SSD · fast tier
+          </text>
+
+          <rect x="10" y="28" width="90" height="28" rx="4" class="mv-ssd-box" />
+          <text
+            x="55"
+            y="46"
+            font-family="monospace"
+            font-size="12"
+            text-anchor="middle"
+            font-weight="600"
+            class="mv-ssd-label"
+          >
+            ssd1
+          </text>
+
+          <rect x="10" y="70" width="90" height="28" rx="4" class="mv-ssd-box" />
+          <text
+            x="55"
+            y="88"
+            font-family="monospace"
+            font-size="12"
+            text-anchor="middle"
+            font-weight="600"
+            class="mv-ssd-label"
+          >
+            ssd2
+          </text>
+
+          <path d="M 100,42 C 128,42 128,65 156,65" class="mv-flow-teal" />
+          <path d="M 100,84 C 128,84 128,65 156,65" class="mv-flow-teal" style="animation-delay: -0.6s" />
+          <polygon points="150,62 156,65 150,68" class="arr-teal-fill" />
+
+          <rect x="158" y="38" width="158" height="54" rx="6" class="mv-job-box" />
+          <text
+            x="237"
+            y="62"
+            font-family="monospace"
+            font-size="13"
+            text-anchor="middle"
+            font-weight="700"
+            class="mv-job-label"
+          >
+            pfs move
+          </text>
+          <text
+            x="237"
+            y="79"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="middle"
+            class="mv-job-sub"
+          >
+            age · size · free space
+          </text>
+
+          <path d="M 316,65 C 348,65 348,42  398,42" class="mv-flow-teal" style="animation-delay: -0.3s" />
+          <path d="M 316,65 C 348,65 348,84  398,84" class="mv-flow-teal" style="animation-delay: -0.9s" />
+          <path d="M 316,65 C 348,65 348,126 398,126" class="mv-flow-teal" style="animation-delay: -1.5s" />
+          <polygon points="392,39 398,42 392,45" class="arr-teal-fill" />
+          <polygon points="392,81 398,84 392,87" class="arr-teal-fill" />
+          <polygon points="392,123 398,126 392,129" class="arr-teal-fill" />
+
+          <text
+            x="400"
+            y="20"
+            font-family="monospace"
+            font-size="10"
+            font-weight="600"
+            letter-spacing="1.2"
+            class="mv-group-hdd"
+          >
+            HDD · archive tier
+          </text>
+
+          <rect x="400" y="28" width="90" height="28" rx="4" class="mv-hdd-box" />
+          <text
+            x="445"
+            y="46"
+            font-family="monospace"
+            font-size="12"
+            text-anchor="middle"
+            font-weight="600"
+            class="mv-hdd-label"
+          >
+            hdd1
+          </text>
+
+          <rect x="400" y="70" width="90" height="28" rx="4" class="mv-hdd-box" />
+          <text
+            x="445"
+            y="88"
+            font-family="monospace"
+            font-size="12"
+            text-anchor="middle"
+            font-weight="600"
+            class="mv-hdd-label"
+          >
+            hdd2
+          </text>
+
+          <rect x="400" y="112" width="90" height="28" rx="4" class="mv-hdd-box" />
+          <text
+            x="445"
+            y="130"
+            font-family="monospace"
+            font-size="12"
+            text-anchor="middle"
+            font-weight="600"
+            class="mv-hdd-label"
+          >
+            hdd3
+          </text>
+
+          <line x1="237" y1="92" x2="237" y2="148" class="mv-sock-line" />
+          <polygon points="234,144 237,150 240,144" class="arr-teal-fill" />
+          <text
+            x="248"
+            y="124"
+            font-family="system-ui, sans-serif"
+            font-size="10"
+            text-anchor="start"
+            class="mv-lbl-sock"
+          >
+            queries: skip open files
+          </text>
+
+          <rect x="177" y="150" width="120" height="26" rx="4" class="mv-sock-box" />
+          <text
+            x="237"
+            y="167"
+            font-family="monospace"
+            font-size="11"
+            text-anchor="middle"
+            font-weight="600"
+            class="mv-sock-label"
+          >
+            daemon.sock
+          </text>
+        </svg>
+      </div>
+    </section>
+
+    <!-- ─── NOT A GOOD FIT ───────────────────────────────────────────────────── -->
+
+    <section class="not-for-section">
+      <div class="container">
+        <p class="section-label">Limitations</p>
+        <h2 class="section-title">Not a good fit for…</h2>
+        <ul class="not-for-list">
+          <li>Databases and virtual machine images — FUSE adds latency, and <code>O_DIRECT</code> is not supported</li>
+          <li>
+            Applications that rely on advisory file locking across mount boundaries (torrent clients, some sync tools)
+          </li>
+          <li>NFS re-exports — FUSE filesystems cannot be reliably re-exported over NFS</li>
+          <li>
+            Workloads that need maximum POSIX coverage — <a href="https://github.com/trapexit/mergerfs">mergerfs</a> is
+            the better choice
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ─── DOCS CTA ─────────────────────────────────────────────────────────── -->
+
+    <section class="install-cta">
+      <div class="container">
+        <div>
+          <h2>Go deeper in the docs</h2>
+          <p>
+            The deep dive explains routing semantics, indexed storage invariants, and the maintenance cycle in detail.
+          </p>
+        </div>
+        <div class="install-cmd">
+          <a href="https://docs.policyfs.org/v1/how-it-works/" class="btn-primary">Read the deep dive →</a>
+          <a href="https://docs.policyfs.org/v1/concepts/" class="btn-secondary">Concepts reference</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── FOOTER ───────────────────────────────────────────────────────────── -->
+
+    <footer>
+      <div class="container">
+        <a href="https://policyfs.org" class="footer-brand" aria-label="PolicyFS home">
+          <svg width="68" height="23" viewBox="2 6 90 30" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <circle cx="5" cy="9" r="3" fill="#48bb78" />
+            <circle cx="5" cy="17" r="3" fill="#48bb78" />
+            <circle cx="5" cy="25" r="2.8" fill="#94a3b8" />
+            <circle cx="5" cy="33" r="2.8" fill="#94a3b8" />
+            <path
+              d="M 8,9  C 16,9  16,21 22,21"
+              stroke="#dde3ed"
+              stroke-width="1.5"
+              fill="none"
+              stroke-linecap="round"
+            />
+            <path
+              d="M 8,17 C 16,17 16,21 22,21"
+              stroke="#dde3ed"
+              stroke-width="1.5"
+              fill="none"
+              stroke-linecap="round"
+            />
+            <path
+              d="M 8,25 C 16,25 16,21 22,21"
+              stroke="#dde3ed"
+              stroke-width="1.5"
+              fill="none"
+              stroke-linecap="round"
+            />
+            <path
+              d="M 8,33 C 16,33 16,21 22,21"
+              stroke="#dde3ed"
+              stroke-width="1.5"
+              fill="none"
+              stroke-linecap="round"
+            />
+            <circle cx="28" cy="21" r="6" fill="#3b6ff0" />
+            <text
+              x="44"
+              y="28"
+              font-family="'JetBrains Mono','Fira Code','Courier New',monospace"
+              font-size="22"
+              font-weight="700"
+              fill="#4a5568"
+            >
+              pfs
+            </text>
+          </svg>
+        </a>
+        <div class="footer-links">
+          <a href="/how-it-works.html">How it works</a>
+          <a href="/use-cases.html">Use cases</a>
+          <a href="https://docs.policyfs.org/v1/">Documentation</a>
+          <a href="https://github.com/hieutdo/policyfs">GitHub</a>
+        </div>
+        <span class="footer-copy">Apache-2.0 licensed</span>
+      </div>
+    </footer>
+
+    <script src="theme.js"></script>
+    <script src="nav.js"></script>
+  </body>
+</html>
