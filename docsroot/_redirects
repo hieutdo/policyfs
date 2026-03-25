@@ -1,1 +1,18 @@
-/ /v1/ 302
+/ /getting-started/ 302
+
+/quickstart /getting-started/ 301
+/quickstart/ /getting-started/ 301
+/install /getting-started/ 301
+/install/ /getting-started/ 301
+/install/debian /getting-started/ 301
+/install/debian/ /getting-started/ 301
+
+/v1/quickstart /v1/getting-started/ 301
+/v1/quickstart/ /v1/getting-started/ 301
+/v1/install /v1/getting-started/ 301
+/v1/install/ /v1/getting-started/ 301
+/v1/install/debian /v1/getting-started/ 301
+/v1/install/debian/ /v1/getting-started/ 301
+
+/v1/* /v1/:splat 200
+/* /v1/:splat 200

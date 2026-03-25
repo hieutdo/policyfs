@@ -12,46 +12,46 @@ Symptoms:
 
 Checklist:
 
-1. Ensure `fuse3` is installed.
-2. If you use `allow_other`, ensure `/etc/fuse.conf` contains:
+- Ensure `fuse3` is installed.
+- If you use `allow_other`, ensure `/etc/fuse.conf` contains:
 
-   ```text
-   user_allow_other
-   ```
+  ```text
+  user_allow_other
+  ```
 
-3. Ensure your config enables it:
+- Ensure your config enables it:
 
-   ```yaml
-   fuse:
-     allow_other: true
-   ```
+  ```yaml
+  fuse:
+    allow_other: true
+  ```
 
 ## systemd service won’t start
 
-1. Check status:
+- Check status:
 
-   ```bash
-   sudo systemctl status pfs@media.service
-   ```
+  ```bash
+  sudo systemctl status pfs@media.service
+  ```
 
-2. Check logs:
+- Check logs:
 
-   ```bash
-   sudo journalctl -u pfs@media.service -n 200 --no-pager
-   ```
+  ```bash
+  sudo journalctl -u pfs@media.service -n 200 --no-pager
+  ```
 
-3. Validate config:
+- Validate config:
 
-   ```bash
-   sudo pfs doctor media
-   ```
+  ```bash
+  sudo pfs doctor media
+  ```
 
-4. Ensure paths exist (common first-run failure):
+- Ensure paths exist (common first-run failure):
 
-   ```bash
-   sudo ls -ld /mnt/pfs/media
-   sudo ls -ld /mnt/ssd1/media /mnt/hdd1/media
-   ```
+  ```bash
+  sudo ls -ld /mnt/pfs/media
+  sudo ls -ld /mnt/ssd1/media /mnt/hdd1/media
+  ```
 
 ## Maintenance jobs do nothing
 
@@ -70,14 +70,14 @@ Exit code `75` means another PolicyFS process is holding a lock (usually because
 
 Checklist:
 
-1. Check for running units:
+- Check for running units:
 
-   ```bash
-   systemctl list-units 'pfs-*' --state=running
-   ```
+  ```bash
+  systemctl list-units 'pfs-*' --state=running
+  ```
 
-2. Check the daemon:
+- Check the daemon:
 
-   ```bash
-   sudo systemctl status pfs@media.service
-   ```
+  ```bash
+  sudo systemctl status pfs@media.service
+  ```

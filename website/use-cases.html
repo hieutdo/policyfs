@@ -292,7 +292,7 @@
         flex-wrap: wrap;
       }
       .media-diagram .mount-left {
-        flex: 1;
+        flex: 2;
         min-width: 260px;
       }
       .media-diagram .mount-path {
@@ -800,7 +800,7 @@
         flex-wrap: wrap;
       }
       .frigate-diagram .mount-left {
-        flex: 1;
+        flex: 2;
         min-width: 180px;
       }
       .frigate-diagram .mount-path {
@@ -1268,7 +1268,7 @@
           <div class="nav-links-list">
             <a href="/how-it-works.html">How it works</a>
             <a href="/use-cases.html" aria-current="page">Use cases</a>
-            <a href="https://docs.policyfs.org/v1/">Documentation</a>
+            <a href="https://docs.policyfs.org/">Documentation</a>
             <a href="https://github.com/hieutdo/policyfs">GitHub</a>
           </div>
           <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Switch to dark mode">
@@ -1334,7 +1334,7 @@
       <div id="nav-mobile-menu" class="nav-mobile-menu" hidden>
         <a href="/how-it-works.html">How it works</a>
         <a href="/use-cases.html" aria-current="page">Use cases</a>
-        <a href="https://docs.policyfs.org/v1/">Documentation</a>
+        <a href="https://docs.policyfs.org/">Documentation</a>
         <a href="https://github.com/hieutdo/policyfs">GitHub</a>
       </div>
     </nav>
@@ -1453,7 +1453,21 @@
                       <line x1="8" y1="17" x2="13" y2="17" stroke="currentColor" stroke-width="1.5" />
                       <path d="M12 8l-2 2 2 2" stroke="var(--orange)" stroke-width="1.2" stroke-linecap="round" />
                     </svg>
-                    <div class="app-name">Filebot</div>
+                    <div class="app-name">Downloaders</div>
+                  </div>
+                  <div class="app-card writer">
+                    <svg class="app-svg-icon" viewBox="0 0 24 24" fill="none">
+                      <path
+                        d="M4 4h10l4 4v12a1 1 0 01-1 1H4a1 1 0 01-1-1V5a1 1 0 011-1z"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                      />
+                      <polyline points="14,4 14,9 19,9" stroke="currentColor" stroke-width="1.5" />
+                      <line x1="8" y1="13" x2="16" y2="13" stroke="currentColor" stroke-width="1.5" />
+                      <line x1="8" y1="17" x2="13" y2="17" stroke="currentColor" stroke-width="1.5" />
+                      <path d="M12 8l-2 2 2 2" stroke="var(--orange)" stroke-width="1.2" stroke-linecap="round" />
+                    </svg>
+                    <div class="app-name">Rippers</div>
                   </div>
                 </div>
                 <div class="badge write" style="margin-top: 6px">WRITE</div>
@@ -1771,7 +1785,7 @@
             <!-- ── MOVER DETAIL ── -->
             <div class="mover-row">
               <div class="mover-pill">
-                <strong>pfs maint</strong> (systemd timer) — <code>pfs move</code> → <code>pfs prune</code> →
+                <strong>pfs maint</strong> — <code>pfs move</code> → <code>pfs prune</code> →
                 <code>pfs index</code>
               </div>
             </div>
@@ -1820,9 +1834,7 @@
             </div>
           </div>
 
-          <a href="https://docs.policyfs.org/v1/use-cases/#media-library" class="uc-config-link"
-            >See config example →</a
-          >
+          <a href="https://docs.policyfs.org/use-cases/#media-library" class="uc-config-link">See config example →</a>
         </div>
       </section>
 
@@ -2139,8 +2151,8 @@
             <!-- ── MOVER PILL ── -->
             <div class="mover-row">
               <div class="mover-pill">
-                <strong>pfs maint</strong> (systemd timer) — <code>pfs move</code> → <code>pfs prune</code> →
-                <code>pfs index</code> <span style="color: var(--text-muted)">(if indexed)</span>
+                <strong>pfs maint</strong> — <code>pfs move</code> → <code>pfs prune</code> → <code>pfs index</code>
+                <span style="color: var(--text-muted)">(if indexed)</span>
               </div>
             </div>
 
@@ -2221,7 +2233,7 @@
               </div>
             </div>
           </div>
-          <a href="https://docs.policyfs.org/v1/use-cases/#nvr-cctv-storage" class="uc-config-link">
+          <a href="https://docs.policyfs.org/use-cases/#nvr-cctv-storage" class="uc-config-link">
             See config example →
           </a>
         </div>
@@ -2237,8 +2249,8 @@
           <p>The use cases reference has annotated configuration examples for each setup.</p>
         </div>
         <div class="install-cmd">
-          <a href="https://docs.policyfs.org/v1/use-cases/" class="btn-primary">See config examples →</a>
-          <a href="https://docs.policyfs.org/v1/quickstart/" class="btn-secondary">Get started</a>
+          <a href="https://docs.policyfs.org/use-cases/" class="btn-primary">See config examples →</a>
+          <a href="https://docs.policyfs.org/getting-started/" class="btn-secondary">Get started</a>
         </div>
       </div>
     </section>
@@ -2297,7 +2309,7 @@
         <div class="footer-links">
           <a href="/how-it-works.html">How it works</a>
           <a href="/use-cases.html">Use cases</a>
-          <a href="https://docs.policyfs.org/v1/">Documentation</a>
+          <a href="https://docs.policyfs.org/">Documentation</a>
           <a href="https://github.com/hieutdo/policyfs">GitHub</a>
         </div>
         <span class="footer-copy">Apache-2.0 licensed</span>

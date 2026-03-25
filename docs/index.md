@@ -35,11 +35,10 @@ While tools like `mergerfs` are great for pooling drives, PolicyFS is focused on
 
 If you want practical configuration examples, see [Use cases](use-cases.md). If you care about power saving (HDD standby), see [Disk spindown (power saving)](spindown.md).
 
-- [Quickstart (Debian/Ubuntu)](quickstart.md)
 - [Concepts](concepts.md)
 - [Disk spindown (power saving)](spindown.md)
 - [Use cases](use-cases.md)
 - [Configure mounts and routing](config.md)
-- [Install on Debian/Ubuntu](install/debian.md)
+- [Getting started](getting-started.md)
 - [Run as a systemd-managed service](systemd.md)
 - [CLI overview](cli.md)

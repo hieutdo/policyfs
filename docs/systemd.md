@@ -21,14 +21,10 @@ The Debian package ships these default schedules:
 
 You typically enable either:
 
-- **Option A: individual timers** (`pfs-index`, `pfs-move`, `pfs-prune`)
-  - Pros: easy to spread work across the day.
-  - Cons: more units to manage.
-- **Option B: maint timer** (`pfs-maint`)
-  - Pros: one schedule, runs a batched flow.
-  - Cons: less control over per-phase timing.
+- **The maint timer** (`pfs-maint`) if you want one schedule and a single maintenance window. It runs a batched flow.
+- **Individual timers** (`pfs-index`, `pfs-move`, `pfs-prune`) if you want to stagger work across the day or tune each phase separately.
 
-I recommend starting with **Option B (`pfs-maint`)** unless you have a reason to separate the phases.
+I recommend starting with **`pfs-maint`** unless you have a reason to separate the phases.
 
 Avoid enabling `pfs-maint@<mount>.timer` at the same time as the individual timers.
 

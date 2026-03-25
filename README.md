@@ -14,15 +14,15 @@ PolicyFS is a Linux FUSE storage daemon that unifies multiple storage paths unde
 
 ## Status
 
-- Supported packaging today: Debian/Ubuntu `.deb` (linux/amd64).
+- Supported packaging today: Debian/Ubuntu (linux/amd64).
 
 ## Docs
 
-- User documentation: https://docs.policyfs.org/v1/
+- User documentation: https://docs.policyfs.org/
 
-## Quickstart (Debian/Ubuntu)
+## Getting started
 
-For the full step-by-step quickstart, see: https://docs.policyfs.org/v1/quickstart/
+For the full step-by-step guide, see: https://docs.policyfs.org/getting-started/
 
 1. Install runtime dependencies:
 
@@ -31,7 +31,7 @@ For the full step-by-step quickstart, see: https://docs.policyfs.org/v1/quicksta
    sudo apt-get install -y fuse3
    ```
 
-2. Download and install the `.deb` from GitHub Releases.
+2. Install from the APT repo or download a `.deb` from GitHub Releases.
 
 3. Edit the config:
    - `/etc/pfs/pfs.yaml` (created from the example on first install)

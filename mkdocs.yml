@@ -1,6 +1,6 @@
 site_name: PolicyFS
 site_description: PolicyFS Documentation
-site_url: https://docs.policyfs.org/v1/
+site_url: https://docs.policyfs.org/
 repo_url: https://github.com/hieutdo/policyfs
 repo_name: hieutdo/policyfs
 
@@ -48,23 +48,24 @@ markdown_extensions:
 
 nav:
   - Overview: index.md
-  - Quickstart: quickstart.md
-  - Install:
-      - Debian/Ubuntu: install/debian.md
-  - How it works: how-it-works.md
-  - Concepts: concepts.md
   - Use cases: use-cases.md
-  - Configure: config.md
-  - Systemd: systemd.md
-  - Disk spindown: spindown.md
-  - Commands:
-      - CLI overview: cli.md
-      - mount: commands/mount.md
-      - unmount: commands/unmount.md
-      - index: commands/index.md
-      - move: commands/move.md
-      - prune: commands/prune.md
-      - maint: commands/maint.md
-      - doctor: commands/doctor.md
-      - version: commands/version.md
-  - Troubleshooting: troubleshooting.md
+  - Getting started: getting-started.md
+  - Guides:
+      - Configure: config.md
+      - Systemd: systemd.md
+      - Disk spindown: spindown.md
+      - Troubleshooting: troubleshooting.md
+  - Internals:
+      - How it works: how-it-works.md
+      - Concepts: concepts.md
+  - CLI:
+      - Overview: cli.md
+      - Commands:
+          - mount: commands/mount.md
+          - unmount: commands/unmount.md
+          - index: commands/index.md
+          - move: commands/move.md
+          - prune: commands/prune.md
+          - maint: commands/maint.md
+          - doctor: commands/doctor.md
+          - version: commands/version.md

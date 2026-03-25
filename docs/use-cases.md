@@ -11,34 +11,9 @@ mounts:
   # ... paste a use-case config here
 ```
 
-## 1) Mergerfs alternative (simplest starting point)
+## 1) Media library (SSD for fast writes, HDD for capacity)
 
-**Goal:** Present multiple disks as a single mountpoint, while distributing writes. If you're new to PolicyFS, start here — no indexing, no tiering, just pooling.
-
-**Suggested config:**
-
-```yaml
-mounts:
-  media:
-    storage_paths:
-      - { id: d1, path: /mnt/disk1/media, indexed: false }
-      - { id: d2, path: /mnt/disk2/media, indexed: false }
-      - { id: d3, path: /mnt/disk3/media, indexed: false }
-    storage_groups:
-      disks: [d1, d2, d3]
-    routing_rules:
-      - match: '**'
-        read_targets: [disks]
-        write_targets: [disks]
-        write_policy: most_free
-        path_preserving: true
-```
-
-**Recommendation:** Use `write_policy: most_free` + `path_preserving: true` for the usual “fill the emptiest disk but keep directories together” behavior. This use case is not meant to reduce disk spinups; for reducing metadata-driven spinups, see the cases that set `indexed: true`.
-
-## 2) Media library (SSD for fast writes, HDD for capacity)
-
-**Goal:** Put new writes on SSD, keep reads/listings unified, then move older files to HDD.
+**Goal:** Put new writes on SSDs, keep reads/listings unified, then move older files to HDDs.
 
 !!! note "About indexed storage"
 `indexed: true` is optional and only affects metadata operations (like directory listing). File content reads still come from the owning disk, and maintenance jobs will spin disks by design.
@@ -112,9 +87,9 @@ mounts:
             min_age: 24h
 ```
 
-**Recommendation:** Mark HDDs as `indexed: true` to reduce metadata disk touches. Use mover thresholds so the SSDs do not fill up.
+**Tips:** Mark HDDs as `indexed: true` to reduce metadata disk touches. Use mover thresholds so the SSDs do not fill up.
 
-## 3) NVR / CCTV storage (tiered retention)
+## 2) NVR / CCTV storage (tiered retention)
 
 **Goal:** Write new footage to SSD (IOPS), then archive to HDD after a minimum age.
 
@@ -167,52 +142,27 @@ mounts:
             min_age: 24h
 ```
 
-**Recommendation:** Start with `trigger.type: manual` and run `pfs move <mount> --job archive-footage` from a timer you control (e.g., systemd timer, cron, etc.).
+**Tips:** Start with `trigger.type: manual` and run `pfs move <mount> --job archive-footage` from a timer you control (e.g., systemd timer, cron, etc.).
 
-## 4) Seedbox hybrid (SSD + archive)
+## 3) Mergerfs alternative (simplest starting point)
 
-**Goal:** Write and seed on SSD, then archive to HDD later without breaking paths.
+**Goal:** Present multiple disks as a single mountpoint, while distributing writes. If you're new to PolicyFS, start here — no indexing, no tiering, just pooling.
 
 **Suggested config:**
 
 ```yaml
 mounts:
-  seedbox:
+  media:
     storage_paths:
-      - { id: ssd1, path: /mnt/ssd1/seedbox, indexed: false }
-      - { id: ssd2, path: /mnt/ssd2/seedbox, indexed: false }
-      - { id: hdd1, path: /mnt/hdd1/seedbox, indexed: true }
-      - { id: hdd2, path: /mnt/hdd2/seedbox, indexed: true }
-      - { id: hdd3, path: /mnt/hdd3/seedbox, indexed: true }
+      - { id: d1, path: /mnt/disk1/media, indexed: false }
+      - { id: d2, path: /mnt/disk2/media, indexed: false }
+      - { id: d3, path: /mnt/disk3/media, indexed: false }
     storage_groups:
-      ssds: [ssd1, ssd2]
-      hdds: [hdd1, hdd2, hdd3]
+      disks: [d1, d2, d3]
     routing_rules:
-      - match: 'incoming/**'
-        read_targets: [ssds, hdds]
-        write_targets: [ssds]
-        write_policy: most_free
-        path_preserving: true
       - match: '**'
-        read_targets: [ssds, hdds]
-        write_targets: [ssds]
+        read_targets: [disks]
+        write_targets: [disks]
         write_policy: most_free
         path_preserving: true
-    mover:
-      enabled: true
-      jobs:
-        - name: archive-incoming
-          trigger:
-            type: manual
-          source:
-            groups: [ssds]
-            patterns: ['incoming/**']
-          destination:
-            groups: [hdds]
-            policy: most_free
-            path_preserving: true
-          conditions:
-            min_age: 7d
 ```
-
-**Recommendation:** Keep `trigger.type: manual` and call `pfs move seedbox --job archive-incoming` from a timer or your seedbox tooling when you want to archive older data.

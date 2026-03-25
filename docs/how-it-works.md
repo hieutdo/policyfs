@@ -50,7 +50,7 @@ Visual diagrams for each job: [policyfs.org/how-it-works](https://policyfs.org/h
 ## Further reading
 
 - [Use cases](use-cases.md) — ready-to-use config patterns for media servers, NVR, and seedboxes
-- [Install on Debian/Ubuntu](install/debian.md) — step-by-step install and service setup
+- [Getting started](getting-started.md) — install and service setup
 - [Concepts reference](concepts.md) — indexed storage invariants, routing semantics, event log format
 - [Configuration](config.md) — full config schema with annotated examples
 - [Systemd integration](systemd.md) — timer units for the maintenance cycle

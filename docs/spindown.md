@@ -13,18 +13,6 @@ If you want disks to actually spin down and save power, you must configure OS-le
 
 `hd-idle` is a small daemon that spins down disks after an idle timeout.
 
-### Pros/cons
-
-**Pros**
-
-- Simple and explicit.
-- Works well with “keep HDD asleep most of the day, wake it during maintenance windows”.
-
-**Cons**
-
-- Too-aggressive timeouts can increase load/unload cycles and reduce drive lifespan.
-- Some USB/SATA bridges and some drives ignore standby requests.
-
 ### Setup (Debian/Ubuntu)
 
 **Install**
@@ -62,19 +50,6 @@ sudo systemctl restart hd-idle
 ## Alternative: hdparm
 
 `hdparm` can set a drive standby timer.
-
-### Pros/cons
-
-**Pros**
-
-- No daemon process.
-- Works fine on many direct-attached SATA disks.
-
-**Cons**
-
-- Easy to misconfigure.
-- Some devices ignore it (especially behind USB bridges).
-- Some queries can wake the drive.
 
 If you go this route, test on one disk first, and keep the setting conservative.
 
