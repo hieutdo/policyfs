@@ -4,7 +4,35 @@ on:
   push:
     branches:
       - main
+    paths:
+      - '**/*.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'tests/**'
+      - 'migrations/**'
+      - 'configs/**'
+      - 'scripts/**'
+      - 'Dockerfile*'
+      - 'docker-compose*.yaml'
+      - 'Makefile'
+      - '.github/workflows/coverage.yml'
   pull_request:
+    paths:
+      - '**/*.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'tests/**'
+      - 'migrations/**'
+      - 'configs/**'
+      - 'scripts/**'
+      - 'Dockerfile*'
+      - 'docker-compose*.yaml'
+      - 'Makefile'
+      - '.github/workflows/coverage.yml'
   workflow_dispatch:
 
 permissions:
