@@ -86,6 +86,31 @@ jobs:
         run: |
           bash scripts/package_deb.sh
 
+      - name: normalize deb filename
+        run: |
+          deb_path=""
+          shopt -s nullglob
+          for p in dist/*_amd64.deb; do
+            if [[ "${p}" == "dist/policyfs_amd64.deb" ]]; then
+              continue
+            fi
+            deb_path="${p}"
+            break
+          done
+          shopt -u nullglob
+
+          if [[ -z "${deb_path}" ]]; then
+            echo "pfs: error: deb not found in dist/" >&2
+            exit 1
+          fi
+
+          cp "${deb_path}" "dist/policyfs_amd64.deb"
+          if [[ -f "${deb_path}.sha256" ]]; then
+            cp "${deb_path}.sha256" "dist/policyfs_amd64.deb.sha256"
+          else
+            sha256sum "dist/policyfs_amd64.deb" > "dist/policyfs_amd64.deb.sha256"
+          fi
+
       - name: import apt repo signing key
         env:
           APT_REPO_GPG_PRIVATE_KEY: ${{ secrets.APT_REPO_GPG_PRIVATE_KEY }}
@@ -100,8 +125,8 @@ jobs:
 
       - name: build apt repo
         run: |
-          deb_path="$(ls -1 dist/policyfs_*_amd64.deb | head -n 1)"
-          if [[ -z "${deb_path}" ]]; then
+          deb_path="dist/policyfs_amd64.deb"
+          if [[ ! -f "${deb_path}" ]]; then
             echo "pfs: error: deb not found in dist/" >&2
             exit 1
           fi
