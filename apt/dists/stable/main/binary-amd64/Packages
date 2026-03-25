@@ -1,0 +1,16 @@
+Package: pfs
+Priority: optional
+Section: utils
+Maintainer: PolicyFS <root@localhost>
+Architecture: amd64
+Version: 1.0.0
+Suggests: fuse3
+Filename: pool/main/p/pfs/policyfs_amd64.deb
+Size: 7266874
+MD5sum: 06ca9376b9a4f7d8e88ded38927c4402
+SHA1: 3bf0efc3c0b4d0ea02958d4d1966e98e7b8618ea
+SHA256: 805fb0e90db1decf1954c140e5d01daa5031e38eb32594a167b1503b9aa9c10f
+SHA512: 09d0d31f31315cb358b22ea8da1dfb5f72c707217cf87d5e0ee8f4b405696406bc29846a3568b268fca3f321a039245ed68252641ee23d4f2e6cca04b2d272fd
+Description: PolicyFS indexer and FUSE daemon
+ PolicyFS provides a FUSE mount plus maintenance jobs like indexer.
+
