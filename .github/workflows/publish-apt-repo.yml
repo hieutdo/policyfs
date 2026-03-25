@@ -1,19 +1,25 @@
-name: release-deb
+name: publish-apt-repo
 
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build-and-release:
+  build-and-publish:
+    if: ${{ secrets.APT_REPO_GPG_PRIVATE_KEY != '' }}
     runs-on: ubuntu-latest
     steps:
       - name: checkout
         uses: actions/checkout@v4
+
+      - name: validate ref
+        run: |
+          if [[ "${GITHUB_REF}" != refs/tags/v* ]]; then
+            echo "pfs: error: this workflow must be run from a version tag (refs/tags/v*); got ref=${GITHUB_REF}" >&2
+            exit 1
+          fi
 
       - name: setup go
         uses: actions/setup-go@v5
@@ -26,7 +32,9 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential \
             dpkg-dev \
-            libsqlite3-dev
+            libsqlite3-dev \
+            aptly \
+            gnupg
 
       - name: unit tests
         run: go test ./...
@@ -47,53 +55,6 @@ jobs:
         run: |
           bash scripts/package_deb.sh
 
-      - name: add latest-friendly filenames
-        env:
-          VERSION: ${{ github.ref_name }}
-        run: |
-          deb_path="$(ls -1 dist/policyfs_*_amd64.deb | head -n 1)"
-          if [[ -z "${deb_path}" ]]; then
-            echo "pfs: error: deb not found in dist/" >&2
-            exit 1
-          fi
-          cp "${deb_path}" "dist/policyfs_amd64.deb"
-          sha256sum "dist/policyfs_amd64.deb" > "dist/policyfs_amd64.deb.sha256"
-
-      - name: upload dist artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist
-          path: dist/
-
-      - name: release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/*.deb
-            dist/*.sha256
-          generate_release_notes: true
-
-  publish-apt-repo:
-    if: ${{ secrets.APT_REPO_GPG_PRIVATE_KEY != '' }}
-    runs-on: ubuntu-latest
-    needs: build-and-release
-    steps:
-      - name: checkout
-        uses: actions/checkout@v4
-
-      - name: download dist artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: dist
-          path: dist
-
-      - name: install deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            aptly \
-            gnupg
-
       - name: import apt repo signing key
         env:
           APT_REPO_GPG_PRIVATE_KEY: ${{ secrets.APT_REPO_GPG_PRIVATE_KEY }}
@@ -108,10 +69,7 @@ jobs:
 
       - name: build apt repo
         run: |
-          deb_path="dist/policyfs_amd64.deb"
-          if [[ ! -f "${deb_path}" ]]; then
-            deb_path="$(ls -1 dist/policyfs_*_amd64.deb | head -n 1)"
-          fi
+          deb_path="$(ls -1 dist/policyfs_*_amd64.deb | head -n 1)"
           if [[ -z "${deb_path}" ]]; then
             echo "pfs: error: deb not found in dist/" >&2
             exit 1

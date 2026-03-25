@@ -67,7 +67,7 @@ install -m 0644 "${root_dir}/packaging/logrotate/pfs" "${pkg_dir}/etc/logrotate.
 
 install -m 0755 "${binary_path}" "${pkg_dir}/usr/bin/pfs"
 
-pkg_name="pfs_${version}_${arch}.deb"
+pkg_name="policyfs_${version}_${arch}.deb"
 dpkg-deb --build --root-owner-group "${pkg_dir}" "${out_dir}/${pkg_name}" >/dev/null
 
 if command -v sha256sum >/dev/null 2>&1; then
