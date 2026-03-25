@@ -7,9 +7,27 @@ permissions:
   contents: write
 
 jobs:
-  build-and-publish:
-    if: ${{ secrets.APT_REPO_GPG_PRIVATE_KEY != '' }}
+  apt-secret-precheck:
     runs-on: ubuntu-latest
+    outputs:
+      has_secret: ${{ steps.precheck.outputs.has_secret }}
+    steps:
+      - name: precheck
+        id: precheck
+        env:
+          APT_REPO_GPG_PRIVATE_KEY: ${{ secrets.APT_REPO_GPG_PRIVATE_KEY }}
+        run: |
+          if [[ -n "${APT_REPO_GPG_PRIVATE_KEY}" ]]; then
+            echo "has_secret=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          echo "has_secret=false" >> "${GITHUB_OUTPUT}"
+
+  build-and-publish:
+    if: ${{ needs.apt-secret-precheck.outputs.has_secret == 'true' }}
+    runs-on: ubuntu-latest
+    needs:
+      - apt-secret-precheck
     steps:
       - name: checkout
         uses: actions/checkout@v4
