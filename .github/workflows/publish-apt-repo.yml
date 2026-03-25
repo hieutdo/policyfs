@@ -2,6 +2,11 @@ name: publish-apt-repo
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Version tag to publish (e.g. v1.2.3)'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -29,15 +34,23 @@ jobs:
     needs:
       - apt-secret-precheck
     steps:
-      - name: checkout
-        uses: actions/checkout@v4
-
-      - name: validate ref
+      - name: validate inputs
+        env:
+          TAG: ${{ inputs.tag }}
         run: |
-          if [[ "${GITHUB_REF}" != refs/tags/v* ]]; then
-            echo "pfs: error: this workflow must be run from a version tag (refs/tags/v*); got ref=${GITHUB_REF}" >&2
+          if [[ -z "${TAG}" ]]; then
+            echo "pfs: error: missing required input tag" >&2
             exit 1
           fi
+          if [[ "${TAG}" != v* ]]; then
+            echo "pfs: error: input tag must start with 'v' (e.g. v1.2.3)" >&2
+            exit 1
+          fi
+
+      - name: checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
 
       - name: setup go
         uses: actions/setup-go@v5
@@ -59,16 +72,16 @@ jobs:
 
       - name: build linux/amd64
         env:
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ inputs.tag }}
         run: |
           mkdir -p bin
-          COMMIT_SHORT="$(echo '${{ github.sha }}' | cut -c1-7)"
+          COMMIT_SHORT="$(git rev-parse --short=7 HEAD)"
           LDFLAGS="-X github.com/hieutdo/policyfs/internal/cli.Version=${VERSION} -X github.com/hieutdo/policyfs/internal/cli.Commit=${COMMIT_SHORT} -X github.com/hieutdo/policyfs/internal/cli.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           GOOS=linux GOARCH=amd64 CGO_ENABLED=1 go build -ldflags "${LDFLAGS}" -o bin/pfs ./cmd/pfs
 
       - name: package deb
         env:
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ inputs.tag }}
           ARCH: amd64
         run: |
           bash scripts/package_deb.sh
