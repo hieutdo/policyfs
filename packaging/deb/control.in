@@ -4,6 +4,11 @@ Section: utils
 Priority: optional
 Architecture: @ARCH@
 Maintainer: PolicyFS <root@localhost>
+Provides: pfs
+Conflicts: pfs
+Replaces: pfs
 Suggests: fuse3
-Description: PolicyFS indexer and FUSE daemon
- PolicyFS provides a FUSE mount plus maintenance jobs like indexer.
+Description: Linux FUSE storage daemon with routing rules and indexing
+ PolicyFS unifies multiple storage paths under one mountpoint with explicit
+ read/write routing rules, an optional SQLite metadata index, and built-in
+ maintenance jobs.
