@@ -14,7 +14,7 @@ PolicyFS is a Linux FUSE storage daemon that unifies multiple storage paths unde
 
 ## Status
 
-- Supported packaging today: Debian/Ubuntu (linux/amd64).
+- Supported packaging today: Debian/Ubuntu + Fedora/EL9 (linux/amd64).
 
 ## Docs
 

@@ -1,0 +1,381 @@
+name: release-rpm
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Git tag to build (e.g. v1.0.1)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  build-linux-amd64:
+    runs-on: ubuntu-latest
+    container:
+      image: rockylinux:9
+    steps:
+      - name: install base deps
+        run: |
+          dnf -y install \
+            git \
+            ca-certificates
+
+      - name: checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: setup go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: install deps
+        run: |
+          dnf -y install \
+            gcc \
+            make \
+            sqlite-devel
+
+      - name: unit tests
+        run: go test ./...
+
+      - name: build linux/amd64
+        run: |
+          mkdir -p bin
+          COMMIT_SHORT="$(git rev-parse --short HEAD)"
+          VERSION="${RELEASE_TAG}"
+          LDFLAGS="-X github.com/hieutdo/policyfs/internal/cli.Version=${VERSION} -X github.com/hieutdo/policyfs/internal/cli.Commit=${COMMIT_SHORT} -X github.com/hieutdo/policyfs/internal/cli.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          CGO_ENABLED=1 go build -ldflags "${LDFLAGS}" -o bin/pfs ./cmd/pfs
+
+      - name: upload bin artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bin
+          path: bin/
+
+  package-rpm-fedora:
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:41
+    needs:
+      - build-linux-amd64
+    steps:
+      - name: install base deps
+        run: |
+          dnf -y install \
+            git \
+            ca-certificates
+
+      - name: checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: download bin artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: bin
+          path: bin
+
+      - name: install deps
+        run: |
+          dnf -y install \
+            rpm-build \
+            redhat-rpm-config \
+            tar \
+            gzip \
+            findutils
+
+      - name: package rpm (fedora)
+        env:
+          VERSION: ${{ env.RELEASE_TAG }}
+          ARCH: x86_64
+        run: |
+          bash scripts/package_rpm.sh
+
+      - name: upload rpm artifact (fedora)
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpm-fedora
+          path: dist/rpm/
+
+  package-rpm-el9:
+    runs-on: ubuntu-latest
+    container:
+      image: rockylinux:9
+    needs:
+      - build-linux-amd64
+    steps:
+      - name: install base deps
+        run: |
+          dnf -y install \
+            git \
+            ca-certificates
+
+      - name: checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: download bin artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: bin
+          path: bin
+
+      - name: install deps
+        run: |
+          dnf -y install \
+            rpm-build \
+            redhat-rpm-config \
+            tar \
+            gzip \
+            findutils
+
+      - name: package rpm (el9)
+        env:
+          VERSION: ${{ env.RELEASE_TAG }}
+          ARCH: x86_64
+        run: |
+          bash scripts/package_rpm.sh
+
+      - name: upload rpm artifact (el9)
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpm-el9
+          path: dist/rpm/
+
+  rpm-secret-precheck:
+    runs-on: ubuntu-latest
+    outputs:
+      has_secret: ${{ steps.precheck.outputs.has_secret }}
+    steps:
+      - name: precheck
+        id: precheck
+        env:
+          RPM_REPO_GPG_PRIVATE_KEY: ${{ secrets.RPM_REPO_GPG_PRIVATE_KEY }}
+          APT_REPO_GPG_PRIVATE_KEY: ${{ secrets.APT_REPO_GPG_PRIVATE_KEY }}
+        run: |
+          if [[ -n "${RPM_REPO_GPG_PRIVATE_KEY}" ]]; then
+            echo "has_secret=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          if [[ -n "${APT_REPO_GPG_PRIVATE_KEY}" ]]; then
+            echo "has_secret=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          echo "has_secret=false" >> "${GITHUB_OUTPUT}"
+
+  build-rpm-repo:
+    if: ${{ needs.rpm-secret-precheck.outputs.has_secret == 'true' }}
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:41
+    needs:
+      - package-rpm-fedora
+      - package-rpm-el9
+      - rpm-secret-precheck
+    steps:
+      - name: download rpm artifact (fedora)
+        uses: actions/download-artifact@v4
+        with:
+          name: rpm-fedora
+          path: dist/rpm-fedora
+
+      - name: download rpm artifact (el9)
+        uses: actions/download-artifact@v4
+        with:
+          name: rpm-el9
+          path: dist/rpm-el9
+
+      - name: install deps
+        run: |
+          dnf -y install \
+            createrepo_c \
+            gnupg2 \
+            rpm-sign
+
+      - name: import rpm repo signing key
+        env:
+          RPM_REPO_GPG_PRIVATE_KEY: ${{ secrets.RPM_REPO_GPG_PRIVATE_KEY }}
+          APT_REPO_GPG_PRIVATE_KEY: ${{ secrets.APT_REPO_GPG_PRIVATE_KEY }}
+        run: |
+          key="${RPM_REPO_GPG_PRIVATE_KEY}"
+          if [[ -z "${key}" ]]; then
+            key="${APT_REPO_GPG_PRIVATE_KEY}"
+          fi
+          if [[ -z "${key}" ]]; then
+            echo "pfs: error: missing secret RPM_REPO_GPG_PRIVATE_KEY (or APT_REPO_GPG_PRIVATE_KEY)" >&2
+            exit 1
+          fi
+
+          mkdir -p ~/.gnupg
+          chmod 700 ~/.gnupg
+          echo "${key}" | gpg --batch --import
+
+      - name: sign rpms and build repo
+        run: |
+          key_fpr="$(gpg --list-secret-keys --with-colons | awk -F: '$1=="fpr"{print $10; exit}')"
+          if [[ -z "${key_fpr}" ]]; then
+            echo "pfs: error: gpg key fingerprint not found" >&2
+            exit 1
+          fi
+
+          cat > ~/.rpmmacros <<EOF
+%_signature gpg
+%_gpg_name ${key_fpr}
+%_gpgbin /usr/bin/gpg
+%__gpg /usr/bin/gpg
+EOF
+
+          rm -rf public
+          mkdir -p \
+            public/fedora/x86_64 \
+            public/el/9/x86_64
+
+          cp -a dist/rpm-fedora/policyfs-*.x86_64.rpm public/fedora/x86_64/
+          cp -a dist/rpm-el9/policyfs-*.x86_64.rpm public/el/9/x86_64/
+
+          find public -type f -name '*.rpm' -print0 | xargs -0 -I{} rpmsign --addsign {}
+
+          gpg --batch --yes --armor --output public/policyfs.gpg --export "${key_fpr}"
+
+          createrepo_c public/fedora/x86_64
+          createrepo_c public/el/9/x86_64
+
+      - name: upload public artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpm-public
+          path: public/
+
+  smoke-test-fedora:
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:41
+    needs:
+      - build-rpm-repo
+    steps:
+      - name: download public artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: rpm-public
+          path: public
+
+      - name: install policyfs via dnf (fedora)
+        run: |
+          rpm --import "public/policyfs.gpg"
+
+          cat > /etc/yum.repos.d/policyfs.repo <<EOF
+[policyfs]
+name=policyfs
+baseurl=file://$PWD/public/fedora/x86_64
+enabled=1
+gpgcheck=1
+repo_gpgcheck=0
+gpgkey=file://$PWD/public/policyfs.gpg
+EOF
+
+          dnf -y clean all
+          dnf -y install policyfs
+          /usr/bin/pfs version
+
+  smoke-test-el9:
+    runs-on: ubuntu-latest
+    container:
+      image: rockylinux:9
+    needs:
+      - build-rpm-repo
+    steps:
+      - name: download public artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: rpm-public
+          path: public
+
+      - name: install policyfs via dnf (el9)
+        run: |
+          rpm --import "public/policyfs.gpg"
+
+          cat > /etc/yum.repos.d/policyfs.repo <<EOF
+[policyfs]
+name=policyfs
+baseurl=file://$PWD/public/el/9/x86_64
+enabled=1
+gpgcheck=1
+repo_gpgcheck=0
+gpgkey=file://$PWD/public/policyfs.gpg
+EOF
+
+          dnf -y clean all
+          dnf -y install policyfs
+          /usr/bin/pfs version
+
+  deploy-rpm-repo:
+    runs-on: ubuntu-latest
+    needs:
+      - smoke-test-fedora
+      - smoke-test-el9
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: download public artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: rpm-public
+          path: public
+
+      - name: deploy to GitHub Pages (gh-pages branch)
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          enable_jekyll: false
+          publish_branch: gh-pages
+          publish_dir: public
+          cname: repo.policyfs.org
+          destination_dir: rpm
+          keep_files: true
+          force_orphan: false
+
+  release-assets:
+    runs-on: ubuntu-latest
+    needs:
+      - package-rpm-fedora
+      - package-rpm-el9
+    steps:
+      - name: download rpm artifact (fedora)
+        uses: actions/download-artifact@v4
+        with:
+          name: rpm-fedora
+          path: dist/rpm-fedora
+
+      - name: download rpm artifact (el9)
+        uses: actions/download-artifact@v4
+        with:
+          name: rpm-el9
+          path: dist/rpm-el9
+
+      - name: release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          files: |
+            dist/rpm-fedora/*.rpm
+            dist/rpm-fedora/*.sha256
+            dist/rpm-el9/*.rpm
+            dist/rpm-el9/*.sha256
+          generate_release_notes: false

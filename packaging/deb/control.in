@@ -3,7 +3,7 @@ Version: @VERSION@
 Section: utils
 Priority: optional
 Architecture: @ARCH@
-Maintainer: PolicyFS <root@localhost>
+Maintainer: PolicyFS <hieutdo2@gmail.com>
 Provides: pfs
 Conflicts: pfs
 Replaces: pfs

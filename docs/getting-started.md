@@ -39,7 +39,37 @@ sudo dpkg -i "./policyfs_amd64.deb"
 
 ### RedHat/Fedora (DNF/YUM)
 
-Coming soon.
+Install FUSE3:
+
+```bash
+sudo dnf install -y fuse3
+```
+
+Install from the RPM repo:
+
+```bash
+sudo curl -fsSL -o /etc/pki/rpm-gpg/RPM-GPG-KEY-policyfs \
+  "https://repo.policyfs.org/rpm/policyfs.gpg"
+
+cat <<'EOF' | sudo tee /etc/yum.repos.d/policyfs.repo >/dev/null
+[policyfs]
+name=PolicyFS
+baseurl=https://repo.policyfs.org/rpm/fedora/x86_64
+enabled=1
+gpgcheck=1
+repo_gpgcheck=0
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-policyfs
+EOF
+
+sudo dnf makecache
+sudo dnf install -y policyfs
+```
+
+EL9 (Rocky/Alma/CentOS Stream 9) uses:
+
+```text
+baseurl=https://repo.policyfs.org/rpm/el/9/x86_64
+```
 
 ### Build from source
 
