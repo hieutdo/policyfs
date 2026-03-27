@@ -57,7 +57,7 @@ jobs:
       - name: build linux/amd64
         run: |
           mkdir -p bin
-          COMMIT_SHORT="$(git -c safe.directory=${GITHUB_WORKSPACE} rev-parse --short HEAD)"
+          COMMIT_SHORT="$(git rev-parse --short HEAD)"
           VERSION="${RELEASE_TAG}"
           LDFLAGS="-X github.com/hieutdo/policyfs/internal/cli.Version=${VERSION} -X github.com/hieutdo/policyfs/internal/cli.Commit=${COMMIT_SHORT} -X github.com/hieutdo/policyfs/internal/cli.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           CGO_ENABLED=1 go build -ldflags "${LDFLAGS}" -o bin/pfs ./cmd/pfs
@@ -85,13 +85,17 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ env.RELEASE_TAG }}
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: download bin artifact
         uses: actions/download-artifact@v4
         with:
           name: bin
           path: bin
+
+      - name: ensure binary executable
+        run: |
+          chmod +x bin/pfs
 
       - name: install deps
         run: |
@@ -139,6 +143,10 @@ jobs:
         with:
           name: bin
           path: bin
+
+      - name: ensure binary executable
+        run: |
+          chmod +x bin/pfs
 
       - name: install deps
         run: |

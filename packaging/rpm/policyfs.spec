@@ -72,7 +72,6 @@ fi
 %dir /etc/pfs
 %config(noreplace) /etc/pfs/pfs.yaml.example
 
-%dir /etc/logrotate.d
 %config(noreplace) /etc/logrotate.d/pfs
 
 /usr/lib/systemd/system/pfs@.service
