@@ -263,10 +263,18 @@ jobs:
 
           find public -type f -name '*.rpm' -print0 | xargs -0 -I{} rpmsign --addsign {}
 
+          repo_suffix="${RELEASE_TAG}.${GITHUB_RUN_ID}"
+          for rpm_path in public/fedora/x86_64/policyfs-*.rpm; do
+            mv "${rpm_path}" "${rpm_path%.rpm}.${repo_suffix}.rpm"
+          done
+          for rpm_path in public/el/9/x86_64/policyfs-*.rpm; do
+            mv "${rpm_path}" "${rpm_path%.rpm}.${repo_suffix}.rpm"
+          done
+
           gpg --batch --yes --armor --output public/policyfs.gpg --export "${key_fpr}"
 
-          createrepo_c public/fedora/x86_64
-          createrepo_c public/el/9/x86_64
+          createrepo_c --unique-md-filenames public/fedora/x86_64
+          createrepo_c --unique-md-filenames public/el/9/x86_64
 
       - name: upload public artifact
         uses: actions/upload-artifact@v4
@@ -404,13 +412,31 @@ jobs:
           name=policyfs
           baseurl=${base}/fedora/x86_64
           enabled=1
+          metadata_expire=0
           gpgcheck=1
           repo_gpgcheck=0
           gpgkey=${base}/policyfs.gpg
           EOF
 
           dnf -y clean all
-          dnf -y install policyfs
+          ok=0
+          set +e
+          for _i in $(seq 1 30); do
+            dnf -y --refresh install policyfs
+            rc=$?
+            if [[ ${rc} -eq 0 ]]; then
+              ok=1
+              break
+            fi
+            dnf -y clean packages >/dev/null 2>&1 || true
+            rm -rf /var/cache/dnf/* >/dev/null 2>&1 || true
+            sleep 10
+          done
+          set -e
+          if [[ ${ok} -ne 1 ]]; then
+            echo "pfs: error: failed to install policyfs from pages repo" >&2
+            exit 1
+          fi
           rpm -q policyfs
           /usr/bin/pfs version
 
@@ -425,7 +451,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          dnf -y install ca-certificates curl
+          dnf -y install ca-certificates curl-minimal
 
           base="https://repo.policyfs.org/rpm"
           repomd="${base}/el/9/x86_64/repodata/repomd.xml"
@@ -444,7 +470,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          dnf -y install ca-certificates curl
+          dnf -y install ca-certificates curl-minimal
 
           base="https://repo.policyfs.org/rpm"
           curl -fsSL "${base}/policyfs.gpg" -o /tmp/policyfs.gpg
@@ -455,13 +481,31 @@ jobs:
           name=policyfs
           baseurl=${base}/el/9/x86_64
           enabled=1
+          metadata_expire=0
           gpgcheck=1
           repo_gpgcheck=0
           gpgkey=${base}/policyfs.gpg
           EOF
 
           dnf -y clean all
-          dnf -y install policyfs
+          ok=0
+          set +e
+          for _i in $(seq 1 30); do
+            dnf -y --refresh install policyfs
+            rc=$?
+            if [[ ${rc} -eq 0 ]]; then
+              ok=1
+              break
+            fi
+            dnf -y clean packages >/dev/null 2>&1 || true
+            rm -rf /var/cache/dnf/* >/dev/null 2>&1 || true
+            sleep 10
+          done
+          set -e
+          if [[ ${ok} -ne 1 ]]; then
+            echo "pfs: error: failed to install policyfs from pages repo" >&2
+            exit 1
+          fi
           rpm -q policyfs
           /usr/bin/pfs version
 
