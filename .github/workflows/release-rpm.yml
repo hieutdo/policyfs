@@ -235,11 +235,11 @@ jobs:
           fi
 
           cat > ~/.rpmmacros <<EOF
-%_signature gpg
-%_gpg_name ${key_fpr}
-%_gpgbin /usr/bin/gpg
-%__gpg /usr/bin/gpg
-EOF
+          %_signature gpg
+          %_gpg_name ${key_fpr}
+          %_gpgbin /usr/bin/gpg
+          %__gpg /usr/bin/gpg
+          EOF
 
           rm -rf public
           mkdir -p \
@@ -280,14 +280,14 @@ EOF
           rpm --import "public/policyfs.gpg"
 
           cat > /etc/yum.repos.d/policyfs.repo <<EOF
-[policyfs]
-name=policyfs
-baseurl=file://$PWD/public/fedora/x86_64
-enabled=1
-gpgcheck=1
-repo_gpgcheck=0
-gpgkey=file://$PWD/public/policyfs.gpg
-EOF
+          [policyfs]
+          name=policyfs
+          baseurl=file://$PWD/public/fedora/x86_64
+          enabled=1
+          gpgcheck=1
+          repo_gpgcheck=0
+          gpgkey=file://$PWD/public/policyfs.gpg
+          EOF
 
           dnf -y clean all
           dnf -y install policyfs
@@ -311,14 +311,14 @@ EOF
           rpm --import "public/policyfs.gpg"
 
           cat > /etc/yum.repos.d/policyfs.repo <<EOF
-[policyfs]
-name=policyfs
-baseurl=file://$PWD/public/el/9/x86_64
-enabled=1
-gpgcheck=1
-repo_gpgcheck=0
-gpgkey=file://$PWD/public/policyfs.gpg
-EOF
+          [policyfs]
+          name=policyfs
+          baseurl=file://$PWD/public/el/9/x86_64
+          enabled=1
+          gpgcheck=1
+          repo_gpgcheck=0
+          gpgkey=file://$PWD/public/policyfs.gpg
+          EOF
 
           dnf -y clean all
           dnf -y install policyfs
