@@ -35,6 +35,10 @@ jobs:
           ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
 
+      - name: mark workspace safe for git
+        run: |
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+
       - name: setup go
         uses: actions/setup-go@v5
         with:
@@ -53,7 +57,7 @@ jobs:
       - name: build linux/amd64
         run: |
           mkdir -p bin
-          COMMIT_SHORT="$(git -c safe.directory=\"${GITHUB_WORKSPACE}\" rev-parse --short HEAD)"
+          COMMIT_SHORT="$(git -c safe.directory=${GITHUB_WORKSPACE} rev-parse --short HEAD)"
           VERSION="${RELEASE_TAG}"
           LDFLAGS="-X github.com/hieutdo/policyfs/internal/cli.Version=${VERSION} -X github.com/hieutdo/policyfs/internal/cli.Commit=${COMMIT_SHORT} -X github.com/hieutdo/policyfs/internal/cli.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           CGO_ENABLED=1 go build -ldflags "${LDFLAGS}" -o bin/pfs ./cmd/pfs
