@@ -1,5 +1,5 @@
-%global pfs_version 0.0.0
-%global pfs_release 1
+%{!?pfs_version: %global pfs_version 0.0.0}
+%{!?pfs_release: %global pfs_release 1}
 
 Name:           policyfs
 Version:        %{pfs_version}
