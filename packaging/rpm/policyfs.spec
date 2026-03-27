@@ -1,5 +1,6 @@
 %{!?pfs_version: %global pfs_version 0.0.0}
 %{!?pfs_release: %global pfs_release 1}
+%global debug_package %{nil}
 
 Name:           policyfs
 Version:        %{pfs_version}
