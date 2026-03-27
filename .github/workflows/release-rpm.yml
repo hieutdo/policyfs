@@ -527,6 +527,25 @@ jobs:
           name: rpm-el9
           path: dist/rpm-el9
 
+      - name: rename latest-friendly rpm assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -f dist/rpm-fedora/policyfs_x86_64.rpm ]]; then
+            mv dist/rpm-fedora/policyfs_x86_64.rpm dist/rpm-fedora/policyfs_fedora_x86_64.rpm
+          fi
+          if [[ -f dist/rpm-fedora/policyfs_x86_64.rpm.sha256 ]]; then
+            mv dist/rpm-fedora/policyfs_x86_64.rpm.sha256 dist/rpm-fedora/policyfs_fedora_x86_64.rpm.sha256
+          fi
+
+          if [[ -f dist/rpm-el9/policyfs_x86_64.rpm ]]; then
+            mv dist/rpm-el9/policyfs_x86_64.rpm dist/rpm-el9/policyfs_el9_x86_64.rpm
+          fi
+          if [[ -f dist/rpm-el9/policyfs_x86_64.rpm.sha256 ]]; then
+            mv dist/rpm-el9/policyfs_x86_64.rpm.sha256 dist/rpm-el9/policyfs_el9_x86_64.rpm.sha256
+          fi
+
       - name: release
         uses: softprops/action-gh-release@v2
         with:
