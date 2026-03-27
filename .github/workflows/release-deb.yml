@@ -4,9 +4,18 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Git tag to build (e.g. v1.0.1)'
+        required: true
+        type: string
 
 permissions:
   contents: write
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   build-and-release:
@@ -14,6 +23,8 @@ jobs:
     steps:
       - name: checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: setup go
         uses: actions/setup-go@v5
@@ -33,23 +44,23 @@ jobs:
 
       - name: build linux/amd64
         env:
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ env.RELEASE_TAG }}
         run: |
           mkdir -p bin
-          COMMIT_SHORT="$(echo '${{ github.sha }}' | cut -c1-7)"
+          COMMIT_SHORT="$(git rev-parse --short HEAD)"
           LDFLAGS="-X github.com/hieutdo/policyfs/internal/cli.Version=${VERSION} -X github.com/hieutdo/policyfs/internal/cli.Commit=${COMMIT_SHORT} -X github.com/hieutdo/policyfs/internal/cli.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           GOOS=linux GOARCH=amd64 CGO_ENABLED=1 go build -ldflags "${LDFLAGS}" -o bin/pfs ./cmd/pfs
 
       - name: package deb
         env:
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ env.RELEASE_TAG }}
           ARCH: amd64
         run: |
           bash scripts/package_deb.sh
 
       - name: add latest-friendly filenames
         env:
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ env.RELEASE_TAG }}
         run: |
           deb_path=""
           shopt -s nullglob
@@ -83,6 +94,7 @@ jobs:
       - name: release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
           files: |
             dist/*.deb
             dist/*.sha256
@@ -113,6 +125,8 @@ jobs:
     steps:
       - name: checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: download dist artifact
         uses: actions/download-artifact@v4
@@ -186,3 +200,57 @@ jobs:
           destination_dir: apt
           keep_files: true
           force_orphan: false
+
+  smoke-test-pages-apt:
+    if: ${{ needs.apt-secret-precheck.outputs.has_secret == 'true' }}
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:24.04
+    needs:
+      - publish-apt-repo
+      - apt-secret-precheck
+    steps:
+      - name: wait for apt repo (pages)
+        shell: bash
+        run: |
+          set -euo pipefail
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl
+
+          base="https://repo.policyfs.org/apt"
+          release="${base}/dists/stable/Release"
+
+          for _i in $(seq 1 60); do
+            if curl -fsS "${release}" >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "pfs: error: apt repo not reachable: ${release}" >&2
+          exit 1
+
+      - name: install policyfs via apt (pages)
+        shell: bash
+        run: |
+          set -euo pipefail
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl
+
+          base="https://repo.policyfs.org/apt"
+          curl -fsSL "${base}/policyfs.gpg" -o /tmp/policyfs.gpg
+
+          mkdir -p /usr/share/keyrings
+          if grep -aq "BEGIN PGP PUBLIC KEY BLOCK" /tmp/policyfs.gpg; then
+            apt-get install -y --no-install-recommends gnupg
+            gpg --dearmor --yes --output /usr/share/keyrings/policyfs-archive-keyring.gpg /tmp/policyfs.gpg
+          else
+            install -m 0644 /tmp/policyfs.gpg /usr/share/keyrings/policyfs-archive-keyring.gpg
+          fi
+
+          echo "deb [signed-by=/usr/share/keyrings/policyfs-archive-keyring.gpg] ${base} stable main" > /etc/apt/sources.list.d/policyfs.list
+
+          apt-get update
+          apt-get install -y policyfs
+          dpkg -l policyfs | cat
+          /usr/bin/pfs version
