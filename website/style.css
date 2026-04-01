@@ -964,7 +964,7 @@ footer {
   stroke-width: 2;
   stroke-dasharray: 6 4;
   stroke-dashoffset: -100;
-  animation: idx-march 2s linear infinite;
+  animation: idx-march 7s linear infinite;
 }
 
 .idx-flow-blue {
@@ -973,7 +973,7 @@ footer {
   stroke-width: 2;
   stroke-dasharray: 6 4;
   stroke-dashoffset: -100;
-  animation: idx-march 1.8s linear infinite;
+  animation: idx-march 6.8s linear infinite;
 }
 
 .idx-flow-data {
@@ -982,7 +982,7 @@ footer {
   stroke-width: 1.5;
   stroke-dasharray: 5 5;
   stroke-dashoffset: 100;
-  animation: idx-march 2.5s linear infinite reverse;
+  animation: idx-march 7.5s linear infinite reverse;
 }
 
 .idx-flow-green {
@@ -991,7 +991,7 @@ footer {
   stroke-width: 2;
   stroke-dasharray: 6 4;
   stroke-dashoffset: -100;
-  animation: idx-march 1.5s linear infinite;
+  animation: idx-march 4.5s linear infinite;
 }
 
 /* Dark mode overrides */
@@ -1179,7 +1179,7 @@ footer {
   stroke-width: 2;
   stroke-dasharray: 6 4;
   stroke-dashoffset: -100;
-  animation: idx-march 1.8s linear infinite;
+  animation: idx-march 5.8s linear infinite;
 }
 
 /* Dark mode */
@@ -1331,7 +1331,7 @@ footer {
   stroke-width: 2;
   stroke-dasharray: 6 4;
   stroke-dashoffset: -100;
-  animation: idx-march 1.6s linear infinite;
+  animation: idx-march 5.6s linear infinite;
 }
 
 /* Dark mode */

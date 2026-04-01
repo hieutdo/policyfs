@@ -206,8 +206,8 @@
         <h1 class="page-title">How PolicyFS works</h1>
         <p class="page-intro">
           PolicyFS is a FUSE daemon that sits between your apps and physical storage. It routes each filesystem call
-          based on explicit rules. For archive disks marked <code>indexed: true</code>, a local SQLite database serves
-          <code>readdir</code> and <code>getattr</code> calls so the HDD can stay spun down. Three maintenance jobs —
+          based on explicit rules. For disks marked <code>indexed: true</code>, a local SQLite database serves
+          <code>readdir</code> and <code>getattr</code> calls so the disk can stay spun down. Three maintenance jobs —
           <code>pfs move</code>, <code>pfs prune</code>, and <code>pfs index</code> — run on a schedule and handle
           housekeeping.
         </p>
@@ -254,9 +254,9 @@
         <h2 class="section-title">How <code class="title-code">pfs index</code> reduces HDD wakeups</h2>
         <p class="indexing-intro">
           With <code>indexed: true</code>, <code>pfs index</code> scans physical storage and upserts metadata into
-          <code>index.db</code>. <code>readdir</code> and <code>getattr</code> for indexed storage can be served from
-          the database, reducing HDD wakeups. File content I/O still hits the underlying storage. Non-indexed storage
-          paths (<code>indexed: false</code>) are accessed via the filesystem directly (no metadata index).
+          <code>index.db</code>. After that, <code>readdir</code> and <code>getattr</code> for indexed storage will be
+          served from the database, reducing HDD wakeups. File content I/O still hits the underlying storage.
+          Non-indexed storage paths (<code>indexed: false</code>) are accessed via the filesystem directly.
         </p>
 
         <svg
@@ -764,8 +764,8 @@
         <p class="move-intro">
           As new files land on SSD storage, the fast tier fills up.
           <code>pfs move</code> copies eligible files — based on minimum age, size, and disk usage threshold — from the
-          fast tier to destination storage (typically an indexed HDD archive). If the daemon control socket is
-          available, open files are skipped.
+          fast tier to destination storage (typically a bunch of HDDs). If the daemon control socket is available, open
+          files are skipped.
         </p>
 
         <svg
