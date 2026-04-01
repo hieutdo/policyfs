@@ -23,16 +23,37 @@ sudo apt-get install hd-idle
 
 **Configure**
 
-Packaging varies by distro, so follow your distro docs or the upstream guide:
-https://github.com/adelolmo/hd-idle?tab=readme-ov-file#configuration
-
-If you are not sure where the options are set, check the effective systemd unit:
+Edit the hd-idle configuration. The location varies by distro; check the effective unit first:
 
 ```bash
 systemctl cat hd-idle
 ```
 
-Prefer stable device paths like `/dev/disk/by-id/...` instead of `/dev/sdX`, and do not apply spindown to SSDs.
+A common pattern is to override `ExecStart`. Use a drop-in:
+
+```bash
+sudo systemctl edit hd-idle
+```
+
+Example override (10-minute spindown for two HDDs):
+
+```ini
+[Service]
+ExecStart=
+ExecStart=/usr/sbin/hd-idle \
+  -i 0 \
+  -a /dev/disk/by-id/ata-WDC_WD40EFRX-EXAMPLE1 -i 600 \
+  -a /dev/disk/by-id/ata-WDC_WD40EFRX-EXAMPLE2 -i 600
+```
+
+Key points:
+
+- Use `/dev/disk/by-id/...` (stable paths) instead of `/dev/sdX` (changes on reboot).
+- `-i 0` disables the global default so only explicitly listed disks are managed.
+- `-i 600` = 600 seconds (10 minutes) idle before spindown.
+- Do not include SSDs
+
+For the full option reference, see the [upstream hd-idle docs](https://github.com/adelolmo/hd-idle?tab=readme-ov-file#configuration).
 
 **Enable and start**
 
@@ -63,11 +84,27 @@ A few common tools:
 
 If your disks never go idle, check for background activity.
 
+## Mount HDDs with noatime
+
+By default, Linux writes an access timestamp (`atime`) every time a file is read. On HDDs, this wakes a sleeping disk even when the read was served from PolicyFS's metadata index.
+
+Add `noatime` (or `relatime`) to the HDD mount options in `/etc/fstab`:
+
+```fstab
+/dev/disk/by-id/ata-... /mnt/hdd1  ext4  defaults,noatime  0 2
+```
+
+Then remount:
+
+```bash
+sudo mount -o remount,noatime /mnt/hdd1
+```
+
 ## Common reasons disks never reach standby
 
+- HDDs mounted without `noatime` — reads trigger atime writes.
 - SMART polling too frequently.
 - RAID/mdadm periodic checks.
-- Filesystems mounted with `atime` causing metadata writes on reads.
 - Your media app continuously scanning.
 
 The goal with PolicyFS is: reduce unnecessary metadata I/O so that OS-level spindown tools have a chance to keep disks asleep most of the time.

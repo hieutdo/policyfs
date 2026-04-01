@@ -163,21 +163,26 @@ Controls file movement jobs for this mount.
 | `enabled` | bool | `true`  | Master switch for all mover jobs. |
 | `jobs`    | list | `[]`    | List of mover job definitions.    |
 
+!!! warning "delete_source is true by default"
+The mover deletes the source file after a successful copy. Before running `pfs move` for the first time, use `pfs move <mount> --dry-run` to see what would be moved.
+
+    Add `--force` if you want to bypass job triggers/conditions.
+
 #### Mover job
 
 Each job under `mover.jobs[]`:
 
-| Field              | Type   | Default | Description                                                     |
-| ------------------ | ------ | ------- | --------------------------------------------------------------- |
-| `name`             | string | —       | Unique job name (used in `--job` flag and logs).                |
-| `description`      | string | —       | Optional human-readable description.                            |
-| `trigger`          | object | —       | When the job should run.                                        |
-| `source`           | object | —       | Where candidates come from.                                     |
-| `destination`      | object | —       | Where files are moved to.                                       |
-| `conditions`       | object | —       | Filters applied to candidates.                                  |
-| `delete_source`    | bool   | `true`  | Delete the source file after a successful move.                 |
-| `delete_empty_dir` | bool   | `true`  | Remove empty parent directories after moving.                   |
-| `verify`           | bool   | `false` | Re-read the destination file after copying to verify integrity. |
+| Field              | Type   | Default | Description                                                                                                   |
+| ------------------ | ------ | ------- | ------------------------------------------------------------------------------------------------------------- |
+| `name`             | string | —       | Unique job name (used in `--job` flag and logs).                                                              |
+| `description`      | string | —       | Optional human-readable description.                                                                          |
+| `trigger`          | object | —       | When the job should run.                                                                                      |
+| `source`           | object | —       | Where candidates come from.                                                                                   |
+| `destination`      | object | —       | Where files are moved to.                                                                                     |
+| `conditions`       | object | —       | Filters applied to candidates.                                                                                |
+| `delete_source`    | bool   | `true`  | Delete the source file after a successful move. Use `--dry-run` to preview before running for the first time. |
+| `delete_empty_dir` | bool   | `true`  | Remove empty parent directories after moving.                                                                 |
+| `verify`           | bool   | `false` | Re-read the destination file after copying to verify integrity.                                               |
 
 #### `trigger`
 

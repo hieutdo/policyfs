@@ -48,22 +48,44 @@ For the full step-by-step guide, see: https://docs.policyfs.org/getting-started/
    sudo systemctl start pfs-index@media.service
    ```
 
-## Development
+## Contributing
 
-The development environment uses Docker Compose (so you can work on macOS/Windows while running Linux FUSE inside the container).
+If you want to contribute, keep PRs small and behavior-focused.
 
-- Start dev environment:
+The development environment uses Docker Compose so you can work on macOS/Windows while running Linux FUSE inside the container.
 
-  ```bash
-  make dev
-  ```
+Start dev environment:
 
-- Run tests:
+```bash
+make dev # Start the dev container
+```
 
-  ```bash
-  make test-unit
-  make test-integration
-  ```
+Run tests:
+
+```bash
+make test-unit # Run unit tests in the dev container
+make test-integration # Run integration tests in the dev container
+make coverage # Generate coverage report for both unit and integration tests
+```
+
+Useful commands:
+
+```bash
+make dev-fresh # Start the dev container with a fresh state
+make dev-shell # Open a shell in the dev container
+make fmt # Format code
+make lint # Lint code
+
+make docs # Generate documentation
+make docs-serve # Serve documentation
+```
+
+Before opening a PR:
+
+- Ensure `make lint` is clean.
+- Run the relevant tests (`make test-unit` at minimum; add `make test-integration` for filesystem behavior changes).
+- Run `make coverage` to generate a coverage report for both unit and integration tests.
+- If you changed behavior or configuration, update the nearest relevant docs in `docs/`.
 
 ## License
 

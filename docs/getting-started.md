@@ -73,7 +73,71 @@ baseurl=https://repo.policyfs.org/rpm/el/9/x86_64
 
 ### Build from source
 
-Coming soon.
+Packages are recommended (they install systemd units and a default config), but you can build PolicyFS from source.
+
+You will need Go installed (see `go.mod` for the required version).
+
+Install build dependencies:
+
+#### Debian/Ubuntu
+
+```bash
+sudo apt-get update
+sudo apt-get install -y --no-install-recommends \
+  git \
+  build-essential \
+  pkg-config \
+  libsqlite3-dev \
+  libfuse3-dev
+```
+
+#### Fedora/EL9
+
+```bash
+sudo dnf install -y \
+  git \
+  gcc \
+  make \
+  pkgconf-pkg-config \
+  sqlite-devel \
+  fuse3-devel
+```
+
+Build and install:
+
+```bash
+git clone https://github.com/hieutdo/policyfs.git
+cd policyfs
+
+CGO_ENABLED=1 go build -o ./bin/pfs ./cmd/pfs
+
+sudo install -m 0755 ./bin/pfs /usr/local/bin/pfs
+```
+
+Optional validation before building:
+
+```bash
+# Full test suite (recommended when your environment is ready)
+go test ./...
+```
+
+Create an example config:
+
+```bash
+sudo install -d /etc/pfs
+if [ ! -f /etc/pfs/pfs.yaml ]; then
+  sudo install -m 0644 packaging/config/pfs.example.yaml /etc/pfs/pfs.yaml
+fi
+```
+
+Then continue with the configuration steps below.
+
+If you want to manage PolicyFS via systemd, the unit files live under `packaging/systemd/` (see `systemd.md`).
+
+Note: packaged unit files reference `/usr/bin/pfs`. For source installs, choose one approach:
+
+- Install your binary to `/usr/bin/pfs`.
+- Or copy unit files to `/etc/systemd/system/` and update `ExecStart`/`ExecStop` to `/usr/local/bin/pfs`.
 
 ## Configure
 

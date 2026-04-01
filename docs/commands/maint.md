@@ -10,6 +10,9 @@ This command batches maintenance work to reduce disk wake-ups. It is the recomme
 2. **Prune** — apply deferred mutations (same as `pfs prune`). Skipped if the mover did no work.
 3. **Index** — re-index touched storages (same as `pfs index`). Skipped if the mover did no work.
 
+!!! note "Prune and index are skipped when the mover finds nothing to do"
+If the mover's trigger conditions are not met (e.g. SSD usage is below `threshold_start`) or no files match the job conditions, the mover exits early and prune and index phases are skipped. If you have pending deferred events (from deletes/renames on indexed storage) but don't want to trigger the mover, run `pfs prune <mount>` directly.
+
 ## Usage
 
 ```bash

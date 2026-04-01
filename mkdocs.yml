@@ -55,6 +55,7 @@ nav:
       - Systemd: systemd.md
       - Disk spindown: spindown.md
       - Troubleshooting: troubleshooting.md
+      - FAQ: faq.md
   - Internals:
       - How it works: how-it-works.md
       - Concepts: concepts.md
