@@ -59,8 +59,7 @@ mounts:
         write_policy: most_free
         path_preserving: true
       - match: 'ingest/**'
-        read_targets: [ssds, hdds]
-        write_targets: [ssds]
+        targets: [ssds]
         write_policy: most_free
         path_preserving: true
       - match: '**'
