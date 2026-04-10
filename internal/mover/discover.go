@@ -1,6 +1,7 @@
 package mover
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io/fs"
@@ -35,6 +36,74 @@ type conditions struct {
 	MinAge  *time.Duration
 	MinSize *int64
 	MaxSize *int64
+}
+
+// buildSourceMatchers builds matchers for candidate selection and ignore filtering.
+//
+// Semantics:
+//   - ignore always wins: ignore patterns + ignore_file entries are applied first.
+//   - selected = match(patterns) OR match(include_file)
+func buildSourceMatchers(j config.MoverJobConfig) (*pathmatch.Matcher, *pathmatch.Matcher, error) {
+	patterns := append([]string{}, j.Source.Patterns...)
+	includeFile := strings.TrimSpace(j.Source.IncludeFile)
+	if includeFile != "" {
+		more, err := loadPatternFile(includeFile)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to read include_file: %w", err)
+		}
+		patterns = append(patterns, more...)
+	}
+	if len(patterns) == 0 {
+		return nil, nil, &errkind.RequiredError{Msg: "config: mover job source.patterns or source.include_file is required"}
+	}
+	matcher, err := pathmatch.NewMatcher(patterns)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to compile patterns: %w", err)
+	}
+
+	ignorePatterns := append([]string{}, j.Source.Ignore...)
+	ignoreFile := strings.TrimSpace(j.Source.IgnoreFile)
+	if ignoreFile != "" {
+		more, err := loadPatternFile(ignoreFile)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to read ignore_file: %w", err)
+		}
+		ignorePatterns = append(ignorePatterns, more...)
+	}
+	if len(ignorePatterns) == 0 {
+		return matcher, nil, nil
+	}
+	ignore, err := pathmatch.NewMatcher(ignorePatterns)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to compile ignore patterns: %w", err)
+	}
+	return matcher, ignore, nil
+}
+
+// loadPatternFile reads newline-delimited patterns from disk.
+func loadPatternFile(path string) ([]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open pattern file: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	s := bufio.NewScanner(f)
+	// Support reasonably long pattern lines without surprising truncation.
+	s.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	out := []string{}
+	for s.Scan() {
+		line := strings.TrimSpace(s.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		out = append(out, line)
+	}
+	if err := s.Err(); err != nil {
+		return nil, fmt.Errorf("failed to read pattern file: %w", err)
+	}
+	return out, nil
 }
 
 // parseConditions parses job conditions.
@@ -110,13 +179,9 @@ func (p *planner) discoverJobCandidatesWithDebug(ctx context.Context, j config.M
 		return nil, nil
 	}
 
-	matcher, err := pathmatch.NewMatcher(j.Source.Patterns)
+	matcher, ignore, err := buildSourceMatchers(j)
 	if err != nil {
-		return nil, fmt.Errorf("failed to compile patterns: %w", err)
-	}
-	ignore, err := pathmatch.NewMatcher(j.Source.Ignore)
-	if err != nil {
-		return nil, fmt.Errorf("failed to compile ignore patterns: %w", err)
+		return nil, err
 	}
 	conds, err := parseConditions(j.Conditions)
 	if err != nil {

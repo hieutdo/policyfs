@@ -247,8 +247,17 @@ func ValidateConfigAll(c *config.RootConfig) []error {
 						errList = append(errList, &MountConfigError{Mount: mountName, Msg: fmt.Sprintf("mover.jobs[%d].source.groups references unknown id %q", ji, gid)})
 					}
 				}
-				if len(j.Source.Patterns) == 0 {
-					errList = append(errList, &MountConfigError{Mount: mountName, Msg: fmt.Sprintf("mover.jobs[%d].source.patterns must not be empty", ji)})
+
+				includeFile := strings.TrimSpace(j.Source.IncludeFile)
+				ignoreFile := strings.TrimSpace(j.Source.IgnoreFile)
+				if j.Source.IncludeFile != "" && includeFile == "" {
+					errList = append(errList, &MountConfigError{Mount: mountName, Msg: fmt.Sprintf("mover.jobs[%d].source.include_file must not be empty", ji)})
+				}
+				if j.Source.IgnoreFile != "" && ignoreFile == "" {
+					errList = append(errList, &MountConfigError{Mount: mountName, Msg: fmt.Sprintf("mover.jobs[%d].source.ignore_file must not be empty", ji)})
+				}
+				if len(j.Source.Patterns) == 0 && j.Source.IncludeFile == "" {
+					errList = append(errList, &MountConfigError{Mount: mountName, Msg: fmt.Sprintf("mover.jobs[%d].source.patterns or source.include_file is required", ji)})
 				}
 				for pi, p := range j.Source.Patterns {
 					if strings.TrimSpace(p) == "" {

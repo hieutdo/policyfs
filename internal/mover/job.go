@@ -17,7 +17,6 @@ import (
 	"github.com/hieutdo/policyfs/internal/errkind"
 	"github.com/hieutdo/policyfs/internal/eventlog"
 	"github.com/hieutdo/policyfs/internal/indexdb"
-	"github.com/hieutdo/policyfs/internal/pathmatch"
 )
 
 // runJob runs a single mover job.
@@ -70,13 +69,9 @@ func (p *planner) runJob(ctx context.Context, j config.MoverJobConfig, hooks Hoo
 		return jr, nil
 	}
 
-	matcher, err := pathmatch.NewMatcher(j.Source.Patterns)
+	matcher, ignore, err := buildSourceMatchers(j)
 	if err != nil {
-		return jr, fmt.Errorf("failed to compile patterns: %w", err)
-	}
-	ignore, err := pathmatch.NewMatcher(j.Source.Ignore)
-	if err != nil {
-		return jr, fmt.Errorf("failed to compile ignore patterns: %w", err)
+		return jr, err
 	}
 
 	conds, err := parseConditions(j.Conditions)

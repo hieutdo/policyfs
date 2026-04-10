@@ -492,3 +492,330 @@ func TestMove_limit_shouldMoveOnlyNFiles(t *testing.T) {
 		require.True(t, strings.Contains(string(out), "Summary"), "output should contain summary")
 	})
 }
+
+// TestMove_includeFile_shouldSelectOnlyListedFiles verifies that a job using only source.include_file
+// (no source.patterns) moves exactly the files listed in the include file.
+func TestMove_includeFile_shouldSelectOnlyListedFiles(t *testing.T) {
+	if os.Getenv(config.EnvIntegrationUseExistingMount) != "" {
+		t.Skip("skip move flow test when using an existing mount")
+	}
+
+	jobName := "promote"
+	includeFile := filepath.Join(tmpDir, "include-"+sanitizeName(t.Name())+".txt")
+	require.NoError(t, os.WriteFile(includeFile, []byte("library/a.txt\n"), 0o644))
+	t.Cleanup(func() { _ = os.Remove(includeFile) })
+
+	mv := &config.MoverConfig{
+		Enabled: new(true),
+		Jobs: []config.MoverJobConfig{
+			{
+				Name:    jobName,
+				Trigger: config.MoverTriggerConfig{Type: "manual"},
+				Source: config.MoverSourceConfig{
+					Paths:       []string{"ssd1"},
+					IncludeFile: includeFile,
+				},
+				Destination: config.MoverDestinationConfig{
+					Paths:  []string{"hdd1"},
+					Policy: "first_found",
+				},
+				DeleteSource: new(true),
+				Verify:       new(false),
+			},
+		},
+	}
+
+	cfg := IntegrationConfig{
+		Storages: []IntegrationStorage{
+			{ID: "ssd1", Indexed: false, BasePath: "/mnt/ssd1/pfs-integration"},
+			{ID: "hdd1", Indexed: false, BasePath: "/mnt/hdd1/pfs-integration"},
+		},
+		Targets:     []string{"ssd1"},
+		ReadTargets: []string{"ssd1"},
+		Mover:       mv,
+	}
+
+	withMountedFS(t, cfg, func(env *MountedFS) {
+		env.MustCreateFileInStoragePath(t, []byte("aaa"), "ssd1", "library/a.txt")
+		env.MustCreateFileInStoragePath(t, []byte("bbb"), "ssd1", "library/b.txt")
+
+		mustRunPFS(t, env, "move", env.MountName, "--job", jobName, "--progress=off")
+
+		// a.txt listed in include_file → moved.
+		require.NoFileExists(t, env.StoragePath("ssd1", "library/a.txt"))
+		require.FileExists(t, env.StoragePath("hdd1", "library/a.txt"))
+
+		// b.txt not listed → stays.
+		require.FileExists(t, env.StoragePath("ssd1", "library/b.txt"))
+		require.NoFileExists(t, env.StoragePath("hdd1", "library/b.txt"))
+	})
+}
+
+// TestMove_ignoreFile_shouldOverrideIncludeFile verifies that ignore_file always wins:
+// a file matched by include_file but also listed in ignore_file is not moved.
+func TestMove_ignoreFile_shouldOverrideIncludeFile(t *testing.T) {
+	if os.Getenv(config.EnvIntegrationUseExistingMount) != "" {
+		t.Skip("skip move flow test when using an existing mount")
+	}
+
+	jobName := "promote"
+	base := sanitizeName(t.Name())
+	includeFile := filepath.Join(tmpDir, "include-"+base+".txt")
+	ignoreFile := filepath.Join(tmpDir, "ignore-"+base+".txt")
+	require.NoError(t, os.WriteFile(includeFile, []byte("library/a.txt\n"), 0o644))
+	require.NoError(t, os.WriteFile(ignoreFile, []byte("library/a.txt\n"), 0o644))
+	t.Cleanup(func() { _ = os.Remove(includeFile); _ = os.Remove(ignoreFile) })
+
+	mv := &config.MoverConfig{
+		Enabled: new(true),
+		Jobs: []config.MoverJobConfig{
+			{
+				Name:    jobName,
+				Trigger: config.MoverTriggerConfig{Type: "manual"},
+				Source: config.MoverSourceConfig{
+					Paths:       []string{"ssd1"},
+					IncludeFile: includeFile,
+					IgnoreFile:  ignoreFile,
+				},
+				Destination: config.MoverDestinationConfig{
+					Paths:  []string{"hdd1"},
+					Policy: "first_found",
+				},
+				DeleteSource: new(true),
+				Verify:       new(false),
+			},
+		},
+	}
+
+	cfg := IntegrationConfig{
+		Storages: []IntegrationStorage{
+			{ID: "ssd1", Indexed: false, BasePath: "/mnt/ssd1/pfs-integration"},
+			{ID: "hdd1", Indexed: false, BasePath: "/mnt/hdd1/pfs-integration"},
+		},
+		Targets:     []string{"ssd1"},
+		ReadTargets: []string{"ssd1"},
+		Mover:       mv,
+	}
+
+	withMountedFS(t, cfg, func(env *MountedFS) {
+		env.MustCreateFileInStoragePath(t, []byte("aaa"), "ssd1", "library/a.txt")
+
+		mustRunPFS(t, env, "move", env.MountName, "--job", jobName, "--progress=off")
+
+		// ignore_file wins → file stays on source.
+		require.FileExists(t, env.StoragePath("ssd1", "library/a.txt"))
+		require.NoFileExists(t, env.StoragePath("hdd1", "library/a.txt"))
+	})
+}
+
+// TestMove_missingIncludeFile_shouldFailJob verifies that pointing include_file at a non-existent
+// file causes the move command to fail rather than silently treating the list as empty.
+func TestMove_missingIncludeFile_shouldFailJob(t *testing.T) {
+	if os.Getenv(config.EnvIntegrationUseExistingMount) != "" {
+		t.Skip("skip move flow test when using an existing mount")
+	}
+
+	jobName := "promote"
+
+	mv := &config.MoverConfig{
+		Enabled: new(true),
+		Jobs: []config.MoverJobConfig{
+			{
+				Name:    jobName,
+				Trigger: config.MoverTriggerConfig{Type: "manual"},
+				Source: config.MoverSourceConfig{
+					Paths:       []string{"ssd1"},
+					IncludeFile: "/does/not/exist.txt",
+				},
+				Destination: config.MoverDestinationConfig{
+					Paths:  []string{"hdd1"},
+					Policy: "first_found",
+				},
+				DeleteSource: new(false),
+				Verify:       new(false),
+			},
+		},
+	}
+
+	cfg := IntegrationConfig{
+		Storages: []IntegrationStorage{
+			{ID: "ssd1", Indexed: false, BasePath: "/mnt/ssd1/pfs-integration"},
+			{ID: "hdd1", Indexed: false, BasePath: "/mnt/hdd1/pfs-integration"},
+		},
+		Targets:     []string{"ssd1"},
+		ReadTargets: []string{"ssd1"},
+		Mover:       mv,
+	}
+
+	withMountedFS(t, cfg, func(env *MountedFS) {
+		env.MustCreateFileInStoragePath(t, []byte("data"), "ssd1", "library/a.txt")
+
+		_, err := runPFSOutput(t, env, "move", env.MountName, "--job", jobName, "--progress=off")
+		require.Error(t, err, "move should fail when include_file does not exist")
+	})
+}
+
+// TestMove_missingIgnoreFile_shouldFailJob verifies that pointing ignore_file at a non-existent
+// file causes the move command to fail rather than silently ignoring it.
+func TestMove_missingIgnoreFile_shouldFailJob(t *testing.T) {
+	if os.Getenv(config.EnvIntegrationUseExistingMount) != "" {
+		t.Skip("skip move flow test when using an existing mount")
+	}
+
+	jobName := "promote"
+
+	mv := &config.MoverConfig{
+		Enabled: new(true),
+		Jobs: []config.MoverJobConfig{
+			{
+				Name:    jobName,
+				Trigger: config.MoverTriggerConfig{Type: "manual"},
+				Source: config.MoverSourceConfig{
+					Paths:      []string{"ssd1"},
+					Patterns:   []string{"library/**"},
+					IgnoreFile: "/does/not/exist.txt",
+				},
+				Destination: config.MoverDestinationConfig{
+					Paths:  []string{"hdd1"},
+					Policy: "first_found",
+				},
+				DeleteSource: new(false),
+				Verify:       new(false),
+			},
+		},
+	}
+
+	cfg := IntegrationConfig{
+		Storages: []IntegrationStorage{
+			{ID: "ssd1", Indexed: false, BasePath: "/mnt/ssd1/pfs-integration"},
+			{ID: "hdd1", Indexed: false, BasePath: "/mnt/hdd1/pfs-integration"},
+		},
+		Targets:     []string{"ssd1"},
+		ReadTargets: []string{"ssd1"},
+		Mover:       mv,
+	}
+
+	withMountedFS(t, cfg, func(env *MountedFS) {
+		env.MustCreateFileInStoragePath(t, []byte("data"), "ssd1", "library/a.txt")
+
+		_, err := runPFSOutput(t, env, "move", env.MountName, "--job", jobName, "--progress=off")
+		require.Error(t, err, "move should fail when ignore_file does not exist")
+	})
+}
+
+// TestMove_patternsAndIncludeFile_shouldMatchEither verifies that candidate selection is OR:
+// match(source.patterns) OR match(source.include_file).
+func TestMove_patternsAndIncludeFile_shouldMatchEither(t *testing.T) {
+	if os.Getenv(config.EnvIntegrationUseExistingMount) != "" {
+		t.Skip("skip move flow test when using an existing mount")
+	}
+
+	jobName := "promote"
+	includeFile := filepath.Join(tmpDir, "include-"+sanitizeName(t.Name())+".txt")
+	require.NoError(t, os.WriteFile(includeFile, []byte("library/a.txt\n"), 0o644))
+	t.Cleanup(func() { _ = os.Remove(includeFile) })
+
+	mv := &config.MoverConfig{
+		Enabled: new(true),
+		Jobs: []config.MoverJobConfig{
+			{
+				Name:    jobName,
+				Trigger: config.MoverTriggerConfig{Type: "manual"},
+				Source: config.MoverSourceConfig{
+					Paths:       []string{"ssd1"},
+					Patterns:    []string{"library/b.txt"},
+					IncludeFile: includeFile,
+				},
+				Destination: config.MoverDestinationConfig{
+					Paths:  []string{"hdd1"},
+					Policy: "first_found",
+				},
+				DeleteSource: new(true),
+				Verify:       new(false),
+			},
+		},
+	}
+
+	cfg := IntegrationConfig{
+		Storages: []IntegrationStorage{
+			{ID: "ssd1", Indexed: false, BasePath: "/mnt/ssd1/pfs-integration"},
+			{ID: "hdd1", Indexed: false, BasePath: "/mnt/hdd1/pfs-integration"},
+		},
+		Targets:     []string{"ssd1"},
+		ReadTargets: []string{"ssd1"},
+		Mover:       mv,
+	}
+
+	withMountedFS(t, cfg, func(env *MountedFS) {
+		env.MustCreateFileInStoragePath(t, []byte("aaa"), "ssd1", "library/a.txt")
+		env.MustCreateFileInStoragePath(t, []byte("bbb"), "ssd1", "library/b.txt")
+		env.MustCreateFileInStoragePath(t, []byte("ccc"), "ssd1", "library/c.txt")
+
+		mustRunPFS(t, env, "move", env.MountName, "--job", jobName, "--progress=off")
+
+		// a.txt matched by include_file → moved.
+		require.NoFileExists(t, env.StoragePath("ssd1", "library/a.txt"))
+		require.FileExists(t, env.StoragePath("hdd1", "library/a.txt"))
+
+		// b.txt matched by patterns → moved.
+		require.NoFileExists(t, env.StoragePath("ssd1", "library/b.txt"))
+		require.FileExists(t, env.StoragePath("hdd1", "library/b.txt"))
+
+		// c.txt matched by neither → stays.
+		require.FileExists(t, env.StoragePath("ssd1", "library/c.txt"))
+		require.NoFileExists(t, env.StoragePath("hdd1", "library/c.txt"))
+	})
+}
+
+// TestMove_includeFileWithComments_shouldIgnoreCommentLines verifies that comment lines (starting
+// with #) and blank lines in include_file are properly skipped during a real move flow.
+func TestMove_includeFileWithComments_shouldIgnoreCommentLines(t *testing.T) {
+	if os.Getenv(config.EnvIntegrationUseExistingMount) != "" {
+		t.Skip("skip move flow test when using an existing mount")
+	}
+
+	jobName := "promote"
+	includeFile := filepath.Join(tmpDir, "include-"+sanitizeName(t.Name())+".txt")
+	require.NoError(t, os.WriteFile(includeFile, []byte("# pinned files for promotion\n\nlibrary/a.txt\n  # not this one\n"), 0o644))
+	t.Cleanup(func() { _ = os.Remove(includeFile) })
+
+	mv := &config.MoverConfig{
+		Enabled: new(true),
+		Jobs: []config.MoverJobConfig{
+			{
+				Name:    jobName,
+				Trigger: config.MoverTriggerConfig{Type: "manual"},
+				Source: config.MoverSourceConfig{
+					Paths:       []string{"ssd1"},
+					IncludeFile: includeFile,
+				},
+				Destination: config.MoverDestinationConfig{
+					Paths:  []string{"hdd1"},
+					Policy: "first_found",
+				},
+				DeleteSource: new(true),
+				Verify:       new(false),
+			},
+		},
+	}
+
+	cfg := IntegrationConfig{
+		Storages: []IntegrationStorage{
+			{ID: "ssd1", Indexed: false, BasePath: "/mnt/ssd1/pfs-integration"},
+			{ID: "hdd1", Indexed: false, BasePath: "/mnt/hdd1/pfs-integration"},
+		},
+		Targets:     []string{"ssd1"},
+		ReadTargets: []string{"ssd1"},
+		Mover:       mv,
+	}
+
+	withMountedFS(t, cfg, func(env *MountedFS) {
+		env.MustCreateFileInStoragePath(t, []byte("aaa"), "ssd1", "library/a.txt")
+
+		mustRunPFS(t, env, "move", env.MountName, "--job", jobName, "--progress=off")
+
+		// Only library/a.txt should be moved; comments and blanks are skipped.
+		require.NoFileExists(t, env.StoragePath("ssd1", "library/a.txt"))
+		require.FileExists(t, env.StoragePath("hdd1", "library/a.txt"))
+	})
+}

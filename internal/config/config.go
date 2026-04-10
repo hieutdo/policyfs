@@ -180,10 +180,12 @@ type MoverAllowedWindow struct {
 
 // MoverSourceConfig defines where candidates come from.
 type MoverSourceConfig struct {
-	Paths    []string `yaml:"paths"`
-	Groups   []string `yaml:"groups"`
-	Patterns []string `yaml:"patterns"`
-	Ignore   []string `yaml:"ignore"`
+	Paths       []string `yaml:"paths"`
+	Groups      []string `yaml:"groups"`
+	Patterns    []string `yaml:"patterns"`
+	Ignore      []string `yaml:"ignore"`
+	IncludeFile string   `yaml:"include_file"`
+	IgnoreFile  string   `yaml:"ignore_file"`
 }
 
 // MoverDestinationConfig defines where candidates are moved to.

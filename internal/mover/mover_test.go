@@ -168,6 +168,77 @@ func TestDiscoverCandidatesOneSource_shouldFilterByMinAgeAndSort(t *testing.T) {
 	require.Equal(t, "library/big-old.txt", cands[0].RelPath)
 }
 
+// TestBuildSourceMatchers_includeFileOnly_shouldSelectListedFiles verifies include_file can be used
+// without source.patterns and selects only the paths/globs listed in the file.
+func TestBuildSourceMatchers_includeFileOnly_shouldSelectListedFiles(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "media"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "media", "a.txt"), []byte("a"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "media", "b.txt"), []byte("b"), 0o644))
+
+	list := filepath.Join(root, "include.txt")
+	require.NoError(t, os.WriteFile(list, []byte("media/a.txt\n"), 0o644))
+
+	j := config.MoverJobConfig{Source: config.MoverSourceConfig{IncludeFile: list}}
+	matcher, ignore, err := buildSourceMatchers(j)
+	require.NoError(t, err)
+	require.NotNil(t, matcher)
+	require.Nil(t, ignore)
+
+	mc := &config.MountConfig{StoragePaths: []config.StoragePath{{ID: "ssd1", Path: root}}}
+	pl := newPlanner("media", mc, Opts{})
+
+	cands, err := pl.discoverCandidatesOneSource(context.Background(), "job", "ssd1", matcher, ignore, conditions{}, nil)
+	require.NoError(t, err)
+	require.Len(t, cands, 1)
+	require.Equal(t, "media/a.txt", cands[0].RelPath)
+}
+
+// TestBuildSourceMatchers_ignoreFile_shouldOverrideInclude verifies ignore_file always wins,
+// even when a path is also listed via include_file.
+func TestBuildSourceMatchers_ignoreFile_shouldOverrideInclude(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "media"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "media", "a.txt"), []byte("a"), 0o644))
+
+	include := filepath.Join(root, "include.txt")
+	require.NoError(t, os.WriteFile(include, []byte("media/a.txt\n"), 0o644))
+	ignore := filepath.Join(root, "ignore.txt")
+	require.NoError(t, os.WriteFile(ignore, []byte("media/a.txt\n"), 0o644))
+
+	j := config.MoverJobConfig{Source: config.MoverSourceConfig{IncludeFile: include, IgnoreFile: ignore}}
+	matcher, ig, err := buildSourceMatchers(j)
+	require.NoError(t, err)
+	require.NotNil(t, matcher)
+	require.NotNil(t, ig)
+
+	mc := &config.MountConfig{StoragePaths: []config.StoragePath{{ID: "ssd1", Path: root}}}
+	pl := newPlanner("media", mc, Opts{})
+
+	cands, err := pl.discoverCandidatesOneSource(context.Background(), "job", "ssd1", matcher, ig, conditions{}, nil)
+	require.NoError(t, err)
+	require.Len(t, cands, 0)
+}
+
+// TestBuildSourceMatchers_missingListFile_shouldReturnError verifies missing include/ignore files
+// fail the job instead of silently treating the list as empty.
+func TestBuildSourceMatchers_missingListFile_shouldReturnError(t *testing.T) {
+	j := config.MoverJobConfig{Source: config.MoverSourceConfig{IncludeFile: "/does/not/exist"}}
+	_, _, err := buildSourceMatchers(j)
+	require.Error(t, err)
+}
+
+// TestLoadPatternFile_shouldSkipCommentsAndBlankLines verifies comment lines (starting with #)
+// and blank lines are ignored when reading a pattern file.
+func TestLoadPatternFile_shouldSkipCommentsAndBlankLines(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "patterns.txt")
+	require.NoError(t, os.WriteFile(f, []byte("# this is a comment\nmedia/a.txt\n\n  # indented comment\nmedia/b.txt\n"), 0o644))
+
+	patterns, err := loadPatternFile(f)
+	require.NoError(t, err)
+	require.Equal(t, []string{"media/a.txt", "media/b.txt"}, patterns)
+}
+
 // TestCopyWithContext_canceled_shouldReturnContextError verifies cancellation is wrapped but still matches errors.Is(ctx.Err()).
 func TestCopyWithContext_canceled_shouldReturnContextError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())

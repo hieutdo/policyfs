@@ -187,9 +187,11 @@ func TestValidateConfigAll_shouldValidateMoverJobs(t *testing.T) {
 							AllowedWindow: &config.MoverAllowedWindow{Start: "", End: ""},
 						},
 						Source: config.MoverSourceConfig{
-							Paths:    []string{"unknown-src"},
-							Groups:   []string{"unknown-group"},
-							Patterns: []string{""},
+							Paths:       []string{"unknown-src"},
+							Groups:      []string{"unknown-group"},
+							Patterns:    []string{""},
+							IncludeFile: "/etc/pfs/include.txt",
+							IgnoreFile:  "/etc/pfs/ignore.txt",
 						},
 						Destination: config.MoverDestinationConfig{
 							Paths:  []string{"unknown-dst"},
@@ -257,6 +259,74 @@ func TestValidateConfigAll_shouldValidateMoverJobs(t *testing.T) {
 	require.Contains(t, msgs, "mover.jobs[1].trigger.allowed_window.end must be HH:MM")
 
 	require.Contains(t, msgs, "mover.jobs[3].conditions.min_size must be <= max_size")
+}
+
+// TestValidateConfigAll_shouldAllowIncludeFileWithoutPatterns verifies a job can omit source.patterns
+// when source.include_file is set.
+func TestValidateConfigAll_shouldAllowIncludeFileWithoutPatterns(t *testing.T) {
+	cfg := &config.RootConfig{Mounts: map[string]config.MountConfig{
+		"m": {
+			MountPoint:   "/mnt/pfs/m",
+			StoragePaths: []config.StoragePath{{ID: "ssd1", Path: "/mnt/ssd1"}},
+			RoutingRules: []config.RoutingRule{{Match: "**"}},
+			Mover: config.MoverConfig{Enabled: boolPtr(true), Jobs: []config.MoverJobConfig{{
+				Name:        "promote",
+				Trigger:     config.MoverTriggerConfig{Type: "manual"},
+				Source:      config.MoverSourceConfig{Paths: []string{"ssd1"}, IncludeFile: "/etc/pfs/include.txt"},
+				Destination: config.MoverDestinationConfig{Paths: []string{"ssd1"}, Policy: "first_found"},
+			}}},
+		},
+	}}
+
+	errList := ValidateConfigAll(cfg)
+	require.Len(t, errList, 0)
+	msgs := mountMsgs(t, errList, "m")
+	require.NotContains(t, msgs, "mover.jobs[0].source.patterns or source.include_file is required")
+}
+
+// TestValidateConfigAll_shouldRejectEmptyPatternsAndIncludeFile verifies validation fails when
+// both source.patterns and source.include_file are absent.
+func TestValidateConfigAll_shouldRejectEmptyPatternsAndIncludeFile(t *testing.T) {
+	cfg := &config.RootConfig{Mounts: map[string]config.MountConfig{
+		"m": {
+			MountPoint:   "/mnt/pfs/m",
+			StoragePaths: []config.StoragePath{{ID: "ssd1", Path: "/mnt/ssd1"}},
+			RoutingRules: []config.RoutingRule{{Match: "**"}},
+			Mover: config.MoverConfig{Enabled: boolPtr(true), Jobs: []config.MoverJobConfig{{
+				Name:        "empty",
+				Trigger:     config.MoverTriggerConfig{Type: "manual"},
+				Source:      config.MoverSourceConfig{Paths: []string{"ssd1"}},
+				Destination: config.MoverDestinationConfig{Paths: []string{"ssd1"}, Policy: "first_found"},
+			}}},
+		},
+	}}
+
+	msgs := mountMsgs(t, ValidateConfigAll(cfg), "m")
+	require.Contains(t, msgs, "mover.jobs[0].source.patterns or source.include_file is required")
+}
+
+// TestValidateConfigAll_shouldRejectWhitespaceOnlyIncludeFile verifies whitespace-only
+// include_file / ignore_file values are rejected.
+func TestValidateConfigAll_shouldRejectWhitespaceOnlyIncludeFile(t *testing.T) {
+	cfg := &config.RootConfig{Mounts: map[string]config.MountConfig{
+		"m": {
+			MountPoint:   "/mnt/pfs/m",
+			StoragePaths: []config.StoragePath{{ID: "ssd1", Path: "/mnt/ssd1"}},
+			RoutingRules: []config.RoutingRule{{Match: "**"}},
+			Mover: config.MoverConfig{Enabled: boolPtr(true), Jobs: []config.MoverJobConfig{{
+				Name:        "ws",
+				Trigger:     config.MoverTriggerConfig{Type: "manual"},
+				Source:      config.MoverSourceConfig{Paths: []string{"ssd1"}, Patterns: []string{"**"}, IncludeFile: "  ", IgnoreFile: "  "},
+				Destination: config.MoverDestinationConfig{Paths: []string{"ssd1"}, Policy: "first_found"},
+			}}},
+		},
+	}}
+
+	msgs := mountMsgs(t, ValidateConfigAll(cfg), "m")
+	require.Contains(t, msgs, "mover.jobs[0].source.include_file must not be empty")
+	require.Contains(t, msgs, "mover.jobs[0].source.ignore_file must not be empty")
+	// Whitespace-only include_file should NOT also trigger the "required" error.
+	require.NotContains(t, msgs, "mover.jobs[0].source.patterns or source.include_file is required")
 }
 
 // boolPtr is a helper for constructing *bool values in test configs.

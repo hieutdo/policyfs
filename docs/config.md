@@ -203,14 +203,22 @@ Each job under `mover.jobs[]`:
 
 #### `source`
 
-| Field      | Type | Description                                                  |
-| ---------- | ---- | ------------------------------------------------------------ |
-| `paths`    | list | Storage path IDs to scan.                                    |
-| `groups`   | list | Storage group names to scan (expanded to IDs).               |
-| `patterns` | list | Glob patterns to filter candidate files (e.g. `library/**`). |
-| `ignore`   | list | Glob patterns to exclude (e.g. `**/.DS_Store`).              |
+| Field          | Type   | Description                                                                                                              |
+| -------------- | ------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `paths`        | list   | Storage path IDs to scan.                                                                                                |
+| `groups`       | list   | Storage group names to scan (expanded to IDs).                                                                           |
+| `patterns`     | list   | Glob patterns to filter candidate files (e.g. `library/**`).                                                             |
+| `ignore`       | list   | Glob patterns to exclude (e.g. `**/.DS_Store`).                                                                          |
+| `include_file` | string | Optional newline-delimited list file of paths/globs to include as candidates. If the file cannot be read, the job fails. |
+| `ignore_file`  | string | Optional newline-delimited list file of paths/globs to exclude (ignore wins). If the file cannot be read, the job fails. |
 
 At least one of `paths` or `groups` must be provided.
+
+**`include_file` / `ignore_file` semantics:** entries in these files are matched against the
+virtual relative path (e.g. `library/movies/A.mkv` — forward slashes, no leading `/`), the same
+as `patterns` and `ignore`. Lines starting with `#` and blank lines are ignored. Ignore always
+wins: if a path matches `ignore` or `ignore_file`, it is skipped regardless of `patterns` or
+`include_file`. At least one of `patterns` or `include_file` must be provided.
 
 #### `destination`
 
