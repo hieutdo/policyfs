@@ -193,6 +193,7 @@ type MoverDestinationConfig struct {
 	Paths          []string `yaml:"paths"`
 	Groups         []string `yaml:"groups"`
 	Policy         string   `yaml:"policy"`
+	SkipIfExistsAny bool    `yaml:"skip_if_exists_any"`
 	PathPreserving bool     `yaml:"path_preserving"`
 }
 

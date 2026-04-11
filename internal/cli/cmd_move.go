@@ -210,11 +210,13 @@ This command is typically scheduled via systemd timers for usage-triggered jobs.
 			}
 
 			totalSkippedOpen := int64(0)
+			totalSkippedExists := int64(0)
 			for _, jr := range res.Jobs {
 				totalSkippedOpen += jr.FilesSkippedOpen
+				totalSkippedExists += jr.FilesSkippedExists
 			}
 			if res.TotalFilesMoved == 0 && len(warningsHuman) == 0 {
-				if totalSkippedOpen > 0 {
+				if totalSkippedOpen > 0 || totalSkippedExists > 0 {
 					if !quiet {
 						printMoveSummary(stdout, res, warningsHuman)
 					}
@@ -638,6 +640,9 @@ func printMoveSummary(w io.Writer, res mover.Result, warningsHuman []string) {
 		)
 		if jr.FilesSkippedOpen > 0 {
 			fmt.Fprintf(w, "         skipped_open %s\n", humanize.Comma(jr.FilesSkippedOpen))
+		}
+		if jr.FilesSkippedExists > 0 {
+			fmt.Fprintf(w, "         skipped_exists %s\n", humanize.Comma(jr.FilesSkippedExists))
 		}
 	}
 	var totalErrors int64

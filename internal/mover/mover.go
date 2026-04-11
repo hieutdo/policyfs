@@ -24,15 +24,16 @@ type Result struct {
 
 // JobResult summarizes one mover job.
 type JobResult struct {
-	Name             string
-	FilesMoved       int64
-	BytesMoved       int64
-	BytesFreed       int64
-	FilesSkipped     int64
-	FilesSkippedOpen int64
-	FilesErrored     int64
-	DurationMS       int64
-	TotalCandidates  int64
+	Name               string
+	FilesMoved         int64
+	BytesMoved         int64
+	BytesFreed         int64
+	FilesSkipped       int64
+	FilesSkippedOpen   int64
+	FilesSkippedExists int64
+	FilesErrored       int64
+	DurationMS         int64
+	TotalCandidates    int64
 }
 
 // Opts controls mover behavior.

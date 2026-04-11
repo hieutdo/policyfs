@@ -115,6 +115,32 @@ func (p *planner) runJob(ctx context.Context, j config.MoverJobConfig, hooks Hoo
 			if limit > 0 && movedSoFar+jr.FilesMoved >= limit {
 				break
 			}
+
+			if openSet != nil {
+				id := daemonctl.OpenFileID{StorageID: c.SrcStorageID, Dev: c.Dev, Ino: c.Ino}
+				if _, isOpen := openSet[id]; isOpen {
+					jr.FilesSkipped++
+					jr.FilesSkippedOpen++
+					continue
+				}
+			}
+
+			if j.Destination.SkipIfExistsAny {
+				exists, err := destPathExistsAny(p, dstIDs, c.RelPath)
+				if err != nil {
+					jr.FilesErrored++
+					if hooks.Warn != nil {
+						hooks.Warn(j.Name, c.SrcStorageID, c.RelPath, err)
+					}
+					continue
+				}
+				if exists {
+					jr.FilesSkipped++
+					jr.FilesSkippedExists++
+					continue
+				}
+			}
+
 			dr, err := p.selectDestinations(j, dstIDs, c)
 			if err != nil {
 				jr.FilesErrored++
@@ -127,15 +153,6 @@ func (p *planner) runJob(ctx context.Context, j config.MoverJobConfig, hooks Hoo
 
 			srcRoot := p.storageByID[c.SrcStorageID].Path
 			srcPhys := filepath.Join(srcRoot, c.RelPath)
-
-			if openSet != nil {
-				id := daemonctl.OpenFileID{StorageID: c.SrcStorageID, Dev: c.Dev, Ino: c.Ino}
-				if _, isOpen := openSet[id]; isOpen {
-					jr.FilesSkipped++
-					jr.FilesSkippedOpen++
-					continue
-				}
-			}
 
 			if p.opts.DryRun {
 				if hooks.FileStart != nil && len(dests) > 0 {
@@ -342,6 +359,42 @@ func (p *planner) runJob(ctx context.Context, j config.MoverJobConfig, hooks Hoo
 
 	jr.DurationMS = time.Since(jobStart).Milliseconds()
 	return jr, nil
+}
+
+// destPathExistsAny returns true if relPath already exists under any destination root.
+//
+// This is used for destination.skip_if_exists_any to avoid duplicates when the destination spans
+// multiple disks. It may increase disk I/O (and potentially wake sleeping disks), because it
+// stats each destination path.
+//
+// It returns a non-nil error when a stat call fails for a reason other than "not found"
+// (e.g. permission denied), so the caller can treat that as an errored file rather than
+// silently proceeding with a potentially duplicate copy.
+func destPathExistsAny(p *planner, dstIDs []string, relPath string) (bool, error) {
+	if p == nil {
+		return false, nil
+	}
+	relPath = filepath.Clean(strings.TrimSpace(relPath))
+	relPath = strings.TrimPrefix(relPath, string(filepath.Separator))
+	if relPath == "" || relPath == "." {
+		return false, nil
+	}
+
+	for _, id := range dstIDs {
+		sp, ok := p.storageByID[id]
+		if !ok {
+			continue
+		}
+		phys := filepath.Join(sp.Path, relPath)
+		_, err := os.Stat(phys)
+		if err == nil {
+			return true, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return false, fmt.Errorf("failed to stat destination %s:%s: %w", id, relPath, err)
+		}
+	}
+	return false, nil
 }
 
 // jobVerifyEnabled returns the effective verify bool for a job.

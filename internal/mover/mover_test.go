@@ -739,3 +739,66 @@ func TestRunJob_usageTrigger_shouldStopAtThresholdStop(t *testing.T) {
 	require.Equal(t, int64(3), jr.FilesMoved, "should stop after 3 moves when usage reaches threshold_stop")
 	require.Equal(t, int64(5), jr.TotalCandidates, "should have discovered all 5 candidates")
 }
+
+// TestRunJob_skipIfExistsAny_shouldAvoidDuplicateCopy verifies destination.skip_if_exists_any skips
+// candidates when the destination path already exists on any destination storage.
+func TestRunJob_skipIfExistsAny_shouldAvoidDuplicateCopy(t *testing.T) {
+	srcDir := t.TempDir()
+	dst1Dir := t.TempDir()
+	dst2Dir := t.TempDir()
+
+	rel := filepath.Join("lib", "a.txt")
+	require.NoError(t, os.MkdirAll(filepath.Join(srcDir, "lib"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(dst2Dir, "lib"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(srcDir, rel), []byte("src"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dst2Dir, rel), []byte("dst"), 0o644))
+
+	mc := &config.MountConfig{StoragePaths: []config.StoragePath{
+		{ID: "ssd1", Path: srcDir},
+		{ID: "hdd1", Path: dst1Dir},
+		{ID: "hdd2", Path: dst2Dir},
+	}}
+	p := newPlanner("media", mc, Opts{})
+	p.freeSpaceGB = func(_ string) (float64, error) { return 100, nil }
+
+	j := config.MoverJobConfig{
+		Name:    "test",
+		Trigger: config.MoverTriggerConfig{Type: "manual"},
+		Source:  config.MoverSourceConfig{Paths: []string{"ssd1"}, Patterns: []string{"lib/**"}},
+		Destination: config.MoverDestinationConfig{
+			Paths:           []string{"hdd1", "hdd2"},
+			Policy:          "first_found",
+			SkipIfExistsAny: true,
+		},
+		DeleteSource: new(false),
+		Verify:       new(false),
+	}
+
+	jr, err := p.runJob(context.Background(), j, Hooks{}, nil, 0, 0)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), jr.FilesMoved)
+	require.Equal(t, int64(1), jr.FilesSkipped)
+	require.Equal(t, int64(1), jr.FilesSkippedExists)
+
+	require.FileExists(t, filepath.Join(srcDir, rel))
+	require.NoFileExists(t, filepath.Join(dst1Dir, rel))
+	require.FileExists(t, filepath.Join(dst2Dir, rel))
+}
+
+// TestDestPathExistsAny_shouldReturnErrorOnENOTDIR verifies that stat errors other than
+// "not found" (e.g. ENOTDIR) are surfaced rather than silently treated as non-existent.
+func TestDestPathExistsAny_shouldReturnErrorOnENOTDIR(t *testing.T) {
+	dir := t.TempDir()
+	fileRoot := filepath.Join(dir, "not-a-dir")
+	require.NoError(t, os.WriteFile(fileRoot, []byte("x"), 0o644))
+
+	mc := &config.MountConfig{StoragePaths: []config.StoragePath{
+		{ID: "hdd1", Path: fileRoot},
+	}}
+	p := newPlanner("media", mc, Opts{})
+
+	exists, err := destPathExistsAny(p, []string{"hdd1"}, "some/file.txt")
+	require.Error(t, err)
+	require.False(t, exists)
+	require.True(t, errors.Is(err, syscall.ENOTDIR), "expected ENOTDIR, got: %v", err)
+}

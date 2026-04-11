@@ -106,6 +106,62 @@ func TestMove_shouldMoveFromNonIndexedToIndexed_andMountShouldExposeWithoutIndex
 	})
 }
 
+// TestMove_skipIfExistsAny_shouldAvoidDuplicate verifies destination.skip_if_exists_any skips copying
+// when the destination path already exists on any destination storage.
+func TestMove_skipIfExistsAny_shouldAvoidDuplicate(t *testing.T) {
+	if os.Getenv(config.EnvIntegrationUseExistingMount) != "" {
+		t.Skip("skip move flow test when using an existing mount")
+	}
+
+	jobName := "mirror"
+	rel := "library/dup/exists.txt"
+
+	mv := &config.MoverConfig{
+		Enabled: new(true),
+		Jobs: []config.MoverJobConfig{
+			{
+				Name:        jobName,
+				Description: "integration move skip_if_exists_any",
+				Trigger:     config.MoverTriggerConfig{Type: "manual"},
+				Source: config.MoverSourceConfig{
+					Paths:    []string{"ssd1"},
+					Patterns: []string{"library/**"},
+				},
+				Destination: config.MoverDestinationConfig{
+					Paths:           []string{"hdd1", "hdd2"},
+					Policy:          "first_found",
+					SkipIfExistsAny: true,
+					PathPreserving:  true,
+				},
+				DeleteSource: new(false),
+				Verify:       new(false),
+			},
+		},
+	}
+
+	cfg := IntegrationConfig{
+		Storages: []IntegrationStorage{
+			{ID: "ssd1", Indexed: false, BasePath: "/mnt/ssd1/pfs-integration"},
+			{ID: "hdd1", Indexed: false, BasePath: "/mnt/hdd1/pfs-integration"},
+			{ID: "hdd2", Indexed: false, BasePath: "/mnt/hdd2/pfs-integration"},
+		},
+		Targets:     []string{"ssd1"},
+		ReadTargets: []string{"ssd1"},
+		Mover:       mv,
+	}
+
+	withMountedFS(t, cfg, func(env *MountedFS) {
+		env.MustCreateFileInStoragePath(t, []byte("src"), "ssd1", rel)
+		env.MustCreateFileInStoragePath(t, []byte("dst"), "hdd2", rel)
+
+		mustRunPFS(t, env, "move", env.MountName, "--job", jobName, "--progress=off")
+
+		require.FileExists(t, env.StoragePath("ssd1", rel), "source should remain (delete_source=false)")
+		require.NoFileExists(t, env.StoragePath("hdd1", rel), "should not create duplicate on primary destination")
+		require.FileExists(t, env.StoragePath("hdd2", rel), "existing destination should remain")
+	})
+}
+
 // TestMove_shouldSkipOpenFileAndMoveAfterClose verifies open-file awareness:
 // when a file is open via the mounted view, mover must skip it (skipped_open++)
 // and only move it after the file handle is closed.

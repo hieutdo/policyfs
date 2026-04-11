@@ -222,12 +222,13 @@ wins: if a path matches `ignore` or `ignore_file`, it is skipped regardless of `
 
 #### `destination`
 
-| Field             | Type   | Default     | Description                                                    |
-| ----------------- | ------ | ----------- | -------------------------------------------------------------- |
-| `paths`           | list   | —           | Storage path IDs as destinations.                              |
-| `groups`          | list   | —           | Storage group names as destinations (expanded to IDs).         |
-| `policy`          | string | `most_free` | Target selection: `most_free`, `least_free`, or `first_found`. |
-| `path_preserving` | bool   | `false`     | Prefer destinations where the parent directory already exists. |
+| Field                | Type   | Default     | Description                                                                                                                                                                                                                   |
+| -------------------- | ------ | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `paths`              | list   | —           | Storage path IDs as destinations.                                                                                                                                                                                             |
+| `groups`             | list   | —           | Storage group names as destinations (expanded to IDs).                                                                                                                                                                        |
+| `policy`             | string | `most_free` | Target selection: `most_free`, `least_free`, or `first_found`.                                                                                                                                                                |
+| `skip_if_exists_any` | bool   | `false`     | If `true`, skip a candidate when the destination path already exists on any destination storage (avoids duplicates; may increase disk I/O). When a file is skipped, `delete_source` does not apply — the source file is kept. |
+| `path_preserving`    | bool   | `false`     | Prefer destinations where the parent directory already exists.                                                                                                                                                                |
 
 #### `conditions`
 
