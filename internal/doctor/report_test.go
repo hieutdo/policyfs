@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hieutdo/policyfs/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -224,4 +225,111 @@ func TestGenerateSuggestions_shouldIncludeActionableItems(t *testing.T) {
 	require.Contains(t, s, "Mount \"media\": hdd1 (/mnt/hdd1) is not accessible — check disk/mount")
 	require.Contains(t, s, "Mount \"media\": ssd1 is 90% full — consider freeing space or adding storage")
 	require.Contains(t, s, "Mount \"media\": storage \"hdd1\" has never been indexed — run 'pfs index media'")
+}
+
+// TestComputePoolSizeBytes_shouldReturnNilWhenUnknown verifies pool size is unknown when there are
+// no accessible storages or when any accessible storage lacks TotalBytes.
+func TestComputePoolSizeBytes_shouldReturnNilWhenUnknown(t *testing.T) {
+	t.Run("should return nil when no accessible", func(t *testing.T) {
+		got := computePoolSizeBytes([]StorageReport{{ID: "ssd1", Accessible: false, TotalBytes: 100}})
+		require.Nil(t, got)
+	})
+
+	t.Run("should return nil when any accessible total is unknown", func(t *testing.T) {
+		got := computePoolSizeBytes([]StorageReport{{ID: "ssd1", Accessible: true, TotalBytes: 0}})
+		require.Nil(t, got)
+	})
+}
+
+// TestComputePoolSizeBytes_shouldSumTotals verifies pool size sums TotalBytes across accessible storages.
+func TestComputePoolSizeBytes_shouldSumTotals(t *testing.T) {
+	got := computePoolSizeBytes([]StorageReport{
+		{ID: "ssd1", Accessible: true, TotalBytes: 10},
+		{ID: "ssd2", Accessible: true, TotalBytes: 20},
+		{ID: "hdd1", Accessible: false, TotalBytes: 999},
+	})
+	require.NotNil(t, got)
+	require.Equal(t, uint64(30), *got)
+}
+
+// TestApplyUsageThresholdsForFirstUsageJob_shouldAnnotateSources verifies we annotate only source storages
+// of the first usage-triggered mover job and only when storages are accessible.
+func TestApplyUsageThresholdsForFirstUsageJob_shouldAnnotateSources(t *testing.T) {
+	mountCfg := config.MountConfig{
+		StorageGroups: map[string][]string{
+			"ssds": {"ssd2"},
+		},
+		Mover: config.MoverConfig{
+			Enabled: boolPtr(true),
+			Jobs: []config.MoverJobConfig{
+				{Name: "manual", Trigger: config.MoverTriggerConfig{Type: "manual"}},
+				{
+					Name:    "usage",
+					Trigger: config.MoverTriggerConfig{Type: "usage", ThresholdStart: 90, ThresholdStop: 65},
+					Source:  config.MoverSourceConfig{Paths: []string{"ssd1"}, Groups: []string{"ssds"}},
+				},
+			},
+		},
+	}
+
+	storages := []StorageReport{
+		{ID: "ssd1", Accessible: true},
+		{ID: "ssd2", Accessible: true},
+		{ID: "hdd1", Accessible: true},
+		{ID: "ssd3", Accessible: false},
+	}
+
+	applyUsageThresholdsForFirstUsageJob(mountCfg, storages)
+
+	require.NotNil(t, storages[0].ThresholdStartPct)
+	require.NotNil(t, storages[0].ThresholdStopPct)
+	require.Equal(t, 90, *storages[0].ThresholdStartPct)
+	require.Equal(t, 65, *storages[0].ThresholdStopPct)
+
+	require.NotNil(t, storages[1].ThresholdStartPct)
+	require.NotNil(t, storages[1].ThresholdStopPct)
+
+	require.Nil(t, storages[2].ThresholdStartPct)
+	require.Nil(t, storages[2].ThresholdStopPct)
+
+	require.Nil(t, storages[3].ThresholdStartPct)
+	require.Nil(t, storages[3].ThresholdStopPct)
+}
+
+// TestApplyUsageThresholds_shouldNoopWhenMoverDisabled verifies thresholds are not applied
+// when the mover is explicitly disabled.
+func TestApplyUsageThresholds_shouldNoopWhenMoverDisabled(t *testing.T) {
+	mountCfg := config.MountConfig{
+		Mover: config.MoverConfig{
+			Enabled: boolPtr(false),
+			Jobs: []config.MoverJobConfig{
+				{
+					Name:    "usage",
+					Trigger: config.MoverTriggerConfig{Type: "usage", ThresholdStart: 90, ThresholdStop: 65},
+					Source:  config.MoverSourceConfig{Paths: []string{"ssd1"}},
+				},
+			},
+		},
+	}
+
+	storages := []StorageReport{{ID: "ssd1", Accessible: true}}
+	applyUsageThresholdsForFirstUsageJob(mountCfg, storages)
+	require.Nil(t, storages[0].ThresholdStartPct)
+}
+
+// TestApplyUsageThresholds_shouldNoopWhenNoUsageJob verifies thresholds are not applied
+// when no mover job has trigger.type=usage.
+func TestApplyUsageThresholds_shouldNoopWhenNoUsageJob(t *testing.T) {
+	mountCfg := config.MountConfig{
+		Mover: config.MoverConfig{
+			Enabled: boolPtr(true),
+			Jobs: []config.MoverJobConfig{
+				{Name: "manual", Trigger: config.MoverTriggerConfig{Type: "manual"}},
+			},
+		},
+	}
+
+	storages := []StorageReport{{ID: "ssd1", Accessible: true}}
+	applyUsageThresholdsForFirstUsageJob(mountCfg, storages)
+	require.Nil(t, storages[0].ThresholdStartPct)
 }

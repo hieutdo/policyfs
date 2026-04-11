@@ -40,6 +40,11 @@ func printDoctorReport(w io.Writer, r doctor.Report) {
 		printStatusLine(w, m.Daemon)
 		printStatusLine(w, m.Mountpoint)
 		printStatusLine(w, m.JobLock)
+		poolDetail := ""
+		if m.PoolSizeBytes != nil {
+			poolDetail = humanize.IBytes(*m.PoolSizeBytes)
+		}
+		printStatusLine(w, doctor.CheckResult{Name: "pool size", Pass: true, Detail: poolDetail})
 
 		// Files
 		if m.IndexDB.Path != "" || m.LogFile.Path != "" {
@@ -136,6 +141,11 @@ func printStorageLine(w io.Writer, s doctor.StorageReport) {
 		indexed = " (indexed)"
 	}
 
+	threshold := ""
+	if s.ThresholdStartPct != nil && s.ThresholdStopPct != nil {
+		threshold = fmt.Sprintf(" [start: %d%% | stop: %d%%]", *s.ThresholdStartPct, *s.ThresholdStopPct)
+	}
+
 	if !s.Accessible {
 		fmt.Fprintf(w, "    %-8s %-30s %s%s\n", s.ID, s.Path, s.Error, indexed)
 		return
@@ -143,7 +153,7 @@ func printStorageLine(w io.Writer, s doctor.StorageReport) {
 
 	free := humanize.IBytes(s.FreeBytes)
 	pct := 100 - s.UsedPct
-	fmt.Fprintf(w, "    %-8s %-30s accessible  %s free (%d%%)%s\n", s.ID, s.Path, free, pct, indexed)
+	fmt.Fprintf(w, "    %-8s %-30s accessible  %s free (%d%%)%s%s\n", s.ID, s.Path, free, pct, threshold, indexed)
 }
 
 // printFileLine prints a single file path plus best-effort size/availability.

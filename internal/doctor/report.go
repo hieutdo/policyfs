@@ -99,6 +99,8 @@ func BuildReport(cfgPath string, rootCfg *config.RootConfig, loadErr error, filt
 		for _, sp := range mountCfg.StoragePaths {
 			m.Storages = append(m.Storages, checkStorage(sp))
 		}
+		m.PoolSizeBytes = computePoolSizeBytes(m.Storages)
+		applyUsageThresholdsForFirstUsageJob(mountCfg, m.Storages)
 
 		for _, sp := range mountCfg.StoragePaths {
 			if !sp.Indexed {
@@ -576,6 +578,94 @@ func checkStorage(sp config.StoragePath) StorageReport {
 		}
 	}
 	return r
+}
+
+// computePoolSizeBytes returns the sum of TotalBytes across accessible storages.
+// It returns nil when pool size is unknown.
+func computePoolSizeBytes(storages []StorageReport) *uint64 {
+	var sum uint64
+	hasAccessible := false
+	for _, s := range storages {
+		if !s.Accessible {
+			continue
+		}
+		hasAccessible = true
+		if s.TotalBytes == 0 {
+			return nil
+		}
+		sum += s.TotalBytes
+	}
+	if !hasAccessible {
+		return nil
+	}
+	return &sum
+}
+
+// applyUsageThresholdsForFirstUsageJob annotates storage reports with threshold_start/threshold_stop
+// from the first mover job where trigger.type=usage.
+//
+// Semantics:
+//   - only applied when mover is enabled
+//   - only for storages that are sources of that job (source.paths + expanded source.groups)
+//   - only for storages that are accessible
+func applyUsageThresholdsForFirstUsageJob(mountCfg config.MountConfig, storages []StorageReport) {
+	enabled := true
+	if mountCfg.Mover.Enabled != nil {
+		enabled = *mountCfg.Mover.Enabled
+	}
+	if !enabled {
+		return
+	}
+
+	var job *config.MoverJobConfig
+	for i := range mountCfg.Mover.Jobs {
+		j := &mountCfg.Mover.Jobs[i]
+		if strings.TrimSpace(j.Trigger.Type) == "usage" {
+			job = j
+			break
+		}
+	}
+	if job == nil {
+		return
+	}
+
+	sourceIDs := map[string]struct{}{}
+	for _, sid := range job.Source.Paths {
+		sid = strings.TrimSpace(sid)
+		if sid == "" {
+			continue
+		}
+		sourceIDs[sid] = struct{}{}
+	}
+	for _, g := range job.Source.Groups {
+		g = strings.TrimSpace(g)
+		if g == "" {
+			continue
+		}
+		for _, sid := range mountCfg.StorageGroups[g] {
+			sid = strings.TrimSpace(sid)
+			if sid == "" {
+				continue
+			}
+			sourceIDs[sid] = struct{}{}
+		}
+	}
+	if len(sourceIDs) == 0 {
+		return
+	}
+
+	start := job.Trigger.ThresholdStart
+	stop := job.Trigger.ThresholdStop
+	for i := range storages {
+		if !storages[i].Accessible {
+			continue
+		}
+		if _, ok := sourceIDs[storages[i].ID]; !ok {
+			continue
+		}
+		storages[i].ThresholdStartPct = &start
+		storages[i].ThresholdStopPct = &stop
+	}
 }
 
 // queryIndexStats queries indexer_state and stale count for a storage.

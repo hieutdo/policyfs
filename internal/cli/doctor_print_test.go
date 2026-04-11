@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/hieutdo/policyfs/internal/doctor"
@@ -77,6 +78,71 @@ func TestPrintDoctorReport_FilesAndTimers(t *testing.T) {
 	require.Contains(t, out, "pfs-maint@media.timer")
 	require.Contains(t, out, "schedule=hourly")
 	require.Contains(t, out, "warning: maint timer active")
+}
+
+// TestPrintDoctorReport_PoolSizeUnknown verifies pool size is printed as "unknown" when not available.
+func TestPrintDoctorReport_PoolSizeUnknown(t *testing.T) {
+	var buf bytes.Buffer
+	report := doctor.Report{
+		Mounts: []doctor.MountReport{
+			{
+				Name:          "media",
+				ConfigValid:   true,
+				Daemon:        doctor.CheckResult{Name: "daemon", Pass: true, Detail: "running"},
+				Mountpoint:    doctor.CheckResult{Name: "mountpoint", Pass: true, Detail: "/mnt/pfs/media (exists)"},
+				JobLock:       doctor.CheckResult{Name: "job lock", Pass: true, Detail: "free"},
+				PoolSizeBytes: nil,
+			},
+		},
+	}
+
+	printDoctorReport(&buf, report)
+	out := buf.String()
+	require.Contains(t, out, "pool size:")
+	require.Contains(t, out, "unknown")
+}
+
+// TestPrintDoctorReport_StorageThresholds verifies start/stop thresholds are appended to storage lines.
+func TestPrintDoctorReport_StorageThresholds(t *testing.T) {
+	var buf bytes.Buffer
+	start := 90
+	stop := 65
+	p := uint64(1)
+
+	report := doctor.Report{
+		Mounts: []doctor.MountReport{
+			{
+				Name:          "media",
+				ConfigValid:   true,
+				Daemon:        doctor.CheckResult{Name: "daemon", Pass: true, Detail: "running"},
+				Mountpoint:    doctor.CheckResult{Name: "mountpoint", Pass: true, Detail: "/mnt/pfs/media (exists)"},
+				JobLock:       doctor.CheckResult{Name: "job lock", Pass: true, Detail: "free"},
+				PoolSizeBytes: &p,
+				Storages: []doctor.StorageReport{
+					{ID: "ssd1", Path: "/mnt/ssd1", Accessible: true, FreeBytes: 1, UsedPct: 1, ThresholdStartPct: &start, ThresholdStopPct: &stop},
+					{ID: "hdd1", Path: "/mnt/hdd1", Accessible: true, FreeBytes: 1, UsedPct: 1},
+				},
+			},
+		},
+	}
+
+	printDoctorReport(&buf, report)
+	out := buf.String()
+
+	var ssd1Line string
+	var hdd1Line string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "ssd1") {
+			ssd1Line = line
+		}
+		if strings.Contains(line, "hdd1") {
+			hdd1Line = line
+		}
+	}
+	require.NotEmpty(t, ssd1Line)
+	require.NotEmpty(t, hdd1Line)
+	require.Contains(t, ssd1Line, "[start: 90% | stop: 65%]")
+	require.NotContains(t, hdd1Line, "start:")
 }
 
 // --- printIndexStats with stale ---

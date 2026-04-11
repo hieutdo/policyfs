@@ -23,6 +23,11 @@ type StorageReport struct {
 	FreeBytes  uint64
 	TotalBytes uint64
 	UsedPct    int // 0..100
+
+	// Usage trigger thresholds, populated from the first mover job with trigger.type=usage.
+	// Only set for storages that are sources of that usage-triggered job.
+	ThresholdStartPct *int
+	ThresholdStopPct  *int
 }
 
 // IndexStatsReport holds per-storage index stats from indexer_state.
@@ -100,6 +105,10 @@ type MountReport struct {
 	Daemon        CheckResult
 	Mountpoint    CheckResult
 	JobLock       CheckResult
+
+	// PoolSizeBytes is the sum of TotalBytes across accessible storages.
+	// Nil means pool size is unknown.
+	PoolSizeBytes *uint64
 	IndexDB       FileReport
 	LogFile       FileReport
 	SystemdTimers *SystemdTimersReport
