@@ -951,7 +951,7 @@ footer {
   fill: #38a169;
 }
 
-/* Animated flow paths — marching-dashes */
+/* Animated flow paths - marching-dashes */
 @keyframes idx-march {
   to {
     stroke-dashoffset: 0;
@@ -1172,7 +1172,7 @@ footer {
   fill: #7c3aed;
 }
 
-/* Animated flow — reuses idx-march keyframe */
+/* Animated flow - reuses idx-march keyframe */
 .prn-flow-violet {
   fill: none;
   stroke: #7c3aed;
@@ -1324,7 +1324,7 @@ footer {
   fill: #0d9488;
 }
 
-/* Animated flow — reuses idx-march keyframe */
+/* Animated flow - reuses idx-march keyframe */
 .mv-flow-teal {
   fill: none;
   stroke: #0d9488;

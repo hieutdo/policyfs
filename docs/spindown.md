@@ -102,7 +102,7 @@ sudo mount -o remount,noatime /mnt/hdd1
 
 ## Common reasons disks never reach standby
 
-- HDDs mounted without `noatime` — reads trigger atime writes.
+- HDDs mounted without `noatime` - reads trigger atime writes.
 - SMART polling too frequently.
 - RAID/mdadm periodic checks.
 - Your media app continuously scanning.

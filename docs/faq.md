@@ -48,11 +48,11 @@ Use your normal backup strategy (snapshots, replication, offsite backups) for da
 
 ## Does PolicyFS work on Unraid or TrueNAS?
 
-PolicyFS requires Linux and systemd. Unraid is Linux-based but uses a non-standard storage stack and does not use systemd; PolicyFS is not tested or supported there. TrueNAS SCALE is Linux-based and uses systemd, but it is not an officially supported platform — proceed with caution and test thoroughly.
+PolicyFS requires Linux and systemd. Unraid is Linux-based but uses a non-standard storage stack and does not use systemd; PolicyFS is not tested or supported there. TrueNAS SCALE is Linux-based and uses systemd, but it is not an officially supported platform - proceed with caution and test thoroughly.
 
 ## How do I know the index is working?
 
-Run `pfs doctor <mount>` — it reports index stats, including how many files are indexed per storage path. You can also check the last run of the indexer:
+Run `pfs doctor <mount>` - it reports index stats, including how many files are indexed per storage path. You can also check the last run of the indexer:
 
 ```bash
 journalctl -u pfs-index@media.service -n 50

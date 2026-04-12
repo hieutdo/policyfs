@@ -87,7 +87,7 @@ func ProbeMountLock(mountName string, lockFile string) (busy bool, pid int, err 
 		return false, 0, fmt.Errorf("failed to probe lock: %w", err)
 	}
 
-	// Lock succeeded — release immediately.
+	// Lock succeeded - release immediately.
 	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 	return false, 0, nil
 }

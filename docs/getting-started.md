@@ -208,7 +208,7 @@ If these paths do not exist, `pfs@<mount>.service` will fail to start.
 `indexed: true` is optional and only affects metadata operations (like directory listing). File content reads still come from the owning disk, and maintenance jobs will spin disks by design.
 
 !!! tip "Not sure what config to use?"
-See [Use cases](use-cases.md) — pick the pattern closest to your setup and copy it as your starting point.
+See [Use cases](use-cases.md) - pick the pattern closest to your setup and copy it as your starting point.
 
 ### Enable a mount
 

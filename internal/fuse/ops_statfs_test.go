@@ -44,7 +44,7 @@ func Test_statfsWriteTarget_shouldReturnWriteTargetStats(t *testing.T) {
 
 	// Statfs values can change between two consecutive syscalls due to OS
 	// background activity, temp file cleanup, etc. Allow a delta of up to 64
-	// blocks — large enough to absorb noise, small enough to catch wrong-device bugs.
+	// blocks - large enough to absorb noise, small enough to catch wrong-device bugs.
 	const maxDelta = uint64(64)
 	{
 		var diff uint64

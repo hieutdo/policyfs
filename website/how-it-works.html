@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>How PolicyFS works — PolicyFS</title>
+    <title>How PolicyFS works - PolicyFS</title>
     <meta
       name="description"
       content="Technical deep dive: how PolicyFS routes filesystem calls, keeps HDDs asleep with an optional SQLite index, and runs maintenance jobs for tiering and housekeeping."
@@ -63,7 +63,7 @@
         border-top: 1px solid var(--border);
       }
       .not-for-list li::before {
-        content: '—';
+        content: '-';
         position: absolute;
         left: 0;
         color: var(--text-muted);
@@ -207,8 +207,8 @@
         <p class="page-intro">
           PolicyFS is a FUSE daemon that sits between your apps and physical storage. It routes each filesystem call
           based on explicit rules. For disks marked <code>indexed: true</code>, a local SQLite database serves
-          <code>readdir</code> and <code>getattr</code> calls so the disk can stay spun down. Three maintenance jobs —
-          <code>pfs move</code>, <code>pfs prune</code>, and <code>pfs index</code> — run on a schedule and handle
+          <code>readdir</code> and <code>getattr</code> calls so the disk can stay spun down. Three maintenance jobs -
+          <code>pfs move</code>, <code>pfs prune</code>, and <code>pfs index</code> - run on a schedule and handle
           housekeeping.
         </p>
       </div>
@@ -222,7 +222,7 @@
           <div class="step">
             <div class="step-num">1</div>
             <h4>POSIX syscall</h4>
-            <p>Your application issues a normal POSIX syscall — pfs is transparent to userspace.</p>
+            <p>Your application issues a normal POSIX syscall - pfs is transparent to userspace.</p>
           </div>
 
           <div class="step">
@@ -763,7 +763,7 @@
         <h2 class="section-title">How <code class="title-code">pfs move</code> migrates files</h2>
         <p class="move-intro">
           As new files land on SSD storage, the fast tier fills up.
-          <code>pfs move</code> copies eligible files — based on minimum age, size, and disk usage threshold — from the
+          <code>pfs move</code> copies eligible files - based on minimum age, size, and disk usage threshold - from the
           fast tier to destination storage (typically a bunch of HDDs). If the daemon control socket is available, open
           files are skipped.
         </p>
@@ -933,13 +933,13 @@
         <p class="section-label">Limitations</p>
         <h2 class="section-title">Not a good fit for…</h2>
         <ul class="not-for-list">
-          <li>Databases and virtual machine images — FUSE adds latency, and <code>O_DIRECT</code> is not supported</li>
+          <li>Databases and virtual machine images - FUSE adds latency, and <code>O_DIRECT</code> is not supported</li>
           <li>
             Applications that rely on advisory file locking across mount boundaries (torrent clients, some sync tools)
           </li>
-          <li>NFS re-exports — FUSE filesystems cannot be reliably re-exported over NFS</li>
+          <li>NFS re-exports - FUSE filesystems cannot be reliably re-exported over NFS</li>
           <li>
-            Workloads that need maximum POSIX coverage — <a href="https://github.com/trapexit/mergerfs">mergerfs</a> is
+            Workloads that need maximum POSIX coverage - <a href="https://github.com/trapexit/mergerfs">mergerfs</a> is
             the better choice
           </li>
         </ul>

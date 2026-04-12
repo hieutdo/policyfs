@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Use cases — PolicyFS</title>
+    <title>Use cases - PolicyFS</title>
     <meta
       name="description"
       content="How PolicyFS fits into common homelab setups: media servers with Plex/Sonarr/Radarr, and NVR with Frigate."
@@ -1486,7 +1486,7 @@
                 <!-- Left: path + rules -->
                 <div class="mount-left">
                   <div class="mount-path">/mnt/pfs/media/</div>
-                  <div class="mount-desc">Single virtual path — apps don't know which physical disk holds the file</div>
+                  <div class="mount-desc">Single virtual path - apps don't know which physical disk holds the file</div>
                   <div class="rules-row">
                     <div class="rule-pill both-rule">
                       <span>🎵</span>
@@ -1508,7 +1508,7 @@
                     </div>
                   </div>
                   <div class="router-block">
-                    <strong>pfs router</strong> — new files land on SSD first · path-preserving keeps directories
+                    <strong>pfs router</strong> - new files land on SSD first · path-preserving keeps directories
                     together · library metadata served without waking archive disks
                   </div>
                 </div>
@@ -1542,7 +1542,7 @@
                       >pfs move</code
                     >
                     migrates older files to HDD during maintenance<br /><span class="hl-green">music/</span> stays on
-                    SSD — no HDD wakeup to skip a track
+                    SSD - no HDD wakeup to skip a track
                   </div>
                 </div>
               </div>
@@ -1557,7 +1557,7 @@
             <div class="storage-row">
               <!-- SSD GROUP -->
               <div class="storage-group">
-                <div class="group-label">Fast tier — SSDs</div>
+                <div class="group-label">Fast tier - SSDs</div>
                 <div class="storage-disks">
                   <div class="disk-card ssd">
                     <svg class="disk-svg" viewBox="0 0 40 28" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1649,7 +1649,7 @@
 
               <!-- HDD GROUP -->
               <div class="storage-group">
-                <div class="group-label">Archive tier — HDDs</div>
+                <div class="group-label">Archive tier - HDDs</div>
                 <div class="storage-disks">
                   <div class="disk-card hdd">
                     <svg class="disk-svg" viewBox="0 0 40 34" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1785,7 +1785,7 @@
             <!-- ── MOVER DETAIL ── -->
             <div class="mover-row">
               <div class="mover-pill">
-                <strong>pfs maint</strong> — <code>pfs move</code> → <code>pfs prune</code> →
+                <strong>pfs maint</strong> - <code>pfs move</code> → <code>pfs prune</code> →
                 <code>pfs index</code>
               </div>
             </div>
@@ -1798,7 +1798,7 @@
                   <div class="legend-dot" style="background: var(--blue)"></div>
                   <div>
                     <strong>Browsing the library?</strong> Metadata is served from the SQLite index
-                    (<code>index.db</code>) — HDDs never wake up just for a file listing.
+                    (<code>index.db</code>) - HDDs never wake up just for a file listing.
                   </div>
                 </div>
                 <div class="legend-item">
@@ -1819,14 +1819,14 @@
                 <div class="legend-item">
                   <div class="legend-dot" style="background: var(--yellow)"></div>
                   <div>
-                    <strong>Delete / rename?</strong> Changes on archive disks are queued and applied later — no spinup
+                    <strong>Delete / rename?</strong> Changes on archive disks are queued and applied later - no spinup
                     needed. <span style="color: var(--text-muted)">(handled by <code>pfs prune</code>)</span>
                   </div>
                 </div>
                 <div class="legend-item">
                   <div class="legend-dot" style="background: var(--purple)"></div>
                   <div>
-                    <strong>Actual spindown?</strong> PolicyFS reduces wakeups — <code>hd-idle</code> (or
+                    <strong>Actual spindown?</strong> PolicyFS reduces wakeups - <code>hd-idle</code> (or
                     <code>hdparm -S</code>) is what physically spins the disk down after an idle timeout.
                   </div>
                 </div>
@@ -1846,7 +1846,7 @@
           <h2 class="section-title">Frigate</h2>
           <p class="uc-intro">
             Frigate writes new clips and recordings to the SSD fast tier for fast access. Older footage is migrated to
-            the HDD archive tier by <code>pfs move</code> on a schedule (systemd timer/cron) — or triggered manually.
+            the HDD archive tier by <code>pfs move</code> on a schedule (systemd timer/cron) - or triggered manually.
             Frigate reads back through the same mount: recent clips come off SSD, archived footage off HDD.
           </p>
           <div class="frigate-diagram">
@@ -1923,7 +1923,7 @@
                 <div class="mount-left">
                   <div class="mount-path">/mnt/pfs/nvr/</div>
                   <div class="mount-desc">
-                    Frigate uses a single path — PolicyFS keeps recent data on SSD and older recordings on the HDD
+                    Frigate uses a single path - PolicyFS keeps recent data on SSD and older recordings on the HDD
                     archive tier underneath
                   </div>
                   <div class="rules-row">
@@ -1931,7 +1931,7 @@
                       <span>📸</span>
                       <div>
                         <span class="path">clips/**</span> → reads + writes: <strong>SSDs only</strong>
-                        <div class="note">snapshots &amp; thumbnails — UI loads these constantly</div>
+                        <div class="note">snapshots &amp; thumbnails - UI loads these constantly</div>
                       </div>
                     </div>
                     <div class="rule-pill ssd-only">
@@ -1945,7 +1945,7 @@
                       <span>📖</span>
                       <div>
                         <span class="path">recordings/**</span> → reads: SSDs + HDDs
-                        <div class="note">recent on SSD, older on HDD — both visible seamlessly</div>
+                        <div class="note">recent on SSD, older on HDD - both visible seamlessly</div>
                       </div>
                     </div>
                     <div class="rule-pill write-rule">
@@ -1957,7 +1957,7 @@
                     </div>
                   </div>
                   <div class="router-block">
-                    <strong>pfs router</strong> — new recordings always land on SSD · <code>pfs move</code> migrates
+                    <strong>pfs router</strong> - new recordings always land on SSD · <code>pfs move</code> migrates
                     older segments during maintenance
                   </div>
                 </div>
@@ -2005,7 +2005,7 @@
             <div class="storage-row">
               <!-- SSD -->
               <div class="storage-group">
-                <div class="group-label">Fast tier — SSDs</div>
+                <div class="group-label">Fast tier - SSDs</div>
                 <div class="storage-disks">
                   <div class="disk-card ssd">
                     <svg class="disk-svg" viewBox="0 0 40 28" fill="none">
@@ -2053,7 +2053,7 @@
 
               <!-- HDD -->
               <div class="storage-group">
-                <div class="group-label">Archive tier — HDDs</div>
+                <div class="group-label">Archive tier - HDDs</div>
                 <div class="storage-disks">
                   <div class="disk-card hdd">
                     <svg class="disk-svg" viewBox="0 0 40 34" fill="none">
@@ -2151,14 +2151,14 @@
             <!-- ── MOVER PILL ── -->
             <div class="mover-row">
               <div class="mover-pill">
-                <strong>pfs maint</strong> — <code>pfs move</code> → <code>pfs prune</code> → <code>pfs index</code>
+                <strong>pfs maint</strong> - <code>pfs move</code> → <code>pfs prune</code> → <code>pfs index</code>
                 <span style="color: var(--text-muted)">(if indexed)</span>
               </div>
             </div>
 
             <!-- ── RETENTION TABLE ── -->
             <div class="retention-section">
-              <div class="retention-title">Retention policy — what lives where and for how long</div>
+              <div class="retention-title">Retention policy - what lives where and for how long</div>
               <div class="retention-grid">
                 <div class="ret-card clips">
                   <div class="ret-path">clips/</div>
@@ -2166,10 +2166,10 @@
                     <span class="ret-badge ssd">SSD only</span>
                     <span class="ret-badge days">30d alerts · 7d motion</span>
                   </div>
-                  <div class="ret-desc">Snapshots &amp; thumbnails. Accessed constantly by the UI — keep on SSD.</div>
+                  <div class="ret-desc">Snapshots &amp; thumbnails. Accessed constantly by the UI - keep on SSD.</div>
                 </div>
                 <div class="ret-card rec-hot">
-                  <div class="ret-path">recordings/ — recent</div>
+                  <div class="ret-path">recordings/ - recent</div>
                   <div class="ret-badges">
                     <span class="ret-badge ssd">SSD</span>
                     <span class="ret-badge alert">configurable window</span>
@@ -2177,10 +2177,10 @@
                   <div class="ret-desc">New segments land here first. Most likely to be reviewed immediately.</div>
                 </div>
                 <div class="ret-card rec-cold">
-                  <div class="ret-path">recordings/ — archive</div>
+                  <div class="ret-path">recordings/ - archive</div>
                   <div class="ret-badges">
                     <span class="ret-badge hdd">HDD</span>
-                    <span class="ret-badge days">7–30d (your config)</span>
+                    <span class="ret-badge days">7-30d (your config)</span>
                   </div>
                   <div class="ret-desc">
                     Migrated by <code>pfs move</code> after the age threshold. Disk sleeps until you review old footage.
@@ -2193,7 +2193,7 @@
                     <span class="ret-badge days">manual cleanup</span>
                   </div>
                   <div class="ret-desc">
-                    Manual exports stay on SSD for immediate access. By design — not worth tiering.
+                    Manual exports stay on SSD for immediate access. By design - not worth tiering.
                   </div>
                 </div>
               </div>

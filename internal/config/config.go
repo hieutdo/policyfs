@@ -190,11 +190,11 @@ type MoverSourceConfig struct {
 
 // MoverDestinationConfig defines where candidates are moved to.
 type MoverDestinationConfig struct {
-	Paths          []string `yaml:"paths"`
-	Groups         []string `yaml:"groups"`
-	Policy         string   `yaml:"policy"`
-	SkipIfExistsAny bool    `yaml:"skip_if_exists_any"`
-	PathPreserving bool     `yaml:"path_preserving"`
+	Paths           []string `yaml:"paths"`
+	Groups          []string `yaml:"groups"`
+	Policy          string   `yaml:"policy"`
+	SkipIfExistsAny bool     `yaml:"skip_if_exists_any"`
+	PathPreserving  bool     `yaml:"path_preserving"`
 }
 
 // MoverConditionsConfig filters candidates.

@@ -1,9 +1,9 @@
 # Use cases
 
-This page collects practical configuration patterns. Each snippet is a complete `mounts:` block — paste it into `/etc/pfs/pfs.yaml` (replacing the example that ships with the package) and adjust the paths to match your disks.
+This page collects practical configuration patterns. Each snippet is a complete `mounts:` block - paste it into `/etc/pfs/pfs.yaml` (replacing the example that ships with the package) and adjust the paths to match your disks.
 
 ```yaml
-# /etc/pfs/pfs.yaml — paste one of the configs below here
+# /etc/pfs/pfs.yaml - paste one of the configs below here
 fuse:
   allow_other: true # required if Plex/Jellyfin run as a different user
 
@@ -145,7 +145,7 @@ mounts:
 
 ## 3) Mergerfs alternative (simplest starting point)
 
-**Goal:** Present multiple disks as a single mountpoint, while distributing writes. If you're new to PolicyFS, start here — no indexing, no tiering, just pooling.
+**Goal:** Present multiple disks as a single mountpoint, while distributing writes. If you're new to PolicyFS, start here - no indexing, no tiering, just pooling.
 
 **Suggested config:**
 

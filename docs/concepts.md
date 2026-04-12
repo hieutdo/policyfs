@@ -8,11 +8,11 @@ A single config file (`/etc/pfs/pfs.yaml`) can define **multiple mounts**, each 
 
 ## Three things to know before you configure
 
-- **Storage path** — a physical directory on one of your disks (e.g. `/mnt/hdd1/media`). You list these under `storage_paths`. Setting `indexed: true` on a path means PolicyFS will serve its metadata from a local SQLite database — so directory listings and stat calls don't spin up the disk.
+- **Storage path** - a physical directory on one of your disks (e.g. `/mnt/hdd1/media`). You list these under `storage_paths`. Setting `indexed: true` on a path means PolicyFS will serve its metadata from a local SQLite database - so directory listings and stat calls don't spin up the disk.
 
-- **Routing rule** — maps a glob pattern (e.g. `library/**`) to which storage paths handle reads and writes for matching virtual paths. Rules are evaluated top-to-bottom, first match wins. Every config must end with a catch-all rule (`**`).
+- **Routing rule** - maps a glob pattern (e.g. `library/**`) to which storage paths handle reads and writes for matching virtual paths. Rules are evaluated top-to-bottom, first match wins. Every config must end with a catch-all rule (`**`).
 
-- **Maintenance cycle** — three scheduled jobs (`pfs move`, `pfs prune`, `pfs index`) that run on a schedule (typically nightly) to tier files to archive disks, apply deferred changes, and refresh the index. Run as a single `pfs maint` command or via the `pfs-maint@<mount>.timer` systemd unit.
+- **Maintenance cycle** - three scheduled jobs (`pfs move`, `pfs prune`, `pfs index`) that run on a schedule (typically nightly) to tier files to archive disks, apply deferred changes, and refresh the index. Run as a single `pfs maint` command or via the `pfs-maint@<mount>.timer` systemd unit.
 
 See [Use cases](use-cases.md) to see these concepts in action before reading the full reference below.
 
@@ -123,7 +123,7 @@ Not all filesystem operations reach the physical disk immediately. The behavior 
 | Rename                          | Physical immediately | Update index + append RENAME event           |
 | Setattr (chmod, chown, utimens) | Physical immediately | Update index metadata + append SETATTR event |
 
-File creation and data writes always go to the physical disk — the deferred path only applies to metadata mutations (delete, rename, setattr). This means an indexed HDD only needs to spin up when new files are written to it, not when existing files are deleted or renamed.
+File creation and data writes always go to the physical disk - the deferred path only applies to metadata mutations (delete, rename, setattr). This means an indexed HDD only needs to spin up when new files are written to it, not when existing files are deleted or renamed.
 
 ## Disk spindown (power saving)
 
@@ -170,7 +170,7 @@ Each storage path has:
 ## Storage groups
 
 A storage group is a named list of storage path IDs.
-Groups simplify routing rules and mover configuration — you can reference `ssds` instead of listing `ssd1, ssd2` everywhere.
+Groups simplify routing rules and mover configuration - you can reference `ssds` instead of listing `ssd1, ssd2` everywhere.
 
 ```yaml
 storage_groups:
@@ -191,7 +191,7 @@ A rule defines:
 | `match`           | Glob pattern matched against the virtual path. `**` matches any depth.       |
 | `read_targets`    | Storage IDs or group names used for reads and directory listings.            |
 | `write_targets`   | Storage IDs or group names used for writes (create, link, rename).           |
-| `write_policy`    | How to pick one write target from the candidates — see below.                |
+| `write_policy`    | How to pick one write target from the candidates - see below.                |
 | `path_preserving` | When `true`, prefer write targets where the parent directory already exists. |
 
 Shorthand: `targets` sets both `read_targets` and `write_targets` at once.
@@ -214,9 +214,9 @@ When a write operation needs a single target, the write policy selects one from 
 When `path_preserving: true`, PolicyFS prefers targets where the parent directory of the new file already exists on disk.
 If no target has the parent directory, all candidates remain eligible and the write policy decides.
 
-This keeps related files together — for example, all files in `library/movies/MovieA/` will land on the same disk.
+This keeps related files together - for example, all files in `library/movies/MovieA/` will land on the same disk.
 
-**Example:** You have `hdd1` and `hdd2`. Jellyfin downloads a movie and creates `library/movies/Inception/` on `hdd1`. Later, a subtitle file arrives for the same movie. With `path_preserving: true`, PolicyFS writes `library/movies/Inception/Inception.en.srt` to `hdd1` — because the parent directory already exists there — rather than scattering it to `hdd2`.
+**Example:** You have `hdd1` and `hdd2`. Jellyfin downloads a movie and creates `library/movies/Inception/` on `hdd1`. Later, a subtitle file arrives for the same movie. With `path_preserving: true`, PolicyFS writes `library/movies/Inception/Inception.en.srt` to `hdd1` - because the parent directory already exists there - rather than scattering it to `hdd2`.
 
 ## Directory listings
 

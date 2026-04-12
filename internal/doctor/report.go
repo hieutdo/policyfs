@@ -184,7 +184,7 @@ func checkDaemonLock(mountName string) CheckResult {
 }
 
 // getProcessUptime returns how long a process has been running.
-// Linux only — reads /proc/<pid>/stat and /proc/uptime. Returns 0 on non-Linux or error.
+// Linux only - reads /proc/<pid>/stat and /proc/uptime. Returns 0 on non-Linux or error.
 func getProcessUptime(pid int) time.Duration {
 	if runtime.GOOS != "linux" || pid <= 0 {
 		return 0
@@ -909,15 +909,15 @@ func generateSuggestions(report *Report) []string {
 		}
 		for _, s := range m.Storages {
 			if !s.Accessible {
-				suggestions = append(suggestions, fmt.Sprintf("Mount %q: %s (%s) is not accessible — check disk/mount", m.Name, s.ID, s.Path))
+				suggestions = append(suggestions, fmt.Sprintf("Mount %q: %s (%s) is not accessible - check disk/mount", m.Name, s.ID, s.Path))
 			}
 			if s.Accessible && s.UsedPct >= 90 {
-				suggestions = append(suggestions, fmt.Sprintf("Mount %q: %s is %d%% full — consider freeing space or adding storage", m.Name, s.ID, s.UsedPct))
+				suggestions = append(suggestions, fmt.Sprintf("Mount %q: %s is %d%% full - consider freeing space or adding storage", m.Name, s.ID, s.UsedPct))
 			}
 		}
 		for _, idx := range m.IndexStats {
 			if idx.LastCompleted == nil {
-				suggestions = append(suggestions, fmt.Sprintf("Mount %q: storage %q has never been indexed — run 'pfs index %s'", m.Name, idx.StorageID, m.Name))
+				suggestions = append(suggestions, fmt.Sprintf("Mount %q: storage %q has never been indexed - run 'pfs index %s'", m.Name, idx.StorageID, m.Name))
 			}
 		}
 	}

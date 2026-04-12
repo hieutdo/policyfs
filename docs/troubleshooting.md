@@ -68,7 +68,7 @@ Useful checks:
 
 **Symptom:** You deleted a file (or folder) through the mount but it still shows up in directory listings or still occupies space on the physical disk.
 
-This is expected behavior for storage paths with `indexed: true`. Deletes on indexed storage are recorded in the event log (`events.ndjson`) and are not applied to the physical disk immediately — they are deferred to the next `pfs prune` run.
+This is expected behavior for storage paths with `indexed: true`. Deletes on indexed storage are recorded in the event log (`events.ndjson`) and are not applied to the physical disk immediately - they are deferred to the next `pfs prune` run.
 
 Run prune manually to apply them now:
 
@@ -94,7 +94,7 @@ Two common reasons:
    sudo systemctl start pfs-index@media.service
    ```
 
-2. **File data reads always touch the physical disk.** `indexed: true` only helps with metadata operations (directory listings, file attributes). Whenever an app reads actual file content, the disk spins up — this is unavoidable.
+2. **File data reads always touch the physical disk.** `indexed: true` only helps with metadata operations (directory listings, file attributes). Whenever an app reads actual file content, the disk spins up - this is unavoidable.
 
 Use `pfs doctor <mount>` to confirm the index is populated and check how many files are indexed per storage path.
 

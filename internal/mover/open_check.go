@@ -13,7 +13,7 @@ type openFileSet map[daemonctl.OpenFileID]struct{}
 
 // queryOpenFileSet queries the daemon for all candidate file IDs in one batch.
 //
-// Returns (nil, nil) when daemon.sock is unavailable — callers treat this as "unknown, proceed".
+// Returns (nil, nil) when daemon.sock is unavailable - callers treat this as "unknown, proceed".
 func (p *planner) queryOpenFileSet(ctx context.Context, cands []candidate) (openFileSet, error) {
 	if p == nil || p.daemonSockPath == "" {
 		return nil, nil

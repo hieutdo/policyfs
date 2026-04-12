@@ -665,7 +665,7 @@ func (d *DB) FinalizeRename(ctx context.Context, storageID string, oldPath strin
 
 	// 1b. Remove any existing overwrite target at the destination. RenamePath normally
 	// deletes it, but if that commit isn't visible we must clear it to avoid a UNIQUE violation.
-	// We identify the overwrite target by (real_path = path OR real_path = '') — a row that was
+	// We identify the overwrite target by (real_path = path OR real_path = '') - a row that was
 	// never itself renamed. The source row (if RenamePath committed) has real_path != path and
 	// is left untouched.
 	if _, err := tx.ExecContext(ctx,

@@ -17,7 +17,7 @@ import (
 // mpbMoveUI drives the mpb-based TTY progress display for `pfs move`.
 type mpbMoveUI struct {
 	p          *mpb.Progress
-	bars       []*mpb.Bar // all bars including NopStyle — must abort all in Finish()
+	bars       []*mpb.Bar // all bars including NopStyle - must abort all in Finish()
 	overallBar *mpb.Bar
 
 	mu sync.Mutex
@@ -458,7 +458,7 @@ func (u *mpbMoveUI) Cancel() {
 	if u == nil {
 		return
 	}
-	// Don't touch doneFiles, doneWorkBytes, or current — keep them as-is
+	// Don't touch doneFiles, doneWorkBytes, or current - keep them as-is
 	// so the last rendered frame shows actual progress at time of cancel.
 	for _, b := range u.bars {
 		b.Abort(false)

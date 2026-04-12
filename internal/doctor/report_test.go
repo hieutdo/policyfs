@@ -222,9 +222,9 @@ func TestGenerateSuggestions_shouldIncludeActionableItems(t *testing.T) {
 	s := generateSuggestions(report)
 	require.Contains(t, s, "Mount \"bad\": fix config errors above before running doctor again")
 	require.Contains(t, s, "Mount \"media\": maint timer is active; disable redundant timers: systemctl disable --now pfs-index@media.timer pfs-move@media.timer")
-	require.Contains(t, s, "Mount \"media\": hdd1 (/mnt/hdd1) is not accessible — check disk/mount")
-	require.Contains(t, s, "Mount \"media\": ssd1 is 90% full — consider freeing space or adding storage")
-	require.Contains(t, s, "Mount \"media\": storage \"hdd1\" has never been indexed — run 'pfs index media'")
+	require.Contains(t, s, "Mount \"media\": hdd1 (/mnt/hdd1) is not accessible - check disk/mount")
+	require.Contains(t, s, "Mount \"media\": ssd1 is 90% full - consider freeing space or adding storage")
+	require.Contains(t, s, "Mount \"media\": storage \"hdd1\" has never been indexed - run 'pfs index media'")
 }
 
 // TestComputePoolSizeBytes_shouldReturnNilWhenUnknown verifies pool size is unknown when there are

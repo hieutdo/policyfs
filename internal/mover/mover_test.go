@@ -382,11 +382,11 @@ func TestDiscoverCandidatesOneSource_shouldFilterByMinSizeAndMaxSize(t *testing.
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "lib"), 0o755))
 
-	// 2 bytes — too small
+	// 2 bytes - too small
 	require.NoError(t, os.WriteFile(filepath.Join(root, "lib", "tiny.txt"), []byte("ab"), 0o644))
-	// 10 bytes — in range
+	// 10 bytes - in range
 	require.NoError(t, os.WriteFile(filepath.Join(root, "lib", "mid.txt"), make([]byte, 10), 0o644))
-	// 100 bytes — too big
+	// 100 bytes - too big
 	require.NoError(t, os.WriteFile(filepath.Join(root, "lib", "huge.txt"), make([]byte, 100), 0o644))
 
 	mc := &config.MountConfig{StoragePaths: []config.StoragePath{{ID: "s1", Path: root}}}
@@ -463,7 +463,7 @@ func TestCopyFileWithVerifyRetry_shouldNotRetryOnENOSPC(t *testing.T) {
 	err = copyFileWithVerifyRetry(context.Background(), src, dst, c, true, 3, nil)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, syscall.ENOSPC))
-	// Hash func called only once for dest hash — ENOSPC should not retry.
+	// Hash func called only once for dest hash - ENOSPC should not retry.
 	require.Equal(t, 1, callCount, "ENOSPC should not be retried")
 }
 

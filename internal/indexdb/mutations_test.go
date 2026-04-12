@@ -415,7 +415,7 @@ func TestFinalizeRename_shouldOverwriteTargetWhenRenamePathNotVisible(t *testing
 	mustInsertEntry(t, db, "hdd1", "a/src.txt", false, 0)
 	mustInsertEntry(t, db, "hdd1", "b/dst.txt", false, 0)
 
-	// Skip RenamePath — both source and destination rows exist with real_path = path.
+	// Skip RenamePath - both source and destination rows exist with real_path = path.
 	require.NoError(t, db.FinalizeRename(ctx, "hdd1", "a/src.txt", "b/dst.txt"))
 
 	p, rp, pd, n, _ := mustGetRow(t, db, "hdd1", "b/dst.txt")

@@ -26,7 +26,7 @@ pfs index <mount> [flags]
 - Upserts file and directory metadata into the SQLite database.
 - Removes stale entries that no longer exist on disk.
 - Respects `indexer.ignore` glob patterns from the config.
-- Acquires `job.lock` — only one maintenance job can run per mount at a time.
+- Acquires `job.lock` - only one maintenance job can run per mount at a time.
 
 !!! note "`--rebuild` requires the daemon to be stopped"
 The `--rebuild` flag deletes and recreates the index database. It acquires `daemon.lock` to ensure the FUSE daemon is not running, since the daemon holds a connection to the database.

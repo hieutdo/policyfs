@@ -462,7 +462,7 @@ func TestMove_fromIndexedSource_shouldMarkDeletedAndAppendEventlog(t *testing.T)
 		// Destination should have the file.
 		require.FileExists(t, env.StoragePath("hdd1", rel))
 
-		// Source physical file still exists (deferred deletion — prune hasn't run).
+		// Source physical file still exists (deferred deletion - prune hasn't run).
 		require.FileExists(t, env.StoragePath("ssd1", rel))
 
 		// Verify indexdb: source row should be deleted=1 (deferred tombstone).

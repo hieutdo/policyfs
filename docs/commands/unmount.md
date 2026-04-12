@@ -13,7 +13,7 @@ pfs unmount <mount>
 ## Behavior
 
 - Checks if the mountpoint is currently mounted (via `/proc/self/mountinfo` or `mountpoint` command).
-- If not mounted, exits successfully (idempotent — safe to run when the daemon is not running).
+- If not mounted, exits successfully (idempotent - safe to run when the daemon is not running).
 - Attempts unmount using `fusermount3 -u -z`, `fusermount -u -z`, or `umount -l` (first available tool).
 - Times out after 8 seconds if no unmount tool succeeds.
 
