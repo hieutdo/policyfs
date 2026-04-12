@@ -7,12 +7,30 @@ if [[ "$mode" != "all" && "$mode" != "staged" ]]; then
   exit 2
 fi
 
+unicode_dash_re=$'\xE2\x80\x94|\xE2\x80\x93'
+
 if [[ "$mode" == "all" ]]; then
+  if git grep -n -I -E "$unicode_dash_re" -- .; then
+    echo "lint: found Unicode dash characters (em dash/en dash). Replace them with ASCII '-' (hint: run 'make fmt')." >&2
+    exit 1
+  fi
   golangci-lint run ./...
   if [[ -d ./tests/integration ]]; then
     GOFLAGS="-tags=integration" golangci-lint run --tests ./tests/integration/...
   fi
   exit 0
+fi
+
+staged_files=()
+while IFS= read -r f; do
+  [[ -n "$f" && -f "$f" ]] && staged_files+=("$f")
+done < <(git diff --name-only --cached --diff-filter=ACMR)
+
+if ((${#staged_files[@]} > 0)); then
+  if git grep -n -I -E "$unicode_dash_re" -- "${staged_files[@]}"; then
+    echo "lint: found Unicode dash characters (em dash/en dash) in staged files. Replace them with ASCII '-' (hint: run 'make fmt-staged')." >&2
+    exit 1
+  fi
 fi
 
 staged_go_files=()

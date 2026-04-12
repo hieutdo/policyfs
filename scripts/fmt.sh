@@ -20,6 +20,25 @@ while IFS= read -r f; do
   [[ -n "$f" && -f "$f" ]] && files+=("$f")
 done < <(list_files)
 
+unicode_dash_re=$'\xE2\x80\x94|\xE2\x80\x93'
+
+dash_files=()
+if [[ "$mode" == "all" ]]; then
+  readarray -t dash_files < <(git grep -I -l -E "$unicode_dash_re" -- . || true)
+else
+  if ((${#files[@]} > 0)); then
+    readarray -t dash_files < <(git grep -I -l -E "$unicode_dash_re" -- "${files[@]}" || true)
+  fi
+fi
+
+if ((${#dash_files[@]} > 0)); then
+  emdash=$'\xE2\x80\x94'
+  endash=$'\xE2\x80\x93'
+  for f in "${dash_files[@]}"; do
+    sed -i "s/${emdash}/-/g; s/${endash}/-/g" "$f"
+  done
+fi
+
 go_files=()
 sh_files=()
 md_files=()
