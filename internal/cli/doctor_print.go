@@ -40,6 +40,9 @@ func printDoctorReport(w io.Writer, r doctor.Report) {
 		printStatusLine(w, m.Daemon)
 		printStatusLine(w, m.Mountpoint)
 		printStatusLine(w, m.JobLock)
+		if m.FusePermissionErrors.Name != "" {
+			printStatusLine(w, m.FusePermissionErrors)
+		}
 		poolDetail := ""
 		if m.PoolSizeBytes != nil {
 			poolDetail = humanize.IBytes(*m.PoolSizeBytes)

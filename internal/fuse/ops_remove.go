@@ -8,7 +8,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hanwen/go-fuse/v2/fs"
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/hieutdo/policyfs/internal/errkind"
 	"github.com/hieutdo/policyfs/internal/eventlog"
@@ -17,11 +16,11 @@ import (
 // Unlink removes a child file on the first existing read target.
 func (n *Node) Unlink(ctx context.Context, name string) syscall.Errno {
 	if n == nil {
-		return fs.ToErrno(&errkind.NilError{What: "node"})
+		return toErrno(&errkind.NilError{What: "node"})
 	}
 	rt, log := n.runtime()
 	if rt == nil {
-		return fs.ToErrno(&errkind.NilError{What: "router"})
+		return toErrno(&errkind.NilError{What: "router"})
 	}
 
 	caller, callerOK := gofuse.FromContext(ctx)
@@ -51,7 +50,7 @@ func (n *Node) Unlink(ctx context.Context, name string) syscall.Errno {
 				if errors.Is(err, syscall.ENOENT) {
 					continue
 				}
-				return fs.ToErrno(err)
+				return toErrno(err)
 			}
 			if uint32(st.Mode)&syscall.S_IFMT == syscall.S_IFDIR {
 				return syscall.EISDIR
@@ -60,7 +59,7 @@ func (n *Node) Unlink(ctx context.Context, name string) syscall.Errno {
 				parentPhysical := filepath.Dir(physicalPath)
 				pst := syscall.Stat_t{}
 				if err := syscall.Lstat(parentPhysical, &pst); err != nil {
-					return fs.ToErrno(err)
+					return toErrno(err)
 				}
 				if uint32(pst.Mode)&syscall.S_IFMT != syscall.S_IFDIR {
 					return syscall.ENOTDIR
@@ -72,7 +71,7 @@ func (n *Node) Unlink(ctx context.Context, name string) syscall.Errno {
 					return errno
 				}
 			}
-			errno := fs.ToErrno(syscall.Unlink(physicalPath))
+			errno := toErrno(syscall.Unlink(physicalPath))
 			if errno != 0 {
 				log.Error().Str("op", "unlink").Str("path", virtualPath).Str("storage_id", t.ID).Err(errno).Msg("failed to unlink")
 			} else {
@@ -115,7 +114,7 @@ func (n *Node) Unlink(ctx context.Context, name string) syscall.Errno {
 		}
 		updated, err := n.db.MarkDeleted(ctx, t.ID, virtualPath, false)
 		if err != nil {
-			return fs.ToErrno(err)
+			return toErrno(err)
 		}
 		if !updated {
 			continue
@@ -134,11 +133,11 @@ func (n *Node) Unlink(ctx context.Context, name string) syscall.Errno {
 // Rmdir removes a child directory on the first existing read target.
 func (n *Node) Rmdir(ctx context.Context, name string) syscall.Errno {
 	if n == nil {
-		return fs.ToErrno(&errkind.NilError{What: "node"})
+		return toErrno(&errkind.NilError{What: "node"})
 	}
 	rt, log := n.runtime()
 	if rt == nil {
-		return fs.ToErrno(&errkind.NilError{What: "router"})
+		return toErrno(&errkind.NilError{What: "router"})
 	}
 
 	caller, callerOK := gofuse.FromContext(ctx)
@@ -168,7 +167,7 @@ func (n *Node) Rmdir(ctx context.Context, name string) syscall.Errno {
 				if errors.Is(err, syscall.ENOENT) {
 					continue
 				}
-				return fs.ToErrno(err)
+				return toErrno(err)
 			}
 			if uint32(st.Mode)&syscall.S_IFMT != syscall.S_IFDIR {
 				return syscall.ENOTDIR
@@ -177,7 +176,7 @@ func (n *Node) Rmdir(ctx context.Context, name string) syscall.Errno {
 				parentPhysical := filepath.Dir(physicalPath)
 				pst := syscall.Stat_t{}
 				if err := syscall.Lstat(parentPhysical, &pst); err != nil {
-					return fs.ToErrno(err)
+					return toErrno(err)
 				}
 				if uint32(pst.Mode)&syscall.S_IFMT != syscall.S_IFDIR {
 					return syscall.ENOTDIR
@@ -189,7 +188,7 @@ func (n *Node) Rmdir(ctx context.Context, name string) syscall.Errno {
 					return errno
 				}
 			}
-			errno := fs.ToErrno(syscall.Rmdir(physicalPath))
+			errno := toErrno(syscall.Rmdir(physicalPath))
 			if errno != 0 {
 				log.Error().Str("op", "rmdir").Str("path", virtualPath).Str("storage_id", t.ID).Err(errno).Msg("failed to rmdir")
 			} else {
@@ -232,7 +231,7 @@ func (n *Node) Rmdir(ctx context.Context, name string) syscall.Errno {
 		}
 		updated, err := n.db.MarkDeleted(ctx, t.ID, virtualPath, true)
 		if err != nil {
-			return fs.ToErrno(err)
+			return toErrno(err)
 		}
 		if !updated {
 			continue

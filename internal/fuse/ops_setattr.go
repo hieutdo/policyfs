@@ -18,11 +18,11 @@ import (
 // Setattr applies attribute changes to the underlying storage.
 func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrIn, out *gofuse.AttrOut) syscall.Errno {
 	if n == nil {
-		return fs.ToErrno(&errkind.NilError{What: "node"})
+		return toErrno(&errkind.NilError{What: "node"})
 	}
 	rt, log := n.runtime()
 	if rt == nil {
-		return fs.ToErrno(&errkind.NilError{What: "router"})
+		return toErrno(&errkind.NilError{What: "router"})
 	}
 
 	caller, callerOK := gofuse.FromContext(ctx)
@@ -58,7 +58,7 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 					if errors.Is(err, syscall.ENOENT) {
 						continue
 					}
-					return fs.ToErrno(err)
+					return toErrno(err)
 				}
 				indexed = false
 				indexedStorageID = t.ID
@@ -160,7 +160,7 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 		if haveAny {
 			updated, err := n.db.UpsertMeta(ctx, indexedStorageID, virtualPath, modePtr, uidPtr, gidPtr, mtimePtr)
 			if err != nil {
-				return fs.ToErrno(err)
+				return toErrno(err)
 			}
 			if updated {
 				if err := eventlog.Append(ctx, n.mountName, eventlog.SetattrEvent{Type: eventlog.TypeSetattr, StorageID: indexedStorageID, Path: virtualPath, Mode: modePtr, UID: uidPtr, GID: gidPtr, MTime: mtimePtr, TS: time.Now().Unix()}); err != nil {
@@ -223,12 +223,12 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 		if fh != nil {
 			// If we already have an fd, prefer fchown (avoids path races).
 			if err := syscall.Fchown(fh.fd, suid, sgid); err != nil {
-				return fs.ToErrno(err)
+				return toErrno(err)
 			}
 		} else {
 			// NOTE: For symlinks, lchown must affect the symlink itself (no-follow).
 			if err := syscall.Lchown(physicalPath, suid, sgid); err != nil {
-				return fs.ToErrno(err)
+				return toErrno(err)
 			}
 		}
 		if oldOK && uint32(old.Mode)&syscall.S_IFMT == syscall.S_IFDIR && uint32(old.Mode)&syscall.S_ISGID != 0 {
@@ -236,7 +236,7 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 			if _, ok := in.GetMode(); !ok {
 				mode := uint32(old.Mode) & 0o7777
 				if err := syscall.Chmod(physicalPath, mode); err != nil {
-					return fs.ToErrno(err)
+					return toErrno(err)
 				}
 			}
 		}
@@ -250,14 +250,14 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 			if fh != nil {
 				st := syscall.Stat_t{}
 				if err := syscall.Fstat(fh.fd, &st); err != nil {
-					return fs.ToErrno(err)
+					return toErrno(err)
 				}
 				modeOwnerUID = st.Uid
 			} else if oldOK {
 				if uint32(old.Mode)&syscall.S_IFMT == syscall.S_IFLNK {
 					st := syscall.Stat_t{}
 					if err := syscall.Stat(physicalPath, &st); err != nil {
-						return fs.ToErrno(err)
+						return toErrno(err)
 					}
 					modeOwnerUID = st.Uid
 				} else {
@@ -271,11 +271,11 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 		if fh != nil {
 			// If we already have an fd, prefer fchmod (avoids path races).
 			if err := syscall.Fchmod(fh.fd, m); err != nil {
-				return fs.ToErrno(err)
+				return toErrno(err)
 			}
 		} else {
 			if err := syscall.Chmod(physicalPath, m); err != nil {
-				return fs.ToErrno(err)
+				return toErrno(err)
 			}
 		}
 	}
@@ -289,19 +289,19 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 		if aok {
 			ts, err := unix.TimeToTimespec(atime)
 			if err != nil {
-				return fs.ToErrno(err)
+				return toErrno(err)
 			}
 			ta = ts
 		}
 		if mok {
 			ts, err := unix.TimeToTimespec(mtime)
 			if err != nil {
-				return fs.ToErrno(err)
+				return toErrno(err)
 			}
 			tm = ts
 		}
 		if err := unix.UtimesNanoAt(unix.AT_FDCWD, physicalPath, []unix.Timespec{ta, tm}, unix.AT_SYMLINK_NOFOLLOW); err != nil {
-			return fs.ToErrno(err)
+			return toErrno(err)
 		}
 	}
 
@@ -309,18 +309,18 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 		// truncate: prefer ftruncate when we have a file handle.
 		if fh != nil {
 			if err := syscall.Ftruncate(fh.fd, int64(sz)); err != nil {
-				return fs.ToErrno(err)
+				return toErrno(err)
 			}
 		} else {
 			if err := syscall.Truncate(physicalPath, int64(sz)); err != nil {
-				return fs.ToErrno(err)
+				return toErrno(err)
 			}
 		}
 	}
 
 	st := syscall.Stat_t{}
 	if err := syscall.Lstat(physicalPath, &st); err != nil {
-		return fs.ToErrno(err)
+		return toErrno(err)
 	}
 	out.FromStat(&st)
 	ev := log.Debug().Str("op", "setattr").Str("path", virtualPath).Bool("indexed", false)

@@ -14,11 +14,11 @@ import (
 // Create creates a new file on a selected write target.
 func (n *Node) Create(ctx context.Context, name string, flags uint32, mode uint32, out *gofuse.EntryOut) (*fs.Inode, fs.FileHandle, uint32, syscall.Errno) {
 	if n == nil {
-		return nil, nil, 0, fs.ToErrno(&errkind.NilError{What: "node"})
+		return nil, nil, 0, toErrno(&errkind.NilError{What: "node"})
 	}
 	rt, log := n.runtime()
 	if rt == nil {
-		return nil, nil, 0, fs.ToErrno(&errkind.NilError{What: "router"})
+		return nil, nil, 0, toErrno(&errkind.NilError{What: "router"})
 	}
 
 	caller, callerOK := gofuse.FromContext(ctx)
@@ -52,14 +52,14 @@ func (n *Node) Create(ctx context.Context, name string, flags uint32, mode uint3
 	// This also applies setgid/gid inheritance based on the physical parent directory.
 	if err := materializeParentDirs(ctx, target.Root, virtualPath); err != nil {
 		log.Error().Str("op", "create").Str("path", virtualPath).Str("storage_id", target.ID).Err(err).Msg("failed to materialize parent dirs")
-		return nil, nil, 0, fs.ToErrno(err)
+		return nil, nil, 0, toErrno(err)
 	}
 	if callerOK {
 		parentPhysical := filepath.Dir(physicalPath)
 		pst := syscall.Stat_t{}
 		if err := syscall.Lstat(parentPhysical, &pst); err != nil {
 			log.Error().Str("op", "create").Str("path", virtualPath).Str("storage_id", target.ID).Err(err).Msg("failed to lstat parent")
-			return nil, nil, 0, fs.ToErrno(err)
+			return nil, nil, 0, toErrno(err)
 		}
 		if uint32(pst.Mode)&syscall.S_IFMT != syscall.S_IFDIR {
 			return nil, nil, 0, syscall.ENOTDIR
@@ -73,19 +73,19 @@ func (n *Node) Create(ctx context.Context, name string, flags uint32, mode uint3
 	fd, err := syscall.Open(physicalPath, openFlags|syscall.O_CREAT, mode)
 	if err != nil {
 		log.Error().Str("op", "create").Str("path", virtualPath).Str("storage_id", target.ID).Err(err).Msg("failed to open file for create")
-		return nil, nil, 0, fs.ToErrno(err)
+		return nil, nil, 0, toErrno(err)
 	}
 	// If the daemon runs as root, preserve the calling uid/gid (and force gid when parent has setgid).
 	if err := preserveOwnerForCreate(ctx, filepath.Dir(physicalPath), fd, ""); err != nil {
 		_ = syscall.Close(fd)
 		log.Error().Str("op", "create").Str("path", virtualPath).Str("storage_id", target.ID).Err(err).Msg("failed to preserve owner")
-		return nil, nil, 0, fs.ToErrno(err)
+		return nil, nil, 0, toErrno(err)
 	}
 
 	st := syscall.Stat_t{}
 	if err := syscall.Fstat(fd, &st); err != nil {
 		_ = syscall.Close(fd)
-		return nil, nil, 0, fs.ToErrno(err)
+		return nil, nil, 0, toErrno(err)
 	}
 	out.FromStat(&st)
 
@@ -101,11 +101,11 @@ func (n *Node) Create(ctx context.Context, name string, flags uint32, mode uint3
 // Mkdir creates a new directory on a selected write target.
 func (n *Node) Mkdir(ctx context.Context, name string, mode uint32, out *gofuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	if n == nil {
-		return nil, fs.ToErrno(&errkind.NilError{What: "node"})
+		return nil, toErrno(&errkind.NilError{What: "node"})
 	}
 	rt, log := n.runtime()
 	if rt == nil {
-		return nil, fs.ToErrno(&errkind.NilError{What: "router"})
+		return nil, toErrno(&errkind.NilError{What: "router"})
 	}
 
 	caller, callerOK := gofuse.FromContext(ctx)
@@ -138,14 +138,14 @@ func (n *Node) Mkdir(ctx context.Context, name string, mode uint32, out *gofuse.
 	// Ensure the parent directory exists on the chosen target.
 	if err := materializeParentDirs(ctx, target.Root, virtualPath); err != nil {
 		log.Error().Str("op", "mkdir").Str("path", virtualPath).Str("storage_id", target.ID).Err(err).Msg("failed to materialize parent dirs")
-		return nil, fs.ToErrno(err)
+		return nil, toErrno(err)
 	}
 
 	parentPhysical := filepath.Dir(physicalPath)
 	pst := syscall.Stat_t{}
 	if err := syscall.Lstat(parentPhysical, &pst); err != nil {
 		log.Error().Str("op", "mkdir").Str("path", virtualPath).Str("storage_id", target.ID).Err(err).Msg("failed to lstat parent")
-		return nil, fs.ToErrno(err)
+		return nil, toErrno(err)
 	}
 	if uint32(pst.Mode)&syscall.S_IFMT != syscall.S_IFDIR {
 		return nil, syscall.ENOTDIR
@@ -161,25 +161,25 @@ func (n *Node) Mkdir(ctx context.Context, name string, mode uint32, out *gofuse.
 	}
 	if err := os.Mkdir(physicalPath, os.FileMode(mode)); err != nil {
 		log.Error().Str("op", "mkdir").Str("path", virtualPath).Str("storage_id", target.ID).Err(err).Msg("failed to mkdir")
-		return nil, fs.ToErrno(err)
+		return nil, toErrno(err)
 	}
 	// If the daemon runs as root, preserve the calling uid/gid (and force gid when parent has setgid).
 	if err := preserveOwnerForCreate(ctx, parentPhysical, -1, physicalPath); err != nil {
 		_ = syscall.Rmdir(physicalPath)
 		log.Error().Str("op", "mkdir").Str("path", virtualPath).Str("storage_id", target.ID).Err(err).Msg("failed to preserve owner")
-		return nil, fs.ToErrno(err)
+		return nil, toErrno(err)
 	}
 	// On Linux, chown may clear setgid bits; apply chmod after chown to ensure it sticks.
 	if err := syscall.Chmod(physicalPath, mode); err != nil {
 		_ = syscall.Rmdir(physicalPath)
 		log.Error().Str("op", "mkdir").Str("path", virtualPath).Str("storage_id", target.ID).Err(err).Msg("failed to chmod")
-		return nil, fs.ToErrno(err)
+		return nil, toErrno(err)
 	}
 
 	st := syscall.Stat_t{}
 	if err := syscall.Lstat(physicalPath, &st); err != nil {
 		_ = syscall.Rmdir(physicalPath)
-		return nil, fs.ToErrno(err)
+		return nil, toErrno(err)
 	}
 	out.FromStat(&st)
 

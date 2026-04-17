@@ -145,6 +145,47 @@ func TestPrintDoctorReport_StorageThresholds(t *testing.T) {
 	require.NotContains(t, hdd1Line, "start:")
 }
 
+// TestPrintDoctorReport_FusePermissionErrors verifies the fuse perms status line is printed when present.
+func TestPrintDoctorReport_FusePermissionErrors(t *testing.T) {
+	var buf bytes.Buffer
+	report := doctor.Report{
+		Mounts: []doctor.MountReport{
+			{
+				Name:                 "media",
+				ConfigValid:          true,
+				Daemon:               doctor.CheckResult{Name: "daemon", Pass: true, Detail: "running"},
+				Mountpoint:           doctor.CheckResult{Name: "mountpoint", Pass: true, Detail: "/mnt/pfs/media (exists)"},
+				JobLock:              doctor.CheckResult{Name: "job lock", Pass: true, Detail: "free"},
+				FusePermissionErrors: doctor.CheckResult{Name: "fuse perms", Pass: false, Detail: "3 in last 15m (last 2m ago)"},
+			},
+		},
+		IssueCount: 1,
+	}
+	printDoctorReport(&buf, report)
+	out := buf.String()
+	require.Contains(t, out, "fuse perms:")
+	require.Contains(t, out, "3 in last 15m")
+}
+
+// TestPrintDoctorReport_FusePermissionErrors_hidden verifies the fuse perms line is hidden when no log was scanned.
+func TestPrintDoctorReport_FusePermissionErrors_hidden(t *testing.T) {
+	var buf bytes.Buffer
+	report := doctor.Report{
+		Mounts: []doctor.MountReport{
+			{
+				Name:        "media",
+				ConfigValid: true,
+				Daemon:      doctor.CheckResult{Name: "daemon", Pass: true, Detail: "running"},
+				Mountpoint:  doctor.CheckResult{Name: "mountpoint", Pass: true, Detail: "/mnt/pfs/media (exists)"},
+				JobLock:     doctor.CheckResult{Name: "job lock", Pass: true, Detail: "free"},
+			},
+		},
+	}
+	printDoctorReport(&buf, report)
+	out := buf.String()
+	require.NotContains(t, out, "fuse perms")
+}
+
 // --- printIndexStats with stale ---
 
 func TestPrintIndexStats_WithStale(t *testing.T) {

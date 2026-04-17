@@ -100,11 +100,12 @@ type SystemdTimersReport struct {
 
 // MountReport aggregates all doctor checks for one mount.
 type MountReport struct {
-	Name        string
-	ConfigValid bool
-	Daemon      CheckResult
-	Mountpoint  CheckResult
-	JobLock     CheckResult
+	Name                 string
+	ConfigValid          bool
+	Daemon               CheckResult
+	Mountpoint           CheckResult
+	JobLock              CheckResult
+	FusePermissionErrors CheckResult
 
 	// PoolSizeBytes is the sum of TotalBytes across accessible storages.
 	// Nil means pool size is unknown.

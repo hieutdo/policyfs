@@ -27,6 +27,7 @@ import (
 // callers decide how to render and which exit code to return.
 func BuildReport(cfgPath string, rootCfg *config.RootConfig, loadErr error, filterMount *string) Report {
 	report := Report{ConfigPath: cfgPath}
+	now := time.Now()
 
 	// Config loaded check.
 	if loadErr != nil {
@@ -93,6 +94,12 @@ func BuildReport(cfgPath string, rootCfg *config.RootConfig, loadErr error, filt
 
 		m.IndexDB = checkIndexDBFile(name)
 		m.LogFile = checkLogFile(logPath)
+		if c, err := checkRecentFusePermissionErrors(logPath, name, 2000, now, 15*time.Minute); err == nil && c.Name != "" {
+			m.FusePermissionErrors = c
+			if !c.Pass {
+				report.IssueCount++
+			}
+		}
 
 		m.SystemdTimers = querySystemdTimers(name)
 
@@ -124,6 +131,150 @@ func BuildReport(cfgPath string, rootCfg *config.RootConfig, loadErr error, filt
 
 	report.Suggestions = generateSuggestions(&report)
 	return report
+}
+
+// doctorLogEntry is the minimal parsed JSON log entry used by doctor log analysis.
+type doctorLogEntry struct {
+	TS        time.Time
+	Level     string
+	Component string
+	Mount     string
+	Msg       string
+	Err       string
+}
+
+// checkRecentFusePermissionErrors scans the log file for recent FUSE permission errors.
+//
+// It is best-effort and returns a passing check when the log file is missing or unreadable.
+// To avoid stale one-off errors, it only considers entries:
+//   - newer than (now - window)
+//   - and newer than the last "mount ready" log entry for this mount (when present)
+func checkRecentFusePermissionErrors(logPath string, mountName string, tailLines int, now time.Time, window time.Duration) (CheckResult, error) {
+	if strings.TrimSpace(logPath) == "" {
+		return CheckResult{}, nil
+	}
+
+	f, err := os.Open(logPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return CheckResult{}, nil
+		}
+		return CheckResult{}, fmt.Errorf("open log: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	lines := tailFile(f, tailLines)
+	if len(lines) == 0 {
+		return CheckResult{Name: "fuse perms", Pass: true, Detail: "no recent errors"}, nil
+	}
+
+	entries := make([]doctorLogEntry, 0, len(lines))
+	for _, line := range lines {
+		var raw map[string]any
+		if err := json.Unmarshal([]byte(line), &raw); err != nil {
+			continue
+		}
+
+		tsStr, _ := raw["time"].(string)
+		if strings.TrimSpace(tsStr) == "" {
+			continue
+		}
+		ts, err := time.Parse(time.RFC3339Nano, tsStr)
+		if err != nil {
+			continue
+		}
+
+		msg, _ := raw["msg"].(string)
+		if msg == "" {
+			msg, _ = raw["message"].(string)
+		}
+		mount, _ := raw["mount"].(string)
+		if mount != mountName {
+			continue
+		}
+		level, _ := raw["level"].(string)
+		component, _ := raw["component"].(string)
+		errStr, _ := raw["error"].(string)
+
+		entries = append(entries, doctorLogEntry{
+			TS:        ts,
+			Level:     level,
+			Component: component,
+			Mount:     mount,
+			Msg:       msg,
+			Err:       errStr,
+		})
+	}
+
+	windowCutoff := now.Add(-window)
+	sessionCutoff := time.Time{}
+	for _, e := range entries {
+		if e.Msg != "mount ready" {
+			continue
+		}
+		if sessionCutoff.IsZero() || e.TS.After(sessionCutoff) {
+			sessionCutoff = e.TS
+		}
+	}
+
+	cutoff := windowCutoff
+	if !sessionCutoff.IsZero() && sessionCutoff.After(cutoff) {
+		cutoff = sessionCutoff
+	}
+
+	count := 0
+	last := time.Time{}
+	for _, e := range entries {
+		if e.TS.Before(cutoff) {
+			continue
+		}
+		if e.Level != "error" {
+			continue
+		}
+		if e.Component != "fuse" {
+			continue
+		}
+		if !isPermissionDeniedLogError(e.Err) {
+			continue
+		}
+		count++
+		if last.IsZero() || e.TS.After(last) {
+			last = e.TS
+		}
+	}
+
+	if count == 0 {
+		return CheckResult{Name: "fuse perms", Pass: true, Detail: fmt.Sprintf("none in last %s", humanfmt.HumanizeDuration(window))}, nil
+	}
+
+	ago := max(now.Sub(last), 0)
+	var detail string
+	if ago < time.Minute {
+		detail = fmt.Sprintf("%d in last %s (just now)", count, humanfmt.HumanizeDuration(window))
+	} else {
+		detail = fmt.Sprintf("%d in last %s (last %s ago)", count, humanfmt.HumanizeDuration(window), humanfmt.HumanizeDuration(ago))
+	}
+	return CheckResult{Name: "fuse perms", Pass: false, Detail: detail}, nil
+}
+
+// isPermissionDeniedLogError returns true when a log entry's "error" string looks like a permission error.
+func isPermissionDeniedLogError(errStr string) bool {
+	s := strings.TrimSpace(errStr)
+	if s == "" {
+		return false
+	}
+	// Zerolog encodes errors as strings; match errno messages we expect from syscall.
+	if s == syscall.EACCES.Error() || s == syscall.EPERM.Error() {
+		return true
+	}
+	// Wrapped errors often end with ": permission denied" or ": operation not permitted".
+	if strings.HasSuffix(s, ": "+syscall.EACCES.Error()) {
+		return true
+	}
+	if strings.HasSuffix(s, ": "+syscall.EPERM.Error()) {
+		return true
+	}
+	return false
 }
 
 // rootCause unwraps err until it reaches the innermost error.
@@ -902,6 +1053,9 @@ func generateSuggestions(report *Report) []string {
 		if !m.ConfigValid {
 			suggestions = append(suggestions, fmt.Sprintf("Mount %q: fix config errors above before running doctor again", m.Name))
 			continue
+		}
+		if m.FusePermissionErrors.Name != "" && !m.FusePermissionErrors.Pass {
+			suggestions = append(suggestions, fmt.Sprintf("Mount %q: recent permission errors detected; check storage mount options and permissions (e.g. NFS root_squash, CIFS uid/gid), then reproduce and re-run doctor", m.Name))
 		}
 		if m.SystemdTimers != nil && len(m.SystemdTimers.Redundant) > 0 {
 			timers := strings.Join(m.SystemdTimers.Redundant, " ")

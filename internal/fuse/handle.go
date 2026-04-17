@@ -4,7 +4,6 @@ import (
 	"context"
 	"syscall"
 
-	"github.com/hanwen/go-fuse/v2/fs"
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/hieutdo/policyfs/internal/daemonctl"
 )
@@ -32,7 +31,7 @@ type FileHandle struct {
 func (h *FileHandle) Read(ctx context.Context, dest []byte, off int64) (gofuse.ReadResult, syscall.Errno) {
 	n, err := syscall.Pread(h.fd, dest, off)
 	if err != nil {
-		return nil, fs.ToErrno(err)
+		return nil, toErrno(err)
 	}
 	return gofuse.ReadResultData(dest[:n]), 0
 }
@@ -41,7 +40,7 @@ func (h *FileHandle) Read(ctx context.Context, dest []byte, off int64) (gofuse.R
 func (h *FileHandle) Write(ctx context.Context, data []byte, off int64) (uint32, syscall.Errno) {
 	n, err := syscall.Pwrite(h.fd, data, off)
 	if err != nil {
-		return 0, fs.ToErrno(err)
+		return 0, toErrno(err)
 	}
 	return uint32(n), 0
 }
@@ -49,7 +48,7 @@ func (h *FileHandle) Write(ctx context.Context, data []byte, off int64) (uint32,
 // Fsync flushes writes to stable storage.
 func (h *FileHandle) Fsync(ctx context.Context, flags uint32) syscall.Errno {
 	if err := syscall.Fsync(h.fd); err != nil {
-		return fs.ToErrno(err)
+		return toErrno(err)
 	}
 	_ = ctx
 	_ = flags
@@ -65,11 +64,11 @@ func (h *FileHandle) Release(ctx context.Context) syscall.Errno {
 	if h.flags&gofuse.O_ANYWRITE != 0 {
 		if err := syscall.Fsync(h.fd); err != nil {
 			_ = syscall.Close(h.fd)
-			return fs.ToErrno(err)
+			return toErrno(err)
 		}
 	}
 	if err := syscall.Close(h.fd); err != nil {
-		return fs.ToErrno(err)
+		return toErrno(err)
 	}
 	_ = ctx
 	return 0

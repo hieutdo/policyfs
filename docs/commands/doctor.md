@@ -18,6 +18,9 @@ Validates the config file and runs health checks for every mount defined in the 
 **Mount** (`pfs doctor <mount>`):
 Runs checks for a single mount, including config validation, storage path accessibility, daemon status, index stats, pending events, and disk access analysis.
 
+When a JSON log file is configured (via `log.file` or `PFS_LOG_FILE`), doctor also scans recent log entries for FUSE permission errors.
+This requires JSON logs (`log.format: json`). To avoid stale one-off errors, only recent entries (last ~15 minutes, and after the most recent `mount ready` for that mount when present) are reported.
+
 **File inspect** (`pfs doctor <mount> <path>`):
 Inspects a specific virtual path across all storages, showing index metadata, pending events, and physical disk state.
 

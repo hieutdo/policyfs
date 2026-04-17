@@ -39,5 +39,9 @@ func toErrno(err error) syscall.Errno {
 	if errors.Is(err, router.ErrNoWriteSpace) {
 		return syscall.ENOSPC
 	}
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		return errno
+	}
 	return fs.ToErrno(err)
 }

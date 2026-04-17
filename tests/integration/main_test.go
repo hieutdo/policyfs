@@ -231,8 +231,9 @@ func withMountedFS(t *testing.T, cfg IntegrationConfig, fn func(env *MountedFS))
 
 	args := []string{"--config", env.ConfigPath, "mount", env.MountName}
 	args = append(args, cfg.MountArgs...)
+	logFile := filepath.Join(tmpDir, name+".log")
 	mountCmd := exec.CommandContext(ctx, pfsBin, args...)
-	mountCmd.Env = pfsTestEnv(env, tmpDir+"/"+name+".log")
+	mountCmd.Env = pfsTestEnv(env, logFile)
 	mountCmd.Stdout = os.Stdout
 	mountCmd.Stderr = os.Stderr
 	if err := mountCmd.Start(); err != nil {
@@ -281,7 +282,7 @@ func withMountedFS(t *testing.T, cfg IntegrationConfig, fn func(env *MountedFS))
 		_ = os.Remove(env.ConfigPath)
 		_ = os.RemoveAll(env.RuntimeDir)
 		_ = os.RemoveAll(env.StateDir)
-		_ = os.Remove(filepath.Join(tmpDir, name+".log"))
+		_ = os.Remove(logFile)
 	})
 
 	fn(env)

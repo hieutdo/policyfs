@@ -20,11 +20,11 @@ import (
 // Cross-target renames return EXDEV.
 func (n *Node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedder, newName string, flags uint32) syscall.Errno {
 	if n == nil {
-		return fs.ToErrno(&errkind.NilError{What: "node"})
+		return toErrno(&errkind.NilError{What: "node"})
 	}
 	rt, log := n.runtime()
 	if rt == nil {
-		return fs.ToErrno(&errkind.NilError{What: "router"})
+		return toErrno(&errkind.NilError{What: "router"})
 	}
 	if flags != 0 {
 		// go-fuse uses flags for RENAME_EXCHANGE/RENAME_NOREPLACE; we don't support those yet.
@@ -73,7 +73,7 @@ func (n *Node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 					if errors.Is(err, syscall.ENOENT) {
 						continue
 					}
-					return fs.ToErrno(err)
+					return toErrno(err)
 				}
 				srcTarget = t
 				srcPhysicalPath = p
@@ -130,7 +130,7 @@ func (n *Node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 		oldParentPhysical := filepath.Dir(srcPhysicalPath)
 		pst := syscall.Stat_t{}
 		if err := syscall.Lstat(oldParentPhysical, &pst); err != nil {
-			return fs.ToErrno(err)
+			return toErrno(err)
 		}
 		if uint32(pst.Mode)&syscall.S_IFMT != syscall.S_IFDIR {
 			return syscall.ENOTDIR
@@ -215,7 +215,7 @@ func (n *Node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 
 		updated, err := n.db.RenamePath(ctx, srcTarget.ID, oldVirtualPath, newVirtualPath)
 		if err != nil {
-			return fs.ToErrno(err)
+			return toErrno(err)
 		}
 		if !updated {
 			return syscall.ENOENT
@@ -249,13 +249,13 @@ func (n *Node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 	// Ensure destination parent dirs exist on the source target.
 	if err := materializeParentDirs(ctx, srcTarget.Root, newVirtualPath); err != nil {
 		log.Error().Str("op", "rename").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Err(err).Msg("failed to materialize parent dirs")
-		return fs.ToErrno(err)
+		return toErrno(err)
 	}
 	if callerOK {
 		newParentPhysical := filepath.Dir(dstPhysicalPath)
 		pst := syscall.Stat_t{}
 		if err := syscall.Lstat(newParentPhysical, &pst); err != nil {
-			return fs.ToErrno(err)
+			return toErrno(err)
 		}
 		if uint32(pst.Mode)&syscall.S_IFMT != syscall.S_IFDIR {
 			return syscall.ENOTDIR
@@ -269,10 +269,10 @@ func (n *Node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 				return errno
 			}
 		} else if !errors.Is(err, syscall.ENOENT) {
-			return fs.ToErrno(err)
+			return toErrno(err)
 		}
 	}
-	renameErrno := fs.ToErrno(syscall.Rename(srcPhysicalPath, dstPhysicalPath))
+	renameErrno := toErrno(syscall.Rename(srcPhysicalPath, dstPhysicalPath))
 	if renameErrno != 0 {
 		log.Error().Str("op", "rename").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Err(renameErrno).Msg("failed to rename")
 	} else {

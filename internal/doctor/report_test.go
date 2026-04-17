@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -205,8 +206,9 @@ func TestGenerateSuggestions_shouldIncludeActionableItems(t *testing.T) {
 			ConfigValid: false,
 		},
 		{
-			Name:        "media",
-			ConfigValid: true,
+			Name:                 "media",
+			ConfigValid:          true,
+			FusePermissionErrors: CheckResult{Name: "fuse perms", Pass: false, Detail: "1 in last 15m"},
 			SystemdTimers: &SystemdTimersReport{
 				Supported: true,
 				Redundant: []string{"pfs-index@media.timer", "pfs-move@media.timer"},
@@ -221,10 +223,129 @@ func TestGenerateSuggestions_shouldIncludeActionableItems(t *testing.T) {
 
 	s := generateSuggestions(report)
 	require.Contains(t, s, "Mount \"bad\": fix config errors above before running doctor again")
+	foundPerm := false
+	for _, item := range s {
+		if strings.HasPrefix(item, "Mount \"media\": recent permission errors detected") {
+			foundPerm = true
+			break
+		}
+	}
+	require.True(t, foundPerm, "expected permission suggestion prefix, got: %#v", s)
 	require.Contains(t, s, "Mount \"media\": maint timer is active; disable redundant timers: systemctl disable --now pfs-index@media.timer pfs-move@media.timer")
 	require.Contains(t, s, "Mount \"media\": hdd1 (/mnt/hdd1) is not accessible - check disk/mount")
 	require.Contains(t, s, "Mount \"media\": ssd1 is 90% full - consider freeing space or adding storage")
 	require.Contains(t, s, "Mount \"media\": storage \"hdd1\" has never been indexed - run 'pfs index media'")
+}
+
+// TestCheckRecentFusePermissionErrors_shouldApplyWindowAndSessionCutoff verifies we only report
+// permission errors that are recent and belong to the current mount session (after the last
+// "mount ready" log entry).
+func TestCheckRecentFusePermissionErrors_shouldApplyWindowAndSessionCutoff(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "pfs.log")
+
+	now := time.Unix(1700000000, 0).UTC()
+	oldButWithinWindow := now.Add(-10 * time.Minute)
+	sessionStart := now.Add(-1 * time.Minute)
+	recent := now.Add(-30 * time.Second)
+
+	lines := []string{
+		fmt.Sprintf(`{"time":%q,"level":"error","component":"fuse","mount":"media","msg":"failed to mkdir","error":"open x: permission denied"}`+"\n", oldButWithinWindow.Format(time.RFC3339Nano)),
+		fmt.Sprintf(`{"time":%q,"level":"info","mount":"media","msg":"mount ready"}`+"\n", sessionStart.Format(time.RFC3339Nano)),
+		fmt.Sprintf(`{"time":%q,"level":"error","component":"fuse","mount":"media","msg":"failed to create","error":"permission denied"}`+"\n", recent.Format(time.RFC3339Nano)),
+		fmt.Sprintf(`{"time":%q,"level":"error","component":"fuse","mount":"media","msg":"failed to open","error":"file name too long"}`+"\n", recent.Format(time.RFC3339Nano)),
+	}
+	require.NoError(t, os.WriteFile(logPath, []byte(strings.Join(lines, "")), 0o644))
+
+	c, err := checkRecentFusePermissionErrors(logPath, "media", 2000, now, 15*time.Minute)
+	require.NoError(t, err)
+	require.Equal(t, "fuse perms", c.Name)
+	require.False(t, c.Pass)
+	require.Contains(t, c.Detail, "1 in last")
+	// last error was 30s ago (<1min) → format must be "just now", not "just now ago"
+	require.Contains(t, c.Detail, "just now")
+	require.NotContains(t, c.Detail, "ago")
+}
+
+func TestIsPermissionDeniedLogError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  string
+		want bool
+	}{
+		{"empty", "", false},
+		{"whitespace", "   ", false},
+		{"exact EACCES", syscall.EACCES.Error(), true},
+		{"exact EPERM", syscall.EPERM.Error(), true},
+		{"wrapped EACCES", "open /mnt/x: " + syscall.EACCES.Error(), true},
+		{"wrapped EPERM", "failed to chown: " + syscall.EPERM.Error(), true},
+		{"unrelated error", "file name too long", false},
+		{"prefix not suffix", syscall.EACCES.Error() + ": unexpected", false},
+		{"substring not suffix", "got permission denied somehow", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, isPermissionDeniedLogError(tt.err))
+		})
+	}
+}
+
+func TestCheckRecentFusePermissionErrors_shouldPassWhenNoErrors(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "pfs.log")
+	now := time.Unix(1700000000, 0).UTC()
+	recent := now.Add(-30 * time.Second)
+
+	lines := []string{
+		fmt.Sprintf(`{"time":%q,"level":"info","mount":"media","msg":"mount ready"}`+"\n", recent.Format(time.RFC3339Nano)),
+		fmt.Sprintf(`{"time":%q,"level":"error","component":"fuse","mount":"media","msg":"failed to open","error":"file name too long"}`+"\n", recent.Format(time.RFC3339Nano)),
+	}
+	require.NoError(t, os.WriteFile(logPath, []byte(strings.Join(lines, "")), 0o644))
+
+	c, err := checkRecentFusePermissionErrors(logPath, "media", 2000, now, 15*time.Minute)
+	require.NoError(t, err)
+	require.Equal(t, "fuse perms", c.Name)
+	require.True(t, c.Pass)
+}
+
+func TestCheckRecentFusePermissionErrors_shouldReturnEmptyWhenLogMissing(t *testing.T) {
+	c, err := checkRecentFusePermissionErrors("/nonexistent/pfs.log", "media", 2000, time.Now(), 15*time.Minute)
+	require.NoError(t, err)
+	require.Equal(t, "", c.Name)
+}
+
+func TestCheckRecentFusePermissionErrors_shouldReturnEmptyWhenPathEmpty(t *testing.T) {
+	c, err := checkRecentFusePermissionErrors("", "media", 2000, time.Now(), 15*time.Minute)
+	require.NoError(t, err)
+	require.Equal(t, "", c.Name)
+}
+
+func TestCheckRecentFusePermissionErrors_shouldPassWhenLogEmpty(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "pfs.log")
+	require.NoError(t, os.WriteFile(logPath, []byte{}, 0o644))
+
+	c, err := checkRecentFusePermissionErrors(logPath, "media", 2000, time.Now(), 15*time.Minute)
+	require.NoError(t, err)
+	// Empty log → tailFile returns nil → early return with pass.
+	require.Equal(t, "fuse perms", c.Name)
+	require.True(t, c.Pass)
+}
+
+func TestCheckRecentFusePermissionErrors_shouldNotCountOtherMounts(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "pfs.log")
+	now := time.Unix(1700000000, 0).UTC()
+	recent := now.Add(-30 * time.Second)
+
+	lines := []string{
+		fmt.Sprintf(`{"time":%q,"level":"error","component":"fuse","mount":"other","msg":"failed to mkdir","error":"permission denied"}`+"\n", recent.Format(time.RFC3339Nano)),
+	}
+	require.NoError(t, os.WriteFile(logPath, []byte(strings.Join(lines, "")), 0o644))
+
+	c, err := checkRecentFusePermissionErrors(logPath, "media", 2000, now, 15*time.Minute)
+	require.NoError(t, err)
+	require.True(t, c.Pass)
 }
 
 // TestComputePoolSizeBytes_shouldReturnNilWhenUnknown verifies pool size is unknown when there are

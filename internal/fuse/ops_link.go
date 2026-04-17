@@ -15,14 +15,14 @@ import (
 // Cross-target hardlinks are not supported and must return EXDEV.
 func (n *Node) Link(ctx context.Context, target fs.InodeEmbedder, name string, out *gofuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	if n == nil {
-		return nil, fs.ToErrno(&errkind.NilError{What: "node"})
+		return nil, toErrno(&errkind.NilError{What: "node"})
 	}
 	rt, log := n.runtime()
 	if rt == nil {
-		return nil, fs.ToErrno(&errkind.NilError{What: "router"})
+		return nil, toErrno(&errkind.NilError{What: "router"})
 	}
 	if target == nil {
-		return nil, fs.ToErrno(&errkind.NilError{What: "target"})
+		return nil, toErrno(&errkind.NilError{What: "target"})
 	}
 
 	if tn, ok := target.(*Node); ok {
@@ -33,7 +33,7 @@ func (n *Node) Link(ctx context.Context, target fs.InodeEmbedder, name string, o
 
 	tino := target.EmbeddedInode()
 	if tino == nil {
-		return nil, fs.ToErrno(&errkind.NilError{What: "target inode"})
+		return nil, toErrno(&errkind.NilError{What: "target inode"})
 	}
 
 	caller, callerOK := gofuse.FromContext(ctx)
@@ -85,13 +85,13 @@ func (n *Node) Link(ctx context.Context, target fs.InodeEmbedder, name string, o
 	dstPhysicalPath := filepath.Join(srcTarget.Root, newVirtualPath)
 	// Ensure the destination parent dirs exist on the source target.
 	if err := materializeParentDirs(ctx, srcTarget.Root, newVirtualPath); err != nil {
-		return nil, fs.ToErrno(err)
+		return nil, toErrno(err)
 	}
 	if callerOK {
 		parentPhysical := filepath.Dir(dstPhysicalPath)
 		pst := syscall.Stat_t{}
 		if err := syscall.Lstat(parentPhysical, &pst); err != nil {
-			return nil, fs.ToErrno(err)
+			return nil, toErrno(err)
 		}
 		if uint32(pst.Mode)&syscall.S_IFMT != syscall.S_IFDIR {
 			return nil, syscall.ENOTDIR
@@ -102,12 +102,12 @@ func (n *Node) Link(ctx context.Context, target fs.InodeEmbedder, name string, o
 	}
 	if err := syscall.Link(srcPhysicalPath, dstPhysicalPath); err != nil {
 		log.Error().Str("op", "link").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Err(err).Msg("failed to link")
-		return nil, fs.ToErrno(err)
+		return nil, toErrno(err)
 	}
 
 	st := syscall.Stat_t{}
 	if err := syscall.Lstat(dstPhysicalPath, &st); err != nil {
-		return nil, fs.ToErrno(err)
+		return nil, toErrno(err)
 	}
 	out.FromStat(&st)
 

@@ -47,7 +47,7 @@ func stableIno(storageID string, virtualPath string) uint64 {
 // openFirst opens a file by searching targets in the router-defined order.
 func openFirst(ctx context.Context, rt *router.Router, db *indexdb.DB, virtualPath string, flags int, write bool) (fs.FileHandle, uint32, syscall.Errno) {
 	if rt == nil {
-		return nil, 0, fs.ToErrno(&errkind.NilError{What: "router"})
+		return nil, 0, toErrno(&errkind.NilError{What: "router"})
 	}
 	if errno := validateVirtualPath(virtualPath); errno != 0 {
 		return nil, 0, errno
@@ -104,7 +104,7 @@ func openFirst(ctx context.Context, rt *router.Router, db *indexdb.DB, virtualPa
 			if errors.Is(oerr, syscall.ENOENT) {
 				continue
 			}
-			return nil, 0, fs.ToErrno(oerr)
+			return nil, 0, toErrno(oerr)
 		}
 		fh := &FileHandle{virtualPath: virtualPath, physicalPath: physicalPath, storageID: t.ID, indexed: t.Indexed, fd: fd, flags: uint32(flags)}
 		_ = ctx
@@ -171,7 +171,7 @@ func firstExistingPhysical(rt *router.Router, virtualPath string) (router.Target
 			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}
-			return router.Target{}, "", fs.ToErrno(err)
+			return router.Target{}, "", toErrno(err)
 		}
 		return t, physicalPath, 0
 	}
