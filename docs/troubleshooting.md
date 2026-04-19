@@ -4,7 +4,7 @@
 
 Replace `media` with your mount name.
 
-## FUSE permission issues (apps can’t access the mount)
+## FUSE permission issues (apps can't access the mount)
 
 Symptoms:
 
@@ -26,7 +26,7 @@ Checklist:
     allow_other: true
   ```
 
-## systemd service won’t start
+## systemd service won't start
 
 - Check status:
 
@@ -52,6 +52,54 @@ Checklist:
   sudo ls -ld /mnt/pfs/media
   sudo ls -ld /mnt/ssd1/media /mnt/hdd1/media
   ```
+
+## Free space looks wrong (`df -h`, SMB clients, Finder)
+
+Symptoms:
+
+- `df -h /mnt/pfs/<mount>` shows a capacity that does not match "sum of all disks".
+- Different directories under the same mount show different free space.
+- After a disk is unplugged (or permissions changed), free space looks suspiciously small or keeps changing.
+
+What's going on:
+
+- PolicyFS is backed by multiple storage paths and can route writes differently depending on the path.
+- That means "free space for this mount" is a policy choice, not a single objective number.
+
+Checklist:
+
+- Start with the default (recommended) mount-wide reporting:
+
+  ```yaml
+  mounts:
+    media:
+      statfs:
+        reporting: mount_pooled_targets
+        on_error: ignore_failed
+  ```
+
+- If different directories show different numbers, check if you enabled path-aware reporting:
+
+  ```yaml
+  mounts:
+    media:
+      statfs:
+        reporting: path_pooled_targets
+  ```
+
+  This mode is useful for some applications, but it can confuse humans because the mount root and a subdirectory may legitimately report different totals.
+
+- If a storage path is missing/unavailable, the default `ignore_failed` will pool what it can.
+  If you would rather fail fast (so monitoring catches it), set:
+
+  ```yaml
+  mounts:
+    media:
+      statfs:
+        on_error: fail_eio
+  ```
+
+For details and trade-offs, see [Disk space reporting](statfs.md).
 
 ## Maintenance jobs do nothing
 

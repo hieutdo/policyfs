@@ -156,6 +156,65 @@ func TestRouter_ResolveListTargets_Union(t *testing.T) {
 	require.Equal(t, []string{"ssd1", "ssd2"}, ids)
 }
 
+// TestRouter_ResolveMountWriteTargets_shouldUnionAllRules verifies that mount-wide statfs
+// pooling collects the union of write targets from all routing rules, deduplicated.
+func TestRouter_ResolveMountWriteTargets_shouldUnionAllRules(t *testing.T) {
+	// Two rules with distinct write targets: mount-wide pool must include both.
+	r, err := New(&config.MountConfig{
+		StoragePaths: []config.StoragePath{
+			{ID: "ssd1", Path: "/mnt/ssd1"},
+			{ID: "ssd2", Path: "/mnt/ssd2"},
+		},
+		RoutingRules: []config.RoutingRule{
+			{Match: "library/**", WriteTargets: []string{"ssd2"}, ReadTargets: []string{"ssd2", "ssd1"}},
+			{Match: "**", WriteTargets: []string{"ssd1"}, ReadTargets: []string{"ssd1", "ssd2"}},
+		},
+	})
+	require.NoError(t, err)
+
+	got, err := r.ResolveMountWriteTargets()
+	require.NoError(t, err)
+
+	ids := make([]string, 0, len(got))
+	for _, t := range got {
+		ids = append(ids, t.ID)
+	}
+	require.Equal(t, []string{"ssd2", "ssd1"}, ids)
+}
+
+// TestRouter_ResolveMountWriteTargets_shouldDeduplicateTargets verifies that a target
+// referenced in multiple rules appears only once in the result.
+func TestRouter_ResolveMountWriteTargets_shouldDeduplicateTargets(t *testing.T) {
+	r, err := New(&config.MountConfig{
+		StoragePaths: []config.StoragePath{
+			{ID: "ssd1", Path: "/mnt/ssd1"},
+			{ID: "ssd2", Path: "/mnt/ssd2"},
+		},
+		RoutingRules: []config.RoutingRule{
+			{Match: "archive/**", WriteTargets: []string{"ssd1", "ssd2"}},
+			{Match: "**", WriteTargets: []string{"ssd1"}},
+		},
+	})
+	require.NoError(t, err)
+
+	got, err := r.ResolveMountWriteTargets()
+	require.NoError(t, err)
+
+	ids := make([]string, 0, len(got))
+	for _, t := range got {
+		ids = append(ids, t.ID)
+	}
+	require.Equal(t, []string{"ssd1", "ssd2"}, ids)
+}
+
+// TestRouter_ResolveMountWriteTargets_shouldReturnErrorOnNilRouter verifies nil safety.
+func TestRouter_ResolveMountWriteTargets_shouldReturnErrorOnNilRouter(t *testing.T) {
+	var r *Router
+	_, err := r.ResolveMountWriteTargets()
+	require.Error(t, err)
+	require.ErrorIs(t, err, errkind.ErrNil)
+}
+
 // TestRouter_New_shouldValidateConfig verifies New rejects invalid mount configs and
 // returns typed errors that callers can reliably match via errors.Is.
 func TestRouter_New_shouldValidateConfig(t *testing.T) {

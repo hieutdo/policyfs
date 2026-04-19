@@ -56,6 +56,22 @@ func ValidateConfigAll(c *config.RootConfig) []error {
 				errList = append(errList, &MountConfigError{Mount: mountName, Msg: "log.level is invalid"})
 			}
 		}
+		if strings.TrimSpace(m.Statfs.Reporting) != "" {
+			switch strings.TrimSpace(m.Statfs.Reporting) {
+			case "mount_pooled_targets", "path_pooled_targets":
+				// ok
+			default:
+				errList = append(errList, &MountConfigError{Mount: mountName, Msg: "statfs.reporting is invalid"})
+			}
+		}
+		if strings.TrimSpace(m.Statfs.OnError) != "" {
+			switch strings.TrimSpace(m.Statfs.OnError) {
+			case "ignore_failed", "fail_eio", "fallback_effective_target", "fallback_loopback":
+				// ok
+			default:
+				errList = append(errList, &MountConfigError{Mount: mountName, Msg: "statfs.on_error is invalid"})
+			}
+		}
 		if m.MountPoint == "" {
 			errList = append(errList, &MountConfigError{Mount: mountName, Msg: "mountpoint is required"})
 		}

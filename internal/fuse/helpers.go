@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/hanwen/go-fuse/v2/fs"
@@ -153,6 +154,74 @@ func statfsWriteTarget(rt *router.Router, virtualPath string, out *gofuse.Statfs
 	}
 	out.FromStatfsT(&st)
 	return true
+}
+
+// statfsPooledRoots pools statfs across multiple filesystem roots and populates out.
+//
+// Returns (ok, hadError) where ok indicates at least one root was successfully stat'ed.
+func statfsPooledRoots(roots []string, out *gofuse.StatfsOut) (bool, bool) {
+	if len(roots) == 0 {
+		return false, false
+	}
+
+	seen := map[string]struct{}{}
+	var base syscall.Statfs_t
+	baseSet := false
+	unit := uint64(0)
+
+	totalBytes := uint64(0)
+	freeBytes := uint64(0)
+	availBytes := uint64(0)
+	files := uint64(0)
+	ffree := uint64(0)
+
+	hadError := false
+	for _, root := range roots {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			continue
+		}
+		if _, ok := seen[root]; ok {
+			continue
+		}
+		seen[root] = struct{}{}
+
+		var st syscall.Statfs_t
+		if err := syscall.Statfs(root, &st); err != nil {
+			hadError = true
+			continue
+		}
+
+		u := uint64(0)
+		if st.Bsize > 0 {
+			u = uint64(st.Bsize)
+		}
+		if u == 0 {
+			u = 4096
+		}
+		if !baseSet {
+			base = st
+			unit = u
+			baseSet = true
+		}
+
+		totalBytes += st.Blocks * u
+		freeBytes += st.Bfree * u
+		availBytes += st.Bavail * u
+		files += st.Files
+		ffree += st.Ffree
+	}
+	if !baseSet || unit == 0 {
+		return false, hadError
+	}
+
+	base.Blocks = totalBytes / unit
+	base.Bfree = freeBytes / unit
+	base.Bavail = availBytes / unit
+	base.Files = files
+	base.Ffree = ffree
+	out.FromStatfsT(&base)
+	return true, hadError
 }
 
 // firstExistingPhysical resolves the first existing target and its physical path.

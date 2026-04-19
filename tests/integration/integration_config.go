@@ -43,6 +43,9 @@ type IntegrationConfig struct {
 
 	// Mover optionally configures mount.mover.
 	Mover *config.MoverConfig
+
+	// Statfs optionally configures mount.statfs for the test.
+	Statfs *config.StatfsConfig
 }
 
 // IntegrationStorage describes a single test storage backend.

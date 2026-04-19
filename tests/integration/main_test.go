@@ -459,6 +459,9 @@ func writeIntegrationConfig(path string, mountName string, mountPoint string, st
 	if cfg.Mover != nil {
 		mountCfg.Mover = *cfg.Mover
 	}
+	if cfg.Statfs != nil {
+		mountCfg.Statfs = *cfg.Statfs
+	}
 
 	rootCfg := config.RootConfig{
 		Fuse: config.FuseConfig{AllowOther: cfg.AllowOther},

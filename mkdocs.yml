@@ -54,6 +54,7 @@ nav:
       - Configure: config.md
       - Systemd: systemd.md
       - Disk spindown: spindown.md
+      - Statfs reporting: statfs.md
       - Troubleshooting: troubleshooting.md
       - FAQ: faq.md
   - Internals:

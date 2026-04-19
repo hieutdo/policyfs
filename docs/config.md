@@ -19,6 +19,11 @@ log:
 mounts:
   media:
     mountpoint: /mnt/pfs/media
+
+    statfs:
+      reporting: mount_pooled_targets
+      on_error: ignore_failed
+
     storage_paths:
       - id: ssd1
         path: /mnt/ssd1/media
@@ -108,6 +113,19 @@ Optional mount-scoped logging overrides.
 | `level` | string | (empty) | If set, overrides top-level `log.level` for this mount only (empty inherits). |
 
 Changes to `mounts.<name>.log.level` can be applied to a running daemon with `pfs reload <mount>`.
+
+### `statfs`
+
+Controls how PolicyFS answers `statfs` for this mount (used by `df -h` and some SMB clients).
+
+For a deeper explanation of the trade-offs (why mount-wide reporting is the default, and why per-path reporting can differ by directory), see [Statfs reporting](statfs.md).
+
+| Field       | Type   | Default                | Description                                                                                  |
+| ----------- | ------ | ---------------------- | -------------------------------------------------------------------------------------------- |
+| `reporting` | string | `mount_pooled_targets` | Reporting mode: `mount_pooled_targets`, `path_pooled_targets`.                               |
+| `on_error`  | string | `ignore_failed`        | Error policy: `ignore_failed`, `fail_eio`, `fallback_effective_target`, `fallback_loopback`. |
+
+Changes to `mounts.<name>.statfs.*` require restarting the daemon.
 
 ### `storage_paths`
 

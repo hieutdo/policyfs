@@ -35,6 +35,7 @@ type reloadState struct {
 	mountPoint      string
 	primaryRootPath string
 	fuseAllowOther  bool
+	statfs          config.StatfsConfig
 	storagePaths    []config.StoragePath
 	rootLogCfg      config.LogConfig
 
@@ -65,10 +66,12 @@ func newReloadState(mountName string, m *config.MountConfig, primaryRootPath str
 		mountPoint:      "",
 		primaryRootPath: strings.TrimSpace(primaryRootPath),
 		fuseAllowOther:  fuseAllowOther,
+		statfs:          config.StatfsConfig{Reporting: config.DefaultStatfsReporting, OnError: config.DefaultStatfsOnError},
 		rootLogCfg:      rootLogCfg,
 	}
 	if m != nil {
 		rs.mountPoint = strings.TrimSpace(m.MountPoint)
+		rs.statfs = m.Statfs
 		rs.storagePaths = copyStoragePaths(m.StoragePaths)
 		rs.last = snapshotReloadable(rootLogCfg, m)
 	}
@@ -139,6 +142,12 @@ func (s *reloadState) nonReloadableMismatch(rootCfg *config.RootConfig, mountCfg
 	}
 	if rootCfg.Fuse.AllowOther != s.fuseAllowOther {
 		return &errkind.KindError{Kind: ErrReloadRequiresRestart, Msg: "fuse.allow_other changed"}
+	}
+	if strings.TrimSpace(mountCfg.Statfs.Reporting) != strings.TrimSpace(s.statfs.Reporting) {
+		return &errkind.KindError{Kind: ErrReloadRequiresRestart, Msg: "statfs.reporting changed"}
+	}
+	if strings.TrimSpace(mountCfg.Statfs.OnError) != strings.TrimSpace(s.statfs.OnError) {
+		return &errkind.KindError{Kind: ErrReloadRequiresRestart, Msg: "statfs.on_error changed"}
 	}
 	if !reflect.DeepEqual(mountCfg.StoragePaths, s.storagePaths) {
 		return &errkind.KindError{Kind: ErrReloadRequiresRestart, Msg: "storage_paths changed"}

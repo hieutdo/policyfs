@@ -62,6 +62,8 @@ func TestRootConfig_applyDefaults_shouldFillExpectedDefaults(t *testing.T) {
 
 	require.Len(t, m.RoutingRules, 1)
 	require.Equal(t, DefaultWritePolicy, m.RoutingRules[0].WritePolicy)
+	require.Equal(t, DefaultStatfsReporting, m.Statfs.Reporting)
+	require.Equal(t, DefaultStatfsOnError, m.Statfs.OnError)
 
 	require.NotNil(t, m.Mover.Enabled)
 	require.True(t, *m.Mover.Enabled)

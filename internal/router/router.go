@@ -268,6 +268,27 @@ func (r *Router) matchRule(virtualPath string) (compiledRule, bool) {
 	return compiledRule{}, false
 }
 
+// ResolveMountWriteTargets returns the union of all configured write targets for this mount.
+//
+// Unlike ResolveWriteTargets (first match wins), mount-wide statfs reporting must consider
+// all routing rules so that the result is stable for the mountpoint.
+func (r *Router) ResolveMountWriteTargets() ([]Target, error) {
+	if r == nil {
+		return nil, &errkind.NilError{What: "router"}
+	}
+
+	union := []string{}
+	for _, cr := range r.rules {
+		union = append(union, cr.write...)
+	}
+
+	ids, err := r.expandTargets(union)
+	if err != nil {
+		return nil, err
+	}
+	return r.targetsFromIDs(ids)
+}
+
 // ResolveListTargets returns the union of storage targets for directory listings.
 //
 // Unlike read/write routing (first match wins), directory listings must consider

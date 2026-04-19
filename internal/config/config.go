@@ -13,16 +13,18 @@ import (
 )
 
 const (
-	DefaultConfigFile     = "/etc/pfs/pfs.yaml"
-	DefaultLogFile        = "/var/log/pfs/pfs.log"
-	DefaultStateDir       = "/var/lib/pfs"
-	DefaultRuntimeDir     = "/run/pfs"
-	DefaultDaemonLockFile = "daemon.lock"
-	DefaultJobLockFile    = "job.lock"
-	DefaultWritePolicy    = "first_found"
-	DefaultMovePolicy     = "most_free"
-	DefaultMoveStartPct   = 80
-	DefaultMoveStopPct    = 70
+	DefaultConfigFile      = "/etc/pfs/pfs.yaml"
+	DefaultLogFile         = "/var/log/pfs/pfs.log"
+	DefaultStateDir        = "/var/lib/pfs"
+	DefaultRuntimeDir      = "/run/pfs"
+	DefaultDaemonLockFile  = "daemon.lock"
+	DefaultJobLockFile     = "job.lock"
+	DefaultWritePolicy     = "first_found"
+	DefaultMovePolicy      = "most_free"
+	DefaultMoveStartPct    = 80
+	DefaultMoveStopPct     = 70
+	DefaultStatfsReporting = "mount_pooled_targets"
+	DefaultStatfsOnError   = "ignore_failed"
 )
 
 const (
@@ -119,9 +121,16 @@ type MountLogConfig struct {
 	Level string `yaml:"level"`
 }
 
+// StatfsConfig controls how PolicyFS reports filesystem statistics for a mount.
+type StatfsConfig struct {
+	Reporting string `yaml:"reporting"`
+	OnError   string `yaml:"on_error"`
+}
+
 // MountConfig defines a single mount instance configuration.
 type MountConfig struct {
 	MountPoint    string              `yaml:"mountpoint"`
+	Statfs        StatfsConfig        `yaml:"statfs"`
 	Log           MountLogConfig      `yaml:"log"`
 	StoragePaths  []StoragePath       `yaml:"storage_paths"`
 	StorageGroups map[string][]string `yaml:"storage_groups"`
@@ -255,6 +264,19 @@ func (c *RootConfig) applyDefaults() {
 	}
 
 	for mountName, m := range c.Mounts {
+		rep := strings.TrimSpace(m.Statfs.Reporting)
+		if rep == "" {
+			m.Statfs.Reporting = DefaultStatfsReporting
+		} else {
+			m.Statfs.Reporting = rep
+		}
+		oe := strings.TrimSpace(m.Statfs.OnError)
+		if oe == "" {
+			m.Statfs.OnError = DefaultStatfsOnError
+		} else {
+			m.Statfs.OnError = oe
+		}
+
 		for i := range m.RoutingRules {
 			wp := strings.TrimSpace(m.RoutingRules[i].WritePolicy)
 			if wp == "" {

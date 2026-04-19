@@ -67,6 +67,22 @@ func resolveMount(rootCfg *config.RootConfig, mountName string) (*config.MountCo
 			return nil, "", fmt.Errorf("config: mount %q: log.level is invalid", mountName)
 		}
 	}
+	if rep := strings.TrimSpace(mountCfg.Statfs.Reporting); rep != "" {
+		switch rep {
+		case "mount_pooled_targets", "path_pooled_targets":
+			// ok
+		default:
+			return nil, "", fmt.Errorf("config: mount %q: statfs.reporting is invalid", mountName)
+		}
+	}
+	if oe := strings.TrimSpace(mountCfg.Statfs.OnError); oe != "" {
+		switch oe {
+		case "ignore_failed", "fail_eio", "fallback_effective_target", "fallback_loopback":
+			// ok
+		default:
+			return nil, "", fmt.Errorf("config: mount %q: statfs.on_error is invalid", mountName)
+		}
+	}
 	if mountCfg.MountPoint == "" {
 		return nil, "", fmt.Errorf("config: mount %q: mountpoint is required", mountName)
 	}

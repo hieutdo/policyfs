@@ -24,6 +24,40 @@ func TestValidateConfigAll_shouldRejectNilAndEmptyMounts(t *testing.T) {
 	})
 }
 
+// TestValidateConfigAll_shouldValidateStatfsConfig verifies statfs mount options are validated.
+func TestValidateConfigAll_shouldValidateStatfsConfig(t *testing.T) {
+	base := func() *config.RootConfig {
+		return &config.RootConfig{Mounts: map[string]config.MountConfig{
+			"m": {
+				MountPoint:   "/mnt/pfs/m",
+				StoragePaths: []config.StoragePath{{ID: "ssd1", Path: "/mnt/ssd1"}},
+				RoutingRules: []config.RoutingRule{{Match: "**"}},
+				Mover:        config.MoverConfig{Enabled: boolPtr(false)},
+			},
+		}}
+	}
+
+	t.Run("should reject invalid statfs.reporting", func(t *testing.T) {
+		cfg := base()
+		m := cfg.Mounts["m"]
+		m.Statfs.Reporting = "nope"
+		cfg.Mounts["m"] = m
+
+		msgs := mountMsgs(t, ValidateConfigAll(cfg), "m")
+		require.Contains(t, msgs, "statfs.reporting is invalid")
+	})
+
+	t.Run("should reject invalid statfs.on_error", func(t *testing.T) {
+		cfg := base()
+		m := cfg.Mounts["m"]
+		m.Statfs.OnError = "nope"
+		cfg.Mounts["m"] = m
+
+		msgs := mountMsgs(t, ValidateConfigAll(cfg), "m")
+		require.Contains(t, msgs, "statfs.on_error is invalid")
+	})
+}
+
 // TestValidateConfigAll_shouldValidateRoutingRulesCatchAll verifies routing rule validation around
 // match requirements and the catch-all "**" rule.
 func TestValidateConfigAll_shouldValidateRoutingRulesCatchAll(t *testing.T) {

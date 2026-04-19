@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -161,7 +162,7 @@ func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 	return fh, openFlags, errno
 }
 
-// Statfs returns filesystem stats based on the write target for the current path.
+// Statfs returns filesystem stats for the mount.
 //
 // The default loopback Statfs reports stats for the primaryRootPath filesystem,
 // which may differ from where writes actually land. This override resolves write
@@ -170,14 +171,101 @@ func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 func (n *Node) Statfs(ctx context.Context, out *gofuse.StatfsOut) syscall.Errno {
 	rt, _ := n.runtime()
 	virtualPath := n.Path(n.Root())
+	if virtualPath == "." {
+		virtualPath = ""
+	}
 	if errno := validateVirtualPath(virtualPath); errno != 0 {
 		return errno
 	}
-	if statfsWriteTarget(rt, virtualPath, out) {
-		return 0
+
+	reporting := config.DefaultStatfsReporting
+	onError := config.DefaultStatfsOnError
+	if n.reload != nil {
+		if v := strings.TrimSpace(n.reload.statfs.Reporting); v != "" {
+			reporting = v
+		}
+		if v := strings.TrimSpace(n.reload.statfs.OnError); v != "" {
+			onError = v
+		}
 	}
-	// Fallback: delegate to loopback (uses primaryRootPath).
-	return n.LoopbackNode.Statfs(ctx, out)
+
+	pooled := func(roots []string) syscall.Errno {
+		if len(roots) == 0 {
+			switch onError {
+			case "fail_eio":
+				return syscall.EIO
+			case "fallback_effective_target":
+				if statfsWriteTarget(rt, virtualPath, out) {
+					return 0
+				}
+				return n.LoopbackNode.Statfs(ctx, out)
+			case "fallback_loopback", "ignore_failed":
+				return n.LoopbackNode.Statfs(ctx, out)
+			default:
+				return n.LoopbackNode.Statfs(ctx, out)
+			}
+		}
+
+		ok, hadErr := statfsPooledRoots(roots, out)
+		if ok && !hadErr {
+			return 0
+		}
+		switch onError {
+		case "ignore_failed":
+			if ok {
+				return 0
+			}
+			return n.LoopbackNode.Statfs(ctx, out)
+		case "fail_eio":
+			return syscall.EIO
+		case "fallback_effective_target":
+			if statfsWriteTarget(rt, virtualPath, out) {
+				return 0
+			}
+			return n.LoopbackNode.Statfs(ctx, out)
+		case "fallback_loopback":
+			return n.LoopbackNode.Statfs(ctx, out)
+		default:
+			if ok {
+				return 0
+			}
+			return n.LoopbackNode.Statfs(ctx, out)
+		}
+	}
+
+	switch reporting {
+	case "mount_pooled_targets":
+		if rt == nil {
+			return pooled(nil)
+		}
+		targets, err := rt.ResolveMountWriteTargets()
+		if err != nil || len(targets) == 0 {
+			return pooled(nil)
+		}
+		roots := make([]string, 0, len(targets))
+		for _, t := range targets {
+			roots = append(roots, t.Root)
+		}
+		return pooled(roots)
+	case "path_pooled_targets":
+		if rt == nil {
+			return pooled(nil)
+		}
+		targets, err := rt.ResolveWriteTargets(virtualPath)
+		if err != nil || len(targets) == 0 {
+			return pooled(nil)
+		}
+		roots := make([]string, 0, len(targets))
+		for _, t := range targets {
+			roots = append(roots, t.Root)
+		}
+		return pooled(roots)
+	default:
+		if statfsWriteTarget(rt, virtualPath, out) {
+			return 0
+		}
+		return n.LoopbackNode.Statfs(ctx, out)
+	}
 }
 
 // Release closes any file handles we created.
