@@ -2,9 +2,16 @@ package cli
 
 import (
 	"bytes"
+	"context"
+	"os"
+	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
 
+	"github.com/hieutdo/policyfs/internal/config"
 	"github.com/hieutdo/policyfs/internal/doctor"
+	"github.com/hieutdo/policyfs/internal/indexdb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -68,6 +75,147 @@ mounts:
 	code, _, stderr := runCLI(t, []string{"--config", cfg, "doctor", "notreal", "test.txt"})
 	require.Equal(t, ExitUsage, code)
 	require.Contains(t, stderr, "mount \"notreal\" not found")
+}
+
+// TestDoctor_FileInspect_shouldSkipDiskByDefaultWhenInIndex verifies that file inspect avoids disk stat
+// when the path is present in the index DB, unless --disk is passed.
+func TestDoctor_FileInspect_shouldSkipDiskByDefaultWhenInIndex(t *testing.T) {
+	src := t.TempDir()
+
+	stateDir := filepath.Join(t.TempDir(), "state")
+	require.NoError(t, os.MkdirAll(stateDir, 0o755))
+	oldState, hadState := os.LookupEnv(config.EnvStateDir)
+	require.NoError(t, os.Setenv(config.EnvStateDir, stateDir))
+	t.Cleanup(func() {
+		if hadState {
+			_ = os.Setenv(config.EnvStateDir, oldState)
+			return
+		}
+		_ = os.Unsetenv(config.EnvStateDir)
+	})
+
+	db, err := indexdb.Open("media")
+	require.NoError(t, err)
+
+	size := int64(123)
+	mtime := time.Now().Unix()
+	mode := uint32(syscall.S_IFREG | 0o644)
+	require.NoError(t, db.UpsertFile(context.Background(), "ssd1", "library/test.txt", false, &size, mtime, mode, 1000, 1000))
+	require.NoError(t, db.Close())
+
+	cfg := writeTempConfig(t, `
+mounts:
+  media:
+    mountpoint: "`+src+`"
+    storage_paths:
+      - id: "ssd1"
+        path: "`+src+`"
+        indexed: true
+    routing_rules:
+      - match: "**"
+        targets: ["ssd1"]
+`)
+
+	code, stdout, stderr := runCLI(t, []string{"--config", cfg, "doctor", "media", "library/test.txt"})
+	require.Equal(t, ExitOK, code)
+	require.Empty(t, stderr)
+	require.Contains(t, stdout, "indexed: yes")
+	require.Contains(t, stdout, "disk: skipped")
+	require.NotContains(t, stdout, "disk: not found")
+}
+
+// TestDoctor_FileInspect_shouldStatDiskWhenFlagSet verifies that --disk forces an on-disk stat.
+func TestDoctor_FileInspect_shouldStatDiskWhenFlagSet(t *testing.T) {
+	src := t.TempDir()
+
+	stateDir := filepath.Join(t.TempDir(), "state")
+	require.NoError(t, os.MkdirAll(stateDir, 0o755))
+	oldState, hadState := os.LookupEnv(config.EnvStateDir)
+	require.NoError(t, os.Setenv(config.EnvStateDir, stateDir))
+	t.Cleanup(func() {
+		if hadState {
+			_ = os.Setenv(config.EnvStateDir, oldState)
+			return
+		}
+		_ = os.Unsetenv(config.EnvStateDir)
+	})
+
+	db, err := indexdb.Open("media")
+	require.NoError(t, err)
+
+	size := int64(123)
+	mtime := time.Now().Unix()
+	mode := uint32(syscall.S_IFREG | 0o644)
+	require.NoError(t, db.UpsertFile(context.Background(), "ssd1", "library/test.txt", false, &size, mtime, mode, 1000, 1000))
+	require.NoError(t, db.Close())
+
+	cfg := writeTempConfig(t, `
+mounts:
+  media:
+    mountpoint: "`+src+`"
+    storage_paths:
+      - id: "ssd1"
+        path: "`+src+`"
+        indexed: true
+    routing_rules:
+      - match: "**"
+        targets: ["ssd1"]
+`)
+
+	code, stdout, stderr := runCLI(t, []string{"--config", cfg, "doctor", "--disk", "media", "library/test.txt"})
+	require.Equal(t, ExitOK, code)
+	require.Empty(t, stderr)
+	require.Contains(t, stdout, "indexed: yes")
+	require.Contains(t, stdout, "disk: not found")
+}
+
+// TestDoctor_FileInspect_shouldStatDiskWhenNotInIndex verifies that a file not present in the
+// index DB (out-of-band file on an indexed storage) still gets on-disk stat by default, so
+// users can distinguish "not indexed yet" from "missing" without passing --disk.
+func TestDoctor_FileInspect_shouldStatDiskWhenNotInIndex(t *testing.T) {
+	src := t.TempDir()
+
+	stateDir := filepath.Join(t.TempDir(), "state")
+	require.NoError(t, os.MkdirAll(stateDir, 0o755))
+	oldState, hadState := os.LookupEnv(config.EnvStateDir)
+	require.NoError(t, os.Setenv(config.EnvStateDir, stateDir))
+	t.Cleanup(func() {
+		if hadState {
+			_ = os.Setenv(config.EnvStateDir, oldState)
+			return
+		}
+		_ = os.Unsetenv(config.EnvStateDir)
+	})
+
+	// Open + close the index DB so the schema exists but no row is seeded for this path.
+	db, err := indexdb.Open("media")
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	// Create the out-of-band file physically on disk.
+	require.NoError(t, os.MkdirAll(filepath.Join(src, "library"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "library", "outofband.txt"), []byte("hello"), 0o644))
+
+	cfg := writeTempConfig(t, `
+mounts:
+  media:
+    mountpoint: "`+src+`"
+    storage_paths:
+      - id: "ssd1"
+        path: "`+src+`"
+        indexed: true
+    routing_rules:
+      - match: "**"
+        targets: ["ssd1"]
+`)
+
+	code, stdout, stderr := runCLI(t, []string{"--config", cfg, "doctor", "media", "library/outofband.txt"})
+	require.Equal(t, ExitOK, code)
+	require.Empty(t, stderr)
+	require.Contains(t, stdout, "indexed: no")
+	require.Contains(t, stdout, "size:")
+	require.Contains(t, stdout, "mtime:")
+	require.NotContains(t, stdout, "disk: skipped")
 }
 
 // TestPrintFileInspect_NotFound verifies print output when file is not found.

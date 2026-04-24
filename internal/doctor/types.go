@@ -164,13 +164,14 @@ type FileInspectStorage struct {
 	MetaGID   *uint32
 
 	// On-disk stat.
-	DiskExists *bool
-	DiskSize   *int64
-	DiskMTime  *int64
-	DiskMode   *uint32
-	DiskUID    *uint32
-	DiskGID    *uint32
-	DiskError  string
+	DiskStatSkipped bool
+	DiskExists      *bool
+	DiskSize        *int64
+	DiskMTime       *int64
+	DiskMode        *uint32
+	DiskUID         *uint32
+	DiskGID         *uint32
+	DiskError       string
 }
 
 // FileInspectEvent describes one pending event relevant to this path.

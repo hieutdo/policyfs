@@ -22,7 +22,10 @@ When a JSON log file is configured (via `log.file` or `PFS_LOG_FILE`), doctor al
 This requires JSON logs (`log.format: json`). To avoid stale one-off errors, only recent entries (last ~15 minutes, and after the most recent `mount ready` for that mount when present) are reported.
 
 **File inspect** (`pfs doctor <mount> <path>`):
-Inspects a specific virtual path across all storages, showing index metadata, pending events, and physical disk state.
+Inspects a specific virtual path across all storages, showing index metadata, pending events, and (optionally) physical disk state.
+
+By default, file inspect avoids touching disk for storages where the path is present in the index database (to prevent spinning up HDDs).
+To force an on-disk stat across storages, pass `--disk`.
 
 ## Exit codes
 

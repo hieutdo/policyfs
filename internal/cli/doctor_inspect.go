@@ -14,7 +14,7 @@ import (
 
 // runDoctorFileInspect handles the `pfs doctor <mount> <path>` file inspect mode.
 // It loads config, resolves the mount, builds the inspect report, and prints output.
-func runDoctorFileInspect(w io.Writer, mountName string, filePath string, cfgPath string) error {
+func runDoctorFileInspect(w io.Writer, mountName string, filePath string, cfgPath string, statDisk bool) error {
 	rootCfg, loadErr := loadRootConfig(cfgPath)
 	if loadErr != nil {
 		return newConfigLoadCLIError("doctor", cfgPath, loadErr)
@@ -32,7 +32,7 @@ func runDoctorFileInspect(w io.Writer, mountName string, filePath string, cfgPat
 		}
 	}
 
-	report, err := doctor.InspectFile(mountName, filePath, mountCfg)
+	report, err := doctor.InspectFile(mountName, filePath, mountCfg, statDisk)
 	if err != nil {
 		return &CLIError{
 			Code:     ExitFail,
@@ -168,6 +168,10 @@ func printFileInspectStorage(w io.Writer, s doctor.FileInspectStorage) {
 	}
 
 	// Disk status.
+	if s.DiskStatSkipped {
+		fmt.Fprintln(w, "disk: skipped (use --disk)")
+		return
+	}
 	if s.DiskExists != nil && !*s.DiskExists {
 		if s.DiskError != "" {
 			fmt.Fprintf(w, "disk: error: %s\n", s.DiskError)

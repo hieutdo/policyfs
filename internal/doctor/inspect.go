@@ -15,7 +15,7 @@ import (
 )
 
 // InspectFile inspects a single virtual file/dir path across all storages.
-func InspectFile(mountName string, filePath string, mountCfg config.MountConfig) (*FileInspectReport, error) {
+func InspectFile(mountName string, filePath string, mountCfg config.MountConfig, statDisk bool) (*FileInspectReport, error) {
 	normalizedPath := indexdb.NormalizeVirtualPath(filePath)
 	if normalizedPath == "" {
 		return nil, fmt.Errorf("path resolves to root (empty after normalization)")
@@ -68,7 +68,11 @@ func InspectFile(mountName string, filePath string, mountCfg config.MountConfig)
 		}
 
 		s.PhysicalPath = filepath.Join(sp.Path, physicalRel)
-		s.statDisk()
+		if !statDisk && s.InIndex {
+			s.DiskStatSkipped = true
+		} else {
+			s.statDisk()
+		}
 
 		report.Storages = append(report.Storages, s)
 	}

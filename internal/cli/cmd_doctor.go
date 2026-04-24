@@ -16,6 +16,8 @@ import (
 
 // newDoctorCmd creates `pfs doctor`.
 func newDoctorCmd(configPath *string) *cobra.Command {
+	var statDisk bool
+
 	cmd := &cobra.Command{
 		Use:   "doctor [mount] [path]",
 		Short: "Run health checks on configuration and runtime",
@@ -154,7 +156,7 @@ Exit codes:
 
 			// --- File inspect mode ---
 			if len(args) == 2 {
-				return runDoctorFileInspect(stdout, *filterMount, args[1], cfgPath)
+				return runDoctorFileInspect(stdout, args[0], args[1], cfgPath, statDisk)
 			}
 
 			// --- Build report ---
@@ -166,6 +168,8 @@ Exit codes:
 			return nil
 		},
 	}
+
+	cmd.Flags().BoolVar(&statDisk, "disk", false, "Stat disk paths in file inspect mode (may spin up HDDs)")
 
 	return cmd
 }
