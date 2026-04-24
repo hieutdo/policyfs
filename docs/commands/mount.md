@@ -13,13 +13,14 @@ pfs mount <mount> [flags]
 
 ## Flags
 
-| Flag                          | Default      | Description                                                                           |
-| ----------------------------- | ------------ | ------------------------------------------------------------------------------------- |
-| `--fuse-debug`                | `false`      | Enable go-fuse internal debug logging (raw FUSE request/response dump).               |
-| `--log-file <path>`           | config value | Override the log file path (takes precedence over `PFS_LOG_FILE`).                    |
-| `--log-disk-access`           | `false`      | Enable disk access logging for indexed storage. Can also set `PFS_LOG_DISK_ACCESS=1`. |
-| `--dedup-ttl <sec>`           | `60`         | Disk access log dedup TTL in seconds. `0` disables dedup.                             |
-| `--disk-access-summary <sec>` | `60`         | Disk access summary interval in seconds. `0` disables summaries.                      |
+| Flag                          | Default      | Description                                                                                                                                                 |
+| ----------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--fuse-debug`                | `false`      | Enable go-fuse internal debug logging (raw FUSE request/response dump).                                                                                     |
+| `--log-file <path>`           | config value | Override the log file path (takes precedence over `PFS_LOG_FILE`).                                                                                          |
+| `--log-disk-access`           | `false`      | Enable disk access logging for indexed storage. Can also set `PFS_LOG_DISK_ACCESS=1`.                                                                       |
+| `--dedup-ttl <sec>`           | `60`         | Disk access log dedup TTL in seconds. `0` disables dedup.                                                                                                   |
+| `--disk-access-summary <sec>` | `60`         | Disk access summary interval in seconds. `0` disables summaries.                                                                                            |
+| `--pprof-addr <host:port>`    | `""`         | If set, serve `net/http/pprof` on this address. Can also set `PFS_PPROF_ADDR`. See [Troubleshooting](../troubleshooting.md#high-memory-peak-on-the-daemon). |
 
 ## Behavior
 

@@ -146,6 +146,57 @@ Two common reasons:
 
 Use `pfs doctor <mount>` to confirm the index is populated and check how many files are indexed per storage path.
 
+## High memory peak on the daemon
+
+`systemctl status pfs@<mount>` reports a `Memory Peak` in the multi-GB range but current `Memory` is much lower.
+
+`Memory Peak` is a cgroup high-watermark and captures transient spikes (large `readdir`, SQLite WAL mmap, FUSE request buffers), not a steady-state leak. To confirm, enable the built-in pprof endpoint and capture a live heap profile.
+
+### Enable pprof (per mount)
+
+```bash
+sudo systemctl edit pfs@media
+```
+
+Add a drop-in:
+
+```ini
+[Service]
+Environment=PFS_PPROF_ADDR=127.0.0.1:6060
+```
+
+Then restart:
+
+```bash
+sudo systemctl restart pfs@media
+```
+
+The daemon will log `pprof listening addr=127.0.0.1:6060`.
+
+Equivalent CLI flag (for manual runs): `pfs mount <mount> --pprof-addr=127.0.0.1:6060`.
+
+### Capture profiles
+
+After the daemon has been running long enough to show the peak:
+
+```bash
+curl -sS http://127.0.0.1:6060/debug/pprof/heap      -o heap.prof
+curl -sS http://127.0.0.1:6060/debug/pprof/allocs    -o allocs.prof
+curl -sS http://127.0.0.1:6060/debug/pprof/goroutine -o goroutine.prof
+```
+
+### Analyze
+
+```bash
+go tool pprof -top heap.prof
+go tool pprof -top -cum allocs.prof
+go tool pprof -http=:8080 heap.prof   # flamegraph UI
+```
+
+If current heap (`inuse_space`) stays low and only `alloc_space` is large, the peak is transient allocation (expected - not a leak). To cap process RSS, add `MemoryHigh=` or `MemoryMax=` to the same drop-in.
+
+Bind pprof to `127.0.0.1` only; the endpoint exposes runtime state and should not be reachable from other hosts.
+
 ## Lock held (exit code 75)
 
 Exit code `75` means another PolicyFS process is holding a lock (usually because another job is running).

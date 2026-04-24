@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,6 +30,7 @@ func newMountCmd(configPath *string) *cobra.Command {
 	var logDiskAccess bool
 	var dedupTTLSec int
 	var diskAccessSummarySec int
+	var pprofAddr string
 
 	cmd := &cobra.Command{
 		Use:   "mount <mount>",
@@ -233,6 +236,26 @@ This command is typically managed by systemd as a service.`,
 				Int("gid", os.Getgid()).
 				Msg("mount runtime")
 
+			if addr := strings.TrimSpace(pprofAddr); addr == "" {
+				if env := strings.TrimSpace(os.Getenv(config.EnvPprofAddr)); env != "" {
+					pprofAddr = env
+				}
+			}
+			if addr := strings.TrimSpace(pprofAddr); addr != "" {
+				pprofSrv := &http.Server{Addr: addr, Handler: http.DefaultServeMux, ReadHeaderTimeout: 5 * time.Second}
+				go func() {
+					if err := pprofSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+						cmdLog.Error().Str("addr", addr).Err(err).Msg("pprof server failed")
+					}
+				}()
+				defer func() {
+					shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					defer cancel()
+					_ = pprofSrv.Shutdown(shutdownCtx)
+				}()
+				cmdLog.Info().Str("addr", addr).Msg("pprof listening")
+			}
+
 			cmdLog.Info().Str("mount", mountName).Str("mountpoint", mountCfg.MountPoint).Msg("mount ready")
 
 			waitDone := make(chan struct{})
@@ -323,6 +346,7 @@ This command is typically managed by systemd as a service.`,
 	cmd.Flags().BoolVar(&logDiskAccess, "log-disk-access", false, fmt.Sprintf("enable disk access logging for indexed storage (debugging; can also set %s=1)", config.EnvLogDiskAccess))
 	cmd.Flags().IntVar(&dedupTTLSec, "dedup-ttl", 60, "disk access log dedup TTL in seconds (0=disabled)")
 	cmd.Flags().IntVar(&diskAccessSummarySec, "disk-access-summary", 60, "disk access summary interval in seconds (0=disabled)")
+	cmd.Flags().StringVar(&pprofAddr, "pprof-addr", "", fmt.Sprintf("if set, serve net/http/pprof on this address (e.g. 127.0.0.1:6060); overrides %s", config.EnvPprofAddr))
 
 	return cmd
 }
