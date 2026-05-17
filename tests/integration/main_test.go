@@ -240,30 +240,36 @@ func withMountedFS(t *testing.T, cfg IntegrationConfig, fn func(env *MountedFS))
 		t.Fatalf("failed to start pfs mount: %v", err)
 	}
 
+	mountDone := make(chan struct{})
+	go func() {
+		_, _ = mountCmd.Process.Wait()
+		close(mountDone)
+	}()
+	env.mountProc = mountCmd.Process
+	env.mountCancel = cancel
+	env.mountDone = mountDone
+
 	if err := waitForMount(env.MountPoint, 5*time.Second); err != nil {
 		_ = mountCmd.Process.Signal(syscall.SIGTERM)
-		_, _ = mountCmd.Process.Wait()
+		<-mountDone
 		cancel()
 		t.Fatalf("mount did not become ready: %v", err)
 	}
 
 	t.Cleanup(func() {
-		_ = mountCmd.Process.Signal(syscall.SIGTERM)
-		done := make(chan struct{})
-		go func() {
-			_, _ = mountCmd.Process.Wait()
-			close(done)
-		}()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
+		if !env.stopped {
+			_ = mountCmd.Process.Signal(syscall.SIGTERM)
+			select {
+			case <-mountDone:
+			case <-time.After(5 * time.Second):
+				cancel()
+				_ = mountCmd.Process.Kill()
+				<-mountDone
+			}
 			cancel()
-			_ = mountCmd.Process.Kill()
-			<-done
-		}
-		cancel()
-		if err := ensureUnmounted(env.MountPoint, 2*time.Second); err != nil {
-			t.Fatalf("failed to unmount: %v", err)
+			if err := ensureUnmounted(env.MountPoint, 2*time.Second); err != nil {
+				t.Fatalf("failed to unmount: %v", err)
+			}
 		}
 
 		if t.Failed() {

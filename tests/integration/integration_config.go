@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -64,6 +65,14 @@ type MountedFS struct {
 	RuntimeDir   string
 	StateDir     string
 	StorageRoots map[string]string
+
+	// mountProc/mountCancel/mountDone are populated by the launcher (withMountedFS,
+	// startNamedMountedFS). They let lifecycle tests stop a single daemon explicitly
+	// via Stop() while leaving the t.Cleanup teardown a safe no-op.
+	mountProc   *os.Process
+	mountCancel context.CancelFunc
+	mountDone   chan struct{}
+	stopped     bool
 }
 
 // StorageRoot returns the physical root directory for a storage id.
