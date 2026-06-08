@@ -134,7 +134,7 @@ Then continue with the configuration steps below.
 
 If you want to manage PolicyFS via systemd, the unit files live under `packaging/systemd/` (see `systemd.md`).
 
-Note: packaged unit files reference `/usr/bin/pfs`. For source installs, choose one approach:
+Note: Debian/RPM packages install vendor units via the distro-managed systemd unit directory and the packaged unit files reference `/usr/bin/pfs`. For source installs, choose one approach:
 
 - Install your binary to `/usr/bin/pfs`.
 - Or copy unit files to `/etc/systemd/system/` and update `ExecStart`/`ExecStop` to `/usr/local/bin/pfs`.

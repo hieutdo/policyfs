@@ -1,0 +1,46 @@
+#!/bin/sh
+set -eu
+
+pfs_state_dir="${PFS_STATE_DIR:-/var/lib/pfs}"
+systemd_dir="${PFS_SYSTEMD_DIR:-/etc/systemd/system}"
+upgrade_units_file="${pfs_state_dir}/.upgrade-enabled-units"
+
+# record_enabled_policyfs_units snapshots enabled mount services and timers before dpkg runs the old package cleanup hooks.
+record_enabled_policyfs_units() {
+  if ! mkdir -p "${pfs_state_dir}"; then
+    return 0
+  fi
+
+  if ! : >"${upgrade_units_file}"; then
+    return 0
+  fi
+
+  for path in "${systemd_dir}/multi-user.target.wants/"pfs@*.service "${systemd_dir}/timers.target.wants/"pfs-index@*.timer "${systemd_dir}/timers.target.wants/"pfs-move@*.timer "${systemd_dir}/timers.target.wants/"pfs-prune@*.timer "${systemd_dir}/timers.target.wants/"pfs-maint@*.timer; do
+    if [ -e "${path}" ]; then
+      if ! basename "${path}" >>"${upgrade_units_file}"; then
+        rm -f "${upgrade_units_file}" || true
+        return 0
+      fi
+    fi
+  done
+
+  if [ ! -s "${upgrade_units_file}" ]; then
+    rm -f "${upgrade_units_file}"
+    return 0
+  fi
+
+  if ! sort -u -o "${upgrade_units_file}" "${upgrade_units_file}"; then
+    rm -f "${upgrade_units_file}" || true
+  fi
+}
+
+case "${1:-}" in
+install | upgrade)
+  if [ -n "${2:-}" ]; then
+    record_enabled_policyfs_units
+  fi
+  ;;
+abort-install | abort-upgrade)
+  rm -f "${upgrade_units_file}" || true
+  ;;
+esac

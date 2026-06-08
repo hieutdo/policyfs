@@ -35,6 +35,7 @@ if [[ "${arch}" != "amd64" ]]; then
   exit 1
 fi
 pkg_dir="${build_dir}/pfs"
+systemd_unit_dir="${pkg_dir}/lib/systemd/system"
 debian_dir="${pkg_dir}/DEBIAN"
 out_dir="${OUT_DIR:-${root_dir}/dist}"
 
@@ -43,25 +44,26 @@ mkdir -p "${debian_dir}" \
   "${pkg_dir}/usr/bin" \
   "${pkg_dir}/etc/pfs" \
   "${pkg_dir}/etc/logrotate.d" \
-  "${pkg_dir}/etc/systemd/system" \
+  "${systemd_unit_dir}" \
   "${pkg_dir}/var/lib/pfs" \
   "${out_dir}"
 
 sed "s/@VERSION@/${version}/g; s/@ARCH@/${arch}/g" "${root_dir}/packaging/deb/control.in" >"${debian_dir}/control"
 
+install -m 0755 "${root_dir}/packaging/deb/preinst" "${debian_dir}/preinst"
 install -m 0755 "${root_dir}/packaging/deb/postinst" "${debian_dir}/postinst"
 install -m 0755 "${root_dir}/packaging/deb/prerm" "${debian_dir}/prerm"
 install -m 0755 "${root_dir}/packaging/deb/postrm" "${debian_dir}/postrm"
 
-install -m 0644 "${root_dir}/packaging/systemd/pfs@.service" "${pkg_dir}/etc/systemd/system/pfs@.service"
-install -m 0644 "${root_dir}/packaging/systemd/pfs-index@.service" "${pkg_dir}/etc/systemd/system/pfs-index@.service"
-install -m 0644 "${root_dir}/packaging/systemd/pfs-index@.timer" "${pkg_dir}/etc/systemd/system/pfs-index@.timer"
-install -m 0644 "${root_dir}/packaging/systemd/pfs-move@.service" "${pkg_dir}/etc/systemd/system/pfs-move@.service"
-install -m 0644 "${root_dir}/packaging/systemd/pfs-move@.timer" "${pkg_dir}/etc/systemd/system/pfs-move@.timer"
-install -m 0644 "${root_dir}/packaging/systemd/pfs-prune@.service" "${pkg_dir}/etc/systemd/system/pfs-prune@.service"
-install -m 0644 "${root_dir}/packaging/systemd/pfs-prune@.timer" "${pkg_dir}/etc/systemd/system/pfs-prune@.timer"
-install -m 0644 "${root_dir}/packaging/systemd/pfs-maint@.service" "${pkg_dir}/etc/systemd/system/pfs-maint@.service"
-install -m 0644 "${root_dir}/packaging/systemd/pfs-maint@.timer" "${pkg_dir}/etc/systemd/system/pfs-maint@.timer"
+install -m 0644 "${root_dir}/packaging/systemd/pfs@.service" "${systemd_unit_dir}/pfs@.service"
+install -m 0644 "${root_dir}/packaging/systemd/pfs-index@.service" "${systemd_unit_dir}/pfs-index@.service"
+install -m 0644 "${root_dir}/packaging/systemd/pfs-index@.timer" "${systemd_unit_dir}/pfs-index@.timer"
+install -m 0644 "${root_dir}/packaging/systemd/pfs-move@.service" "${systemd_unit_dir}/pfs-move@.service"
+install -m 0644 "${root_dir}/packaging/systemd/pfs-move@.timer" "${systemd_unit_dir}/pfs-move@.timer"
+install -m 0644 "${root_dir}/packaging/systemd/pfs-prune@.service" "${systemd_unit_dir}/pfs-prune@.service"
+install -m 0644 "${root_dir}/packaging/systemd/pfs-prune@.timer" "${systemd_unit_dir}/pfs-prune@.timer"
+install -m 0644 "${root_dir}/packaging/systemd/pfs-maint@.service" "${systemd_unit_dir}/pfs-maint@.service"
+install -m 0644 "${root_dir}/packaging/systemd/pfs-maint@.timer" "${systemd_unit_dir}/pfs-maint@.timer"
 install -m 0644 "${root_dir}/packaging/config/pfs.example.yaml" "${pkg_dir}/etc/pfs/pfs.yaml.example"
 install -m 0644 "${root_dir}/packaging/logrotate/pfs" "${pkg_dir}/etc/logrotate.d/pfs"
 

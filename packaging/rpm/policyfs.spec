@@ -43,25 +43,30 @@ if [ -f /etc/pfs/pfs.yaml.example ] && [ ! -f /etc/pfs/pfs.yaml ]; then
 fi
 
 if command -v systemctl >/dev/null 2>&1; then
-  systemctl daemon-reload || :
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  if [ "$1" -gt 1 ]; then
+    systemctl try-restart 'pfs@*.service' >/dev/null 2>&1 || true
+  fi
 fi
 
 %preun
-if [ "$1" -eq 0 ] && command -v systemctl >/dev/null 2>&1; then
-  systemctl stop 'pfs@*.service' >/dev/null 2>&1 || :
-  systemctl stop 'pfs-index@*.service' >/dev/null 2>&1 || :
-  systemctl stop 'pfs-index@*.timer' >/dev/null 2>&1 || :
-  systemctl stop 'pfs-move@*.service' >/dev/null 2>&1 || :
-  systemctl stop 'pfs-move@*.timer' >/dev/null 2>&1 || :
-  systemctl stop 'pfs-prune@*.service' >/dev/null 2>&1 || :
-  systemctl stop 'pfs-prune@*.timer' >/dev/null 2>&1 || :
-  systemctl stop 'pfs-maint@*.service' >/dev/null 2>&1 || :
-  systemctl stop 'pfs-maint@*.timer' >/dev/null 2>&1 || :
+if [ "$1" -eq 0 ]; then
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl stop 'pfs@*.service' >/dev/null 2>&1 || true
+    systemctl stop 'pfs-index@*.service' >/dev/null 2>&1 || true
+    systemctl stop 'pfs-index@*.timer' >/dev/null 2>&1 || true
+    systemctl stop 'pfs-move@*.service' >/dev/null 2>&1 || true
+    systemctl stop 'pfs-move@*.timer' >/dev/null 2>&1 || true
+    systemctl stop 'pfs-prune@*.service' >/dev/null 2>&1 || true
+    systemctl stop 'pfs-prune@*.timer' >/dev/null 2>&1 || true
+    systemctl stop 'pfs-maint@*.service' >/dev/null 2>&1 || true
+    systemctl stop 'pfs-maint@*.timer' >/dev/null 2>&1 || true
+  fi
 fi
 
 %postun
 if command -v systemctl >/dev/null 2>&1; then
-  systemctl daemon-reload || :
+  systemctl daemon-reload >/dev/null 2>&1 || true
 fi
 
 %files

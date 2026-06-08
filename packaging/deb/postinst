@@ -1,6 +1,147 @@
 #!/bin/sh
 set -eu
 
+pfs_etc_dir="${PFS_ETC_DIR:-/etc/pfs}"
+pfs_state_dir="${PFS_STATE_DIR:-/var/lib/pfs}"
+legacy_systemd_dir="${PFS_SYSTEMD_DIR:-/etc/systemd/system}"
+vendor_systemd_dir="${PFS_VENDOR_SYSTEMD_DIR:-/lib/systemd/system}"
+upgrade_units_file="${pfs_state_dir}/.upgrade-enabled-units"
+
+# policyfs_unit_template returns the template filename that backs a PolicyFS instance unit.
+policyfs_unit_template() {
+  case "${1:-}" in
+  pfs@*.service)
+    echo "pfs@.service"
+    ;;
+  pfs-index@*.service)
+    echo "pfs-index@.service"
+    ;;
+  pfs-index@*.timer)
+    echo "pfs-index@.timer"
+    ;;
+  pfs-move@*.service)
+    echo "pfs-move@.service"
+    ;;
+  pfs-move@*.timer)
+    echo "pfs-move@.timer"
+    ;;
+  pfs-prune@*.service)
+    echo "pfs-prune@.service"
+    ;;
+  pfs-prune@*.timer)
+    echo "pfs-prune@.timer"
+    ;;
+  pfs-maint@*.service)
+    echo "pfs-maint@.service"
+    ;;
+  pfs-maint@*.timer)
+    echo "pfs-maint@.timer"
+    ;;
+  *)
+    return 1
+    ;;
+  esac
+}
+
+# is_packaged_legacy_unit_copy reports whether a legacy /etc unit matches the packaged vendor copy and is safe to remove.
+is_packaged_legacy_unit_copy() {
+  legacy_path="${1:-}"
+  vendor_path="${2:-}"
+
+  if [ ! -e "${legacy_path}" ] || [ ! -e "${vendor_path}" ]; then
+    return 1
+  fi
+
+  if [ -L "${legacy_path}" ]; then
+    legacy_target="$(readlink "${legacy_path}" || true)"
+    [ "${legacy_target}" = "${vendor_path}" ]
+    return
+  fi
+
+  if [ ! -f "${legacy_path}" ] || [ ! -f "${vendor_path}" ]; then
+    return 1
+  fi
+
+  cmp -s "${legacy_path}" "${vendor_path}"
+}
+
+# remove_legacy_policyfs_unit_templates deletes packaged copies that older Debian packages incorrectly installed under /etc/systemd/system.
+remove_legacy_policyfs_unit_templates() {
+  for template in pfs@.service pfs-index@.service pfs-index@.timer pfs-move@.service pfs-move@.timer pfs-prune@.service pfs-prune@.timer pfs-maint@.service pfs-maint@.timer; do
+    legacy_path="${legacy_systemd_dir}/${template}"
+    vendor_path="${vendor_systemd_dir}/${template}"
+
+    if is_packaged_legacy_unit_copy "${legacy_path}" "${vendor_path}"; then
+      rm -f "${legacy_path}"
+    fi
+  done
+}
+
+# repair_legacy_policyfs_enablement_links rewrites stale wants links that still point at legacy /etc systemd unit paths.
+repair_legacy_policyfs_enablement_links() {
+  for link_path in "${legacy_systemd_dir}/multi-user.target.wants/"pfs@*.service "${legacy_systemd_dir}/timers.target.wants/"pfs-index@*.timer "${legacy_systemd_dir}/timers.target.wants/"pfs-move@*.timer "${legacy_systemd_dir}/timers.target.wants/"pfs-prune@*.timer "${legacy_systemd_dir}/timers.target.wants/"pfs-maint@*.timer; do
+    if [ ! -L "${link_path}" ]; then
+      continue
+    fi
+
+    unit="$(basename "${link_path}")"
+    template="$(policyfs_unit_template "${unit}" || true)"
+    if [ -z "${template}" ]; then
+      continue
+    fi
+
+    legacy_path="${legacy_systemd_dir}/${template}"
+    vendor_path="${vendor_systemd_dir}/${template}"
+    link_target="$(readlink "${link_path}" || true)"
+
+    if [ "${link_target}" != "${legacy_path}" ]; then
+      continue
+    fi
+
+    if [ -e "${legacy_path}" ] && ! is_packaged_legacy_unit_copy "${legacy_path}" "${vendor_path}"; then
+      continue
+    fi
+
+    rm -f "${link_path}"
+    systemctl enable "${unit}" >/dev/null 2>&1 || true
+  done
+}
+
+# reload_systemd_and_restore_enabled_units reloads systemd, repairs legacy enablement drift, and restores enabled mount services and timers captured before upgrade cleanup.
+reload_systemd_and_restore_enabled_units() {
+  remove_legacy_policyfs_unit_templates
+  systemctl daemon-reload || true
+  repair_legacy_policyfs_enablement_links
+
+  if [ "${1:-}" != "configure" ] || [ -z "${2:-}" ]; then
+    rm -f "${upgrade_units_file}"
+    return 0
+  fi
+
+  if [ ! -f "${upgrade_units_file}" ]; then
+    return 0
+  fi
+
+  while IFS= read -r unit; do
+    if [ -z "${unit}" ]; then
+      continue
+    fi
+
+    systemctl enable "${unit}" >/dev/null 2>&1 || true
+
+    case "${unit}" in
+    *.service)
+      systemctl restart "${unit}" >/dev/null 2>&1 || true
+      ;;
+    *.timer)
+      systemctl start "${unit}" >/dev/null 2>&1 || true
+      ;;
+    esac
+  done <"${upgrade_units_file}"
+
+  rm -f "${upgrade_units_file}"
+}
+
 if [ "$(id -u)" -ne 0 ]; then
   echo "pfs: hint: run installer as root (sudo dpkg -i ...)" >&2
 fi
@@ -13,17 +154,17 @@ if ! command -v fusermount3 >/dev/null 2>&1; then
   echo "pfs: hint: install fuse3 (apt-get install fuse3) to use pfs mount" >&2
 fi
 
-if [ ! -d /etc/pfs ]; then
-  mkdir -p /etc/pfs
+if [ ! -d "${pfs_etc_dir}" ]; then
+  mkdir -p "${pfs_etc_dir}"
 fi
 
-if [ ! -f /etc/pfs/pfs.yaml ] && [ -f /etc/pfs/pfs.yaml.example ]; then
-  cp /etc/pfs/pfs.yaml.example /etc/pfs/pfs.yaml
-  echo "pfs: created /etc/pfs/pfs.yaml from example; please edit it" >&2
+if [ ! -f "${pfs_etc_dir}/pfs.yaml" ] && [ -f "${pfs_etc_dir}/pfs.yaml.example" ]; then
+  cp "${pfs_etc_dir}/pfs.yaml.example" "${pfs_etc_dir}/pfs.yaml"
+  echo "pfs: created ${pfs_etc_dir}/pfs.yaml from example; please edit it" >&2
 fi
 
 if command -v systemctl >/dev/null 2>&1; then
-  systemctl daemon-reload
+  reload_systemd_and_restore_enabled_units "${1:-}" "${2:-}"
   echo "pfs: next: systemctl enable --now pfs@<mount>.service" >&2
   echo "pfs: next: systemctl enable --now pfs-maint@<mount>.timer" >&2
   echo "pfs: hint: or enable individual timers (index/move/prune) instead of maint" >&2

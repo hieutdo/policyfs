@@ -86,6 +86,20 @@ sudo systemctl disable --now pfs-prune@media.timer
 sudo systemctl disable --now pfs-maint@media.timer
 ```
 
+## Package upgrades
+
+Debian and Ubuntu package upgrades preserve existing `pfs@<mount>.service` and timer enablement.
+
+During an upgrade, the package snapshots previously enabled mount services and timers before dpkg runs the old cleanup hooks, reloads systemd after unpack, and then restores those specific units. Aborted install or upgrade paths discard that transient snapshot instead of replaying it later.
+
+That means a mount such as `pfs@media.service` and any enabled maintenance timers come back after the package upgrade without needing a manual `systemctl enable` pass.
+
+Packaged unit files live in the distro-managed vendor unit directory; keep local changes in `/etc/systemd/system/*.d/` drop-ins rather than editing vendor files in place.
+
+Newer Debian and Ubuntu packages also migrate legacy packaged copies under `/etc/systemd/system/pfs*` back to the vendor unit directory and rewrite stale wants links, while leaving drop-ins under `*.d/` alone.
+
+Package removal and purge also clean up PolicyFS wants links so reinstall does not silently resurrect old enablement.
+
 ## Overrides
 
 Use drop-ins instead of editing vendor unit files:

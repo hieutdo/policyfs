@@ -1,15 +1,30 @@
 #!/bin/sh
 set -eu
 
-if command -v systemctl >/dev/null 2>&1; then
-  rm -f /etc/systemd/system/multi-user.target.wants/pfs@*.service
-  rm -f /etc/systemd/system/multi-user.target.wants/pfs-index@*.service
-  rm -f /etc/systemd/system/timers.target.wants/pfs-index@*.timer
-  rm -f /etc/systemd/system/multi-user.target.wants/pfs-move@*.service
-  rm -f /etc/systemd/system/timers.target.wants/pfs-move@*.timer
-  rm -f /etc/systemd/system/multi-user.target.wants/pfs-prune@*.service
-  rm -f /etc/systemd/system/timers.target.wants/pfs-prune@*.timer
-  rm -f /etc/systemd/system/multi-user.target.wants/pfs-maint@*.service
-  rm -f /etc/systemd/system/timers.target.wants/pfs-maint@*.timer
-  systemctl daemon-reload
-fi
+pfs_state_dir="${PFS_STATE_DIR:-/var/lib/pfs}"
+systemd_dir="${PFS_SYSTEMD_DIR:-/etc/systemd/system}"
+upgrade_units_file="${pfs_state_dir}/.upgrade-enabled-units"
+
+# cleanup_policyfs_enablement_links removes PolicyFS wants links when the package is actually removed or purged.
+cleanup_policyfs_enablement_links() {
+  for link_path in "${systemd_dir}/multi-user.target.wants/"pfs@*.service "${systemd_dir}/multi-user.target.wants/"pfs-index@*.service "${systemd_dir}/multi-user.target.wants/"pfs-move@*.service "${systemd_dir}/multi-user.target.wants/"pfs-prune@*.service "${systemd_dir}/multi-user.target.wants/"pfs-maint@*.service "${systemd_dir}/timers.target.wants/"pfs-index@*.timer "${systemd_dir}/timers.target.wants/"pfs-move@*.timer "${systemd_dir}/timers.target.wants/"pfs-prune@*.timer "${systemd_dir}/timers.target.wants/"pfs-maint@*.timer; do
+    if [ -L "${link_path}" ]; then
+      rm -f "${link_path}"
+    fi
+  done
+}
+
+# cleanup_policyfs_upgrade_state removes the transient upgrade snapshot when the package is no longer preserving upgrade state.
+cleanup_policyfs_upgrade_state() {
+  rm -f "${upgrade_units_file}"
+}
+
+case "${1:-}" in
+remove | purge)
+  cleanup_policyfs_enablement_links
+  cleanup_policyfs_upgrade_state
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload || true
+  fi
+  ;;
+esac
