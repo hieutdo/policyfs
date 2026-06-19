@@ -6,7 +6,7 @@ set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 build_dir="${BUILD_DIR:-${root_dir}/packaging/build}"
-binary_path="${root_dir}/bin/pfs"
+binary_path="${BINARY_PATH:-${root_dir}/bin/pfs}"
 
 if ! command -v dpkg-deb >/dev/null 2>&1; then
   echo "pfs: error: dpkg-deb not found (run inside Debian/Ubuntu container)" >&2

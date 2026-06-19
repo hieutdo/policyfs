@@ -24,7 +24,9 @@ func TestPackageDebShouldInstallSystemdUnitsUnderVendorDir(t *testing.T) {
 
 	outDir := t.TempDir()
 	buildDir := filepath.Join(t.TempDir(), "build")
+	binaryPath := filepath.Join(t.TempDir(), "pfs")
 	pkgName := filepath.Join(outDir, "policyfs_9.9.9-test_amd64.deb")
+	require.NoError(t, os.WriteFile(binaryPath, []byte("#!/bin/sh\nexit 0\n"), 0o755))
 
 	cmd := exec.Command("bash", filepath.Join(repoRoot, "scripts", "package_deb.sh"))
 	cmd.Dir = repoRoot
@@ -32,6 +34,7 @@ func TestPackageDebShouldInstallSystemdUnitsUnderVendorDir(t *testing.T) {
 		"VERSION=9.9.9-test",
 		"OUT_DIR="+outDir,
 		"BUILD_DIR="+buildDir,
+		"BINARY_PATH="+binaryPath,
 	)
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "expected package_deb.sh to succeed, got output: %s", string(output))

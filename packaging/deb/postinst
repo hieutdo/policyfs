@@ -62,7 +62,20 @@ is_packaged_legacy_unit_copy() {
     return 1
   fi
 
-  cmp -s "${legacy_path}" "${vendor_path}"
+  if command -v cmp >/dev/null 2>&1; then
+    if cmp -s "${legacy_path}" "${vendor_path}"; then
+      return 0
+    fi
+
+    cmp_status="$?"
+    if [ "${cmp_status}" -eq 1 ]; then
+      return 1
+    fi
+  fi
+
+  legacy_content="$(cat "${legacy_path}")"
+  vendor_content="$(cat "${vendor_path}")"
+  [ "${legacy_content}" = "${vendor_content}" ]
 }
 
 # remove_legacy_policyfs_unit_templates deletes packaged copies that older Debian packages incorrectly installed under /etc/systemd/system.

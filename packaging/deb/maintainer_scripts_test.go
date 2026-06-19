@@ -418,6 +418,24 @@ func TestPostinstConfigureShouldCleanupLegacyPackagedUnits(t *testing.T) {
 	}, env.logLines(t))
 }
 
+// TestPostinstConfigureShouldCleanupLegacyPackagedUnitsWithoutCmp verifies postinst still treats matching legacy unit copies as packaged files when cmp is unavailable.
+func TestPostinstConfigureShouldCleanupLegacyPackagedUnitsWithoutCmp(t *testing.T) {
+	env := newScriptEnv(t)
+	env.seedVendorPolicyfsTemplates(t)
+	env.writeExecutable(t, "cmp", "#!/bin/sh\nexit 127\n")
+	env.writeLegacyTemplate(t, "pfs@.service", templateContent("pfs@.service"))
+	serviceLink := env.seedLegacyEnablementLink(t, "pfs@media.service")
+
+	runScript(t, env, filepath.Join(".", "postinst"), "configure")
+
+	requireFileMissing(t, env.legacyUnitPath("pfs@.service"))
+	requireSymlinkTarget(t, serviceLink, env.vendorUnitPath("pfs@.service"))
+	require.Equal(t, []string{
+		"systemctl daemon-reload",
+		"systemctl enable pfs@media.service",
+	}, env.logLines(t))
+}
+
 // TestPostinstConfigureShouldKeepCustomLegacyUnits verifies postinst leaves custom /etc unit overrides alone when they differ from the packaged vendor copy.
 func TestPostinstConfigureShouldKeepCustomLegacyUnits(t *testing.T) {
 	env := newScriptEnv(t)
