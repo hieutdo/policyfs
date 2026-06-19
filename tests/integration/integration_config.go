@@ -4,12 +4,15 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/hieutdo/policyfs/internal/config"
 	"github.com/stretchr/testify/require"
@@ -20,6 +23,9 @@ type IntegrationConfig struct {
 	// Storages controls which storage_paths are generated for this test.
 	// If empty, the harness defaults to 2 storages: ssd1 + ssd2.
 	Storages []IntegrationStorage
+
+	// LogLevel overrides root log.level for the generated integration config.
+	LogLevel string
 
 	// MountArgs are extra arguments passed to `pfs mount <mount_name>`.
 	// Use this to enable optional debug features (e.g., disk access logging dedup/summary)
@@ -60,6 +66,7 @@ type IntegrationStorage struct {
 // MountedFS describes a mounted PolicyFS instance used by an integration test.
 type MountedFS struct {
 	ConfigPath   string
+	LogPath      string
 	MountName    string
 	MountPoint   string
 	RuntimeDir   string
@@ -73,6 +80,12 @@ type MountedFS struct {
 	mountCancel context.CancelFunc
 	mountDone   chan struct{}
 	stopped     bool
+}
+
+// DaemonLogExpectation describes one structured daemon log entry that must appear in order.
+type DaemonLogExpectation struct {
+	Msg    string
+	Fields map[string]string
 }
 
 // StorageRoot returns the physical root directory for a storage id.
@@ -116,6 +129,44 @@ func (m *MountedFS) MustStatT(t testing.TB, path string) *syscall.Stat_t {
 	return st
 }
 
+// ReadDaemonLog reads the daemon log file configured for this mounted filesystem.
+func (m *MountedFS) ReadDaemonLog() ([]byte, error) {
+	if m == nil {
+		return nil, fmt.Errorf("mounted fs is nil")
+	}
+	if strings.TrimSpace(m.LogPath) == "" {
+		return nil, fmt.Errorf("daemon log path is not configured")
+	}
+	b, err := os.ReadFile(m.LogPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read daemon log %s: %w", m.LogPath, err)
+	}
+	return b, nil
+}
+
+// MustWaitForDaemonLogSequence polls until the daemon log contains the expected entry sequence.
+func (m *MountedFS) MustWaitForDaemonLogSequence(t testing.TB, timeout time.Duration, expected []DaemonLogExpectation) []byte {
+	t.Helper()
+	require.NotEmpty(t, expected)
+
+	deadline := time.Now().Add(timeout)
+	var logData []byte
+	for time.Now().Before(deadline) {
+		b, err := m.ReadDaemonLog()
+		if err == nil {
+			logData = b
+			if daemonLogContainsSequence(logData, expected) {
+				return logData
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	require.NotEmpty(t, logData, "expected daemon log to be readable at %s", m.LogPath)
+	t.Fatalf("expected daemon log sequence in %s:\n%s\nlog:\n%s", m.LogPath, formatDaemonLogExpectations(expected), string(logData))
+	return nil
+}
+
 // RunAsUser runs a shell command as another user.
 func (m *MountedFS) RunAsUser(t testing.TB, user string, cmd string) error {
 	t.Helper()
@@ -126,6 +177,86 @@ func (m *MountedFS) RunAsUser(t testing.TB, user string, cmd string) error {
 		return fmt.Errorf("failed to run command as user %s: %w", user, err)
 	}
 	return nil
+}
+
+// daemonLogContainsSequence reports whether the expected structured log entries appear in order.
+func daemonLogContainsSequence(logData []byte, expected []DaemonLogExpectation) bool {
+	if len(expected) == 0 {
+		return true
+	}
+
+	entries := parseDaemonLogEntries(logData)
+	idx := 0
+	for _, entry := range entries {
+		if daemonLogEntryMatches(entry, expected[idx]) {
+			idx++
+			if idx == len(expected) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// parseDaemonLogEntries decodes newline-delimited JSON daemon logs into generic maps.
+func parseDaemonLogEntries(logData []byte) []map[string]any {
+	trimmed := strings.TrimSpace(string(logData))
+	if trimmed == "" {
+		return nil
+	}
+
+	lines := strings.Split(trimmed, "\n")
+	entries := make([]map[string]any, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var entry map[string]any
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			continue
+		}
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
+// daemonLogEntryMatches reports whether one parsed JSON log entry matches the expectation.
+func daemonLogEntryMatches(entry map[string]any, expected DaemonLogExpectation) bool {
+	if entry == nil {
+		return false
+	}
+	msg, _ := entry["msg"].(string)
+	if msg != expected.Msg {
+		return false
+	}
+	for key, want := range expected.Fields {
+		got, ok := entry[key]
+		if !ok {
+			return false
+		}
+		if fmt.Sprint(got) != want {
+			return false
+		}
+	}
+	return true
+}
+
+// formatDaemonLogExpectations renders expected log entries for readable test failures.
+func formatDaemonLogExpectations(expected []DaemonLogExpectation) string {
+	parts := make([]string, 0, len(expected))
+	for _, item := range expected {
+		fields := make([]string, 0, len(item.Fields))
+		for key, value := range item.Fields {
+			fields = append(fields, fmt.Sprintf("%s=%s", key, value))
+		}
+		if len(fields) == 0 {
+			parts = append(parts, item.Msg)
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s (%s)", item.Msg, strings.Join(fields, ", ")))
+	}
+	return strings.Join(parts, " -> ")
 }
 
 // CreateDirInStoragePath creates a directory tree under a storage root.

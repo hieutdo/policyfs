@@ -103,15 +103,19 @@ func (n *Node) Lookup(ctx context.Context, name string, out *gofuse.EntryOut) (*
 
 // Getattr reads attributes using the router's read target order.
 func (n *Node) Getattr(ctx context.Context, f fs.FileHandle, out *gofuse.AttrOut) syscall.Errno {
-	rt, _ := n.runtime()
-	return getattrPath(ctx, n.EmbeddedInode(), rt, n.db, out)
+	rt, log := n.runtime()
+	errno := getattrPath(ctx, n.EmbeddedInode(), rt, n.db, log, out)
+	if errno != 0 && errno != syscall.ENOENT {
+		log.Error().Str("op", "getattr").Str("path", n.Path(n.Root())).Err(errno).Msg("failed to getattr")
+	}
+	return errno
 }
 
 // Readdir returns a union of directory entries across read targets, deduped by name.
 func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	rt, log := n.runtime()
 	start := time.Now()
-	ds, errno := readdirPath(ctx, n.EmbeddedInode(), rt, n.db)
+	ds, errno := readdirPath(ctx, n.EmbeddedInode(), rt, n.db, log)
 	if errno != 0 {
 		log.Error().Str("op", "readdir").Str("path", n.Path(n.Root())).Err(errno).Msg("failed to readdir")
 	} else {
@@ -124,7 +128,7 @@ func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 func (n *Node) OpendirHandle(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
 	rt, log := n.runtime()
 	start := time.Now()
-	entries, errno := listDirEntries(ctx, n.EmbeddedInode(), rt, n.db)
+	entries, errno := listDirEntries(ctx, n.EmbeddedInode(), rt, n.db, log)
 	if errno != 0 {
 		log.Error().Str("op", "opendir").Str("path", n.Path(n.Root())).Err(errno).Msg("failed to opendir")
 		return nil, 0, errno
@@ -140,7 +144,7 @@ func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 	write := flags&gofuse.O_ANYWRITE != 0
 
 	start := time.Now()
-	fh, openFlags, errno := openFirst(ctx, rt, n.db, virtualPath, int(flags), write)
+	fh, openFlags, errno := openFirst(ctx, rt, n.db, log, virtualPath, int(flags), write)
 	if errno != 0 {
 		if errno == syscall.EROFS {
 			log.Debug().Str("op", "open").Str("path", virtualPath).Bool("write", write).Msg("open blocked: indexed target is read-only")
@@ -270,10 +274,22 @@ func (n *Node) Statfs(ctx context.Context, out *gofuse.StatfsOut) syscall.Errno 
 
 // Release closes any file handles we created.
 func (n *Node) Release(ctx context.Context, f fs.FileHandle) syscall.Errno {
+	_, log := n.runtime()
+	start := time.Now()
+	fh, fhOK := f.(*FileHandle)
 	if r, ok := f.(interface {
 		Release(ctx context.Context) syscall.Errno
 	}); ok {
-		return r.Release(ctx)
+		errno := r.Release(ctx)
+		if fhOK && fh != nil && fh.flags&gofuse.O_ANYWRITE != 0 {
+			durMs := time.Since(start).Milliseconds()
+			if errno != 0 {
+				log.Error().Str("op", "release").Str("path", fh.virtualPath).Str("storage_id", fh.storageID).Bool("indexed", fh.indexed).Bool("write", true).Int64("duration_ms", durMs).Err(errno).Msg("failed to release")
+				return errno
+			}
+			log.Debug().Str("op", "release").Str("path", fh.virtualPath).Str("storage_id", fh.storageID).Bool("indexed", fh.indexed).Bool("write", true).Int64("duration_ms", durMs).Msg("release")
+		}
+		return errno
 	}
 	return 0
 }

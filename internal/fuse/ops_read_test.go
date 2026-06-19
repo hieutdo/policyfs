@@ -9,6 +9,7 @@ import (
 
 	"github.com/hieutdo/policyfs/internal/config"
 	"github.com/hieutdo/policyfs/internal/router"
+	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 )
 
@@ -49,7 +50,7 @@ func Test_listDirEntriesForVirtualPath(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(dir2, "b.txt"), []byte("b"), 0o644))
 		require.NoError(t, os.MkdirAll(filepath.Join(dir2, "dup"), 0o755))
 
-		entries, errno := listDirEntriesForVirtualPath(context.Background(), virtualDir, rt, nil)
+		entries, errno := listDirEntriesForVirtualPath(context.Background(), virtualDir, rt, nil, zerolog.Logger{})
 		require.Equal(t, syscall.Errno(0), errno)
 
 		got := map[string]uint32{}
@@ -72,7 +73,7 @@ func Test_listDirEntriesForVirtualPath(t *testing.T) {
 		require.NoError(t, os.MkdirAll(dir2, 0o755))
 		require.NoError(t, os.WriteFile(filepath.Join(dir2, "b.txt"), []byte("b"), 0o644))
 
-		entries, errno := listDirEntriesForVirtualPath(context.Background(), virtualDir, rt, nil)
+		entries, errno := listDirEntriesForVirtualPath(context.Background(), virtualDir, rt, nil, zerolog.Logger{})
 		require.Equal(t, syscall.Errno(0), errno)
 		got := map[string]struct{}{}
 		for _, e := range entries {
@@ -84,7 +85,7 @@ func Test_listDirEntriesForVirtualPath(t *testing.T) {
 	})
 
 	t.Run("should return ENOENT when no directory exists on any target", func(t *testing.T) {
-		entries, errno := listDirEntriesForVirtualPath(context.Background(), "missing-dir", rt, nil)
+		entries, errno := listDirEntriesForVirtualPath(context.Background(), "missing-dir", rt, nil, zerolog.Logger{})
 		require.Nil(t, entries)
 		require.Equal(t, syscall.ENOENT, errno)
 	})

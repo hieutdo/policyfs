@@ -44,18 +44,22 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 		physicalPath = h.physicalPath
 		indexed = h.indexed
 		indexedStorageID = h.storageID
+		log.Debug().Str("op", "setattr").Str("path", virtualPath).Str("storage_id", indexedStorageID).Str("real_path", physicalPath).Bool("indexed", indexed).Msg("setattr resolved from open handle")
 	} else {
 		targets, err := rt.ResolveReadTargets(virtualPath)
 		if err != nil {
 			return toErrno(err)
 		}
+		log.Debug().Str("op", "setattr").Str("path", virtualPath).Msg("setattr resolved read targets")
 		found := false
 		for _, t := range targets {
+			log.Debug().Str("op", "setattr").Str("path", virtualPath).Str("storage_id", t.ID).Bool("indexed", t.Indexed).Msg("setattr scanning target")
 			if !t.Indexed {
 				p := filepath.Join(t.Root, virtualPath)
 				st := syscall.Stat_t{}
 				if err := syscall.Lstat(p, &st); err != nil {
 					if errors.Is(err, syscall.ENOENT) {
+						log.Debug().Str("op", "setattr").Str("path", virtualPath).Str("storage_id", t.ID).Str("real_path", p).Msg("setattr missed on non-indexed target")
 						continue
 					}
 					return toErrno(err)
@@ -63,6 +67,7 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 				indexed = false
 				indexedStorageID = t.ID
 				physicalPath = p
+				log.Debug().Str("op", "setattr").Str("path", virtualPath).Str("storage_id", t.ID).Str("real_path", p).Msg("setattr resolved non-indexed target")
 				found = true
 				break
 			}
@@ -78,9 +83,11 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 			if ok {
 				indexed = true
 				indexedStorageID = t.ID
+				log.Debug().Str("op", "setattr").Str("path", virtualPath).Str("storage_id", t.ID).Msg("setattr resolved indexed file")
 				found = true
 				break
 			}
+			log.Debug().Str("op", "setattr").Str("path", virtualPath).Str("storage_id", t.ID).Msg("setattr indexed file missed; probing directory")
 			dirOK, err := n.db.DirExists(ctx, t.ID, virtualPath)
 			if err != nil {
 				return toErrno(fmt.Errorf("failed to getattr indexed dir: %w", err))
@@ -88,11 +95,14 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 			if dirOK {
 				indexed = true
 				indexedStorageID = t.ID
+				log.Debug().Str("op", "setattr").Str("path", virtualPath).Str("storage_id", t.ID).Msg("setattr resolved indexed directory")
 				found = true
 				break
 			}
+			log.Debug().Str("op", "setattr").Str("path", virtualPath).Str("storage_id", t.ID).Msg("setattr missed on indexed target")
 		}
 		if !found {
+			log.Debug().Str("op", "setattr").Str("path", virtualPath).Msg("setattr missed on all targets")
 			return syscall.ENOENT
 		}
 	}
@@ -107,6 +117,7 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 			return toErrno(fmt.Errorf("failed to getattr indexed file: %w", err))
 		}
 		if !ok {
+			log.Debug().Str("op", "setattr").Str("path", virtualPath).Str("storage_id", indexedStorageID).Msg("setattr indexed entry missing after resolution")
 			return syscall.ENOENT
 		}
 
@@ -162,11 +173,16 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 			if err != nil {
 				return toErrno(err)
 			}
+			if !updated {
+				log.Debug().Str("op", "setattr").Str("path", virtualPath).Str("storage_id", indexedStorageID).Msg("setattr indexed metadata update missed")
+			}
 			if updated {
+				log.Debug().Str("op", "setattr").Str("path", virtualPath).Str("storage_id", indexedStorageID).Msg("setattr updated indexed metadata")
 				if err := eventlog.Append(ctx, n.mountName, eventlog.SetattrEvent{Type: eventlog.TypeSetattr, StorageID: indexedStorageID, Path: virtualPath, Mode: modePtr, UID: uidPtr, GID: gidPtr, MTime: mtimePtr, TS: time.Now().Unix()}); err != nil {
 					log.Error().Str("op", "setattr").Str("path", virtualPath).Str("storage_id", indexedStorageID).Err(err).Msg("failed to append eventlog")
 					return syscall.EIO
 				}
+				log.Debug().Str("op", "setattr").Str("path", virtualPath).Str("storage_id", indexedStorageID).Msg("setattr appended deferred event")
 			}
 		}
 
@@ -175,8 +191,10 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 			return toErrno(fmt.Errorf("failed to getattr indexed file: %w", err))
 		}
 		if !ok {
+			log.Debug().Str("op", "setattr").Str("path", virtualPath).Str("storage_id", indexedStorageID).Msg("setattr indexed entry missing after refresh")
 			return syscall.ENOENT
 		}
+		log.Debug().Str("op", "setattr").Str("path", virtualPath).Str("storage_id", indexedStorageID).Msg("setattr refreshed indexed attributes")
 		out.Size = uint64(cur.Size)
 		out.Mtime = uint64(cur.MTimeSec)
 		out.Mtimensec = 0
@@ -323,7 +341,7 @@ func (n *Node) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrI
 		return toErrno(err)
 	}
 	out.FromStat(&st)
-	ev := log.Debug().Str("op", "setattr").Str("path", virtualPath).Bool("indexed", false)
+	ev := log.Debug().Str("op", "setattr").Str("path", virtualPath).Str("storage_id", indexedStorageID).Str("real_path", physicalPath).Bool("indexed", false)
 	if _, ok := in.GetMode(); ok {
 		ev = ev.Bool("chmod", true)
 	}

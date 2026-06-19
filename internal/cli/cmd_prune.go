@@ -71,6 +71,17 @@ This command executes physical mutations (unlink/rmdir/rename/chmod/chown/utimen
 					printPruneAction(stdout, mountName, e)
 				}}
 			}
+			buildPruneHooks := func(mountName string, mountCfg *config.MountConfig) (prune.Hooks, func() error, error) {
+				hooks := actionHook(mountName)
+				effectiveLogCfg := mountCfg.EffectiveLogConfig(rootCfg.Log)
+				jobLogBase, closer, err := NewJobLogger(effectiveLogCfg, "")
+				if err != nil {
+					return prune.Hooks{}, nil, err
+				}
+				jobLog := jobLogBase.With().Str("component", "cli").Str("op", "prune").Str("mount", mountName).Logger()
+				hooks.Log = &jobLog
+				return hooks, closer, nil
+			}
 
 			if all {
 				mounts := make([]string, 0, len(rootCfg.Mounts))
@@ -87,7 +98,18 @@ This command executes physical mutations (unlink/rmdir/rename/chmod/chown/utimen
 						anyFailed = true
 						continue
 					}
-					res, err := pruneOneshot(ctx, mountName, mountCfg, prune.Opts{DryRun: dryRun, Limit: limit}, actionHook(mountName))
+					hooks, closer, err := buildPruneHooks(mountName, mountCfg)
+					if err != nil {
+						anyFailed = true
+						if !quiet {
+							fmt.Fprintf(stdout, "pfs prune: mount=%s failed: %s\n", mountName, simplifyError(err))
+						}
+						continue
+					}
+					res, err := pruneOneshot(ctx, mountName, mountCfg, prune.Opts{DryRun: dryRun, Limit: limit}, hooks)
+					if closer != nil {
+						_ = closer()
+					}
 					if err != nil {
 						anyFailed = true
 						if !quiet {
@@ -124,7 +146,17 @@ This command executes physical mutations (unlink/rmdir/rename/chmod/chown/utimen
 				return &CLIError{Code: ExitUsage, Cmd: "prune", Headline: "invalid arguments", Cause: rootCause(err), Hint: "run 'pfs prune --help'"}
 			}
 
-			res, err := pruneOneshot(ctx, mountName, mountCfg, prune.Opts{DryRun: dryRun, Limit: limit}, actionHook(mountName))
+			hooks, closer, err := buildPruneHooks(mountName, mountCfg)
+			if err != nil {
+				if _, ok := errors.AsType[*OpenLogFileError](err); ok {
+					return &CLIError{Code: ExitFail, Cmd: "prune", Headline: "failed to open log file", Cause: rootCause(err)}
+				}
+				return &CLIError{Code: ExitFail, Cmd: "prune", Headline: "unexpected error", Cause: rootCause(err)}
+			}
+			if closer != nil {
+				defer func() { _ = closer() }()
+			}
+			res, err := pruneOneshot(ctx, mountName, mountCfg, prune.Opts{DryRun: dryRun, Limit: limit}, hooks)
 			if err != nil {
 				if ce, ok := errors.AsType[*CLIError](err); ok {
 					return ce

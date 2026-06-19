@@ -13,6 +13,7 @@ import (
 	"github.com/hieutdo/policyfs/internal/errkind"
 	"github.com/hieutdo/policyfs/internal/indexdb"
 	"github.com/hieutdo/policyfs/internal/router"
+	"github.com/rs/zerolog"
 )
 
 // stableIno returns a deterministic inode number for a (storageID, virtualPath) pair.
@@ -46,7 +47,7 @@ func stableIno(storageID string, virtualPath string) uint64 {
 }
 
 // openFirst opens a file by searching targets in the router-defined order.
-func openFirst(ctx context.Context, rt *router.Router, db *indexdb.DB, virtualPath string, flags int, write bool) (fs.FileHandle, uint32, syscall.Errno) {
+func openFirst(ctx context.Context, rt *router.Router, db *indexdb.DB, log zerolog.Logger, virtualPath string, flags int, write bool) (fs.FileHandle, uint32, syscall.Errno) {
 	if rt == nil {
 		return nil, 0, toErrno(&errkind.NilError{What: "router"})
 	}
@@ -64,25 +65,36 @@ func openFirst(ctx context.Context, rt *router.Router, db *indexdb.DB, virtualPa
 	if err != nil {
 		return nil, 0, toErrno(err)
 	}
+	log.Debug().Str("op", "open").Str("path", virtualPath).Bool("write", write).Msg("open resolved targets")
 
 	sawIndexed := false
 	for _, t := range targets {
+		log.Debug().Str("op", "open").Str("path", virtualPath).Str("storage_id", t.ID).Bool("indexed", t.Indexed).Bool("write", write).Msg("open scanning target")
 		if write && t.Indexed {
 			sawIndexed = true
+			log.Debug().Str("op", "open").Str("path", virtualPath).Str("storage_id", t.ID).Msg("open skipped indexed write target")
 			continue
 		}
 		physicalPath := filepath.Join(t.Root, virtualPath)
 		if t.Indexed {
 			if db == nil {
+				log.Error().Str("op", "open").Str("path", virtualPath).Str("storage_id", t.ID).Msg("failed to open: db is nil for indexed target")
 				return nil, 0, syscall.EIO
 			}
 			f, ok, err := db.GetEffectiveFile(ctx, t.ID, virtualPath)
 			if err != nil {
+				log.Debug().Str("op", "open").Str("path", virtualPath).Str("storage_id", t.ID).Err(err).Msg("failed to resolve indexed file for open")
 				return nil, 0, toErrno(err)
 			}
-			if !ok || f.IsDir {
+			if !ok {
+				log.Debug().Str("op", "open").Str("path", virtualPath).Str("storage_id", t.ID).Msg("open missed on indexed target")
 				continue
 			}
+			if f.IsDir {
+				log.Debug().Str("op", "open").Str("path", virtualPath).Str("storage_id", t.ID).Msg("open skipped directory on indexed target")
+				continue
+			}
+			log.Debug().Str("op", "open").Str("path", virtualPath).Str("storage_id", t.ID).Str("real_path", f.RealPath).Msg("open resolved indexed real path")
 			if errno := validateVirtualPath(f.RealPath); errno != 0 {
 				return nil, 0, errno
 			}
@@ -95,16 +107,22 @@ func openFirst(ctx context.Context, rt *router.Router, db *indexdb.DB, virtualPa
 			if t.Indexed && errors.Is(oerr, syscall.ENOENT) {
 				fallbackPath := filepath.Join(t.Root, virtualPath)
 				if fallbackPath != physicalPath {
+					log.Debug().Str("op", "open").Str("path", virtualPath).Str("storage_id", t.ID).Str("real_path", physicalPath).Msg("open trying stale real_path fallback")
 					if fd2, oerr2 := syscall.Open(fallbackPath, flags, 0); oerr2 == nil {
+						log.Debug().Str("op", "open").Str("path", virtualPath).Str("storage_id", t.ID).Str("real_path", fallbackPath).Msg("open resolved on stale real_path fallback")
 						fh := &FileHandle{virtualPath: virtualPath, physicalPath: fallbackPath, storageID: t.ID, indexed: t.Indexed, fallback: true, fd: fd2, flags: uint32(flags)}
 						_ = ctx
 						return fh, 0, 0
+					} else {
+						log.Debug().Str("op", "open").Str("path", virtualPath).Str("storage_id", t.ID).Str("real_path", physicalPath).Err(oerr2).Msg("failed to open on stale real_path fallback")
 					}
 				}
 			}
 			if errors.Is(oerr, syscall.ENOENT) {
+				log.Debug().Str("op", "open").Str("path", virtualPath).Str("storage_id", t.ID).Str("real_path", physicalPath).Msg("open missed on target")
 				continue
 			}
+			log.Debug().Str("op", "open").Str("path", virtualPath).Str("storage_id", t.ID).Str("real_path", physicalPath).Err(oerr).Msg("failed to open on target")
 			return nil, 0, toErrno(oerr)
 		}
 		fh := &FileHandle{virtualPath: virtualPath, physicalPath: physicalPath, storageID: t.ID, indexed: t.Indexed, fd: fd, flags: uint32(flags)}
@@ -112,8 +130,10 @@ func openFirst(ctx context.Context, rt *router.Router, db *indexdb.DB, virtualPa
 		return fh, 0, 0
 	}
 	if sawIndexed {
+		log.Debug().Str("op", "open").Str("path", virtualPath).Bool("write", write).Msg("open blocked by indexed-only write targets")
 		return nil, 0, syscall.EROFS
 	}
+	log.Debug().Str("op", "open").Str("path", virtualPath).Bool("write", write).Msg("open missed on all targets")
 	return nil, 0, syscall.ENOENT
 }
 

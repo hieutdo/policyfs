@@ -9,6 +9,7 @@ import (
 
 	"github.com/hieutdo/policyfs/internal/config"
 	"github.com/hieutdo/policyfs/internal/router"
+	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 )
 
@@ -43,7 +44,7 @@ func Test_openFirst(t *testing.T) {
 		require.NoError(t, os.MkdirAll(filepath.Dir(physical2), 0o755))
 		require.NoError(t, os.WriteFile(physical2, []byte("x"), 0o644))
 
-		fh, _, errno := openFirst(context.Background(), rt, nil, virtualPath, syscall.O_RDONLY, false)
+		fh, _, errno := openFirst(context.Background(), rt, nil, zerolog.Logger{}, virtualPath, syscall.O_RDONLY, false)
 		require.Equal(t, syscall.Errno(0), errno)
 		require.NotNil(t, fh)
 
@@ -55,7 +56,7 @@ func Test_openFirst(t *testing.T) {
 
 	t.Run("should return ENOENT when no read target has the path", func(t *testing.T) {
 		virtualPath := "dir/missing.txt"
-		fh, _, errno := openFirst(context.Background(), rt, nil, virtualPath, syscall.O_RDONLY, false)
+		fh, _, errno := openFirst(context.Background(), rt, nil, zerolog.Logger{}, virtualPath, syscall.O_RDONLY, false)
 		require.Nil(t, fh)
 		require.Equal(t, syscall.ENOENT, errno)
 	})
@@ -79,7 +80,7 @@ func Test_openFirst(t *testing.T) {
 		require.NoError(t, err)
 
 		virtualPath := "dir/anything.txt"
-		fh, _, errno := openFirst(context.Background(), rtIndexed, nil, virtualPath, syscall.O_WRONLY, true)
+		fh, _, errno := openFirst(context.Background(), rtIndexed, nil, zerolog.Logger{}, virtualPath, syscall.O_WRONLY, true)
 		require.Nil(t, fh)
 		require.Equal(t, syscall.EROFS, errno)
 	})

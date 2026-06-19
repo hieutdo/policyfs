@@ -41,6 +41,7 @@ func (n *Node) Create(ctx context.Context, name string, flags uint32, mode uint3
 		log.Error().Str("op", "create").Str("path", virtualPath).Err(err).Msg("failed to select write target")
 		return nil, nil, 0, toErrno(err)
 	}
+	log.Debug().Str("op", "create").Str("path", virtualPath).Str("storage_id", target.ID).Bool("indexed", target.Indexed).Msg("create selected write target")
 	// Indexed targets are not writable yet.
 	if target.Indexed {
 		log.Debug().Str("op", "create").Str("path", virtualPath).Str("storage_id", target.ID).Msg("create blocked: indexed target is read-only")
@@ -54,6 +55,7 @@ func (n *Node) Create(ctx context.Context, name string, flags uint32, mode uint3
 		log.Error().Str("op", "create").Str("path", virtualPath).Str("storage_id", target.ID).Err(err).Msg("failed to materialize parent dirs")
 		return nil, nil, 0, toErrno(err)
 	}
+	log.Debug().Str("op", "create").Str("path", virtualPath).Str("storage_id", target.ID).Str("real_path", physicalPath).Msg("create materialized parent dirs")
 	if callerOK {
 		parentPhysical := filepath.Dir(physicalPath)
 		pst := syscall.Stat_t{}
@@ -75,6 +77,7 @@ func (n *Node) Create(ctx context.Context, name string, flags uint32, mode uint3
 		log.Error().Str("op", "create").Str("path", virtualPath).Str("storage_id", target.ID).Err(err).Msg("failed to open file for create")
 		return nil, nil, 0, toErrno(err)
 	}
+	log.Debug().Str("op", "create").Str("path", virtualPath).Str("storage_id", target.ID).Str("real_path", physicalPath).Msg("create opened physical file")
 	// If the daemon runs as root, preserve the calling uid/gid (and force gid when parent has setgid).
 	if err := preserveOwnerForCreate(ctx, filepath.Dir(physicalPath), fd, ""); err != nil {
 		_ = syscall.Close(fd)
@@ -94,7 +97,7 @@ func (n *Node) Create(ctx context.Context, name string, flags uint32, mode uint3
 	fh := &FileHandle{virtualPath: virtualPath, physicalPath: physicalPath, storageID: target.ID, indexed: target.Indexed, fd: fd, flags: flags}
 	write := flags&gofuse.O_ANYWRITE != 0
 	attachOpenTrackingFromStat(n, virtualPath, fh, write, &st)
-	log.Debug().Str("op", "create").Str("path", virtualPath).Str("storage_id", target.ID).Msg("create")
+	log.Debug().Str("op", "create").Str("path", virtualPath).Str("storage_id", target.ID).Str("real_path", physicalPath).Bool("indexed", false).Msg("create")
 	return ch, fh, 0, 0
 }
 
@@ -128,6 +131,7 @@ func (n *Node) Mkdir(ctx context.Context, name string, mode uint32, out *gofuse.
 		log.Error().Str("op", "mkdir").Str("path", virtualPath).Err(err).Msg("failed to select write target")
 		return nil, toErrno(err)
 	}
+	log.Debug().Str("op", "mkdir").Str("path", virtualPath).Str("storage_id", target.ID).Bool("indexed", target.Indexed).Msg("mkdir selected write target")
 	// Indexed targets are not writable yet.
 	if target.Indexed {
 		log.Debug().Str("op", "mkdir").Str("path", virtualPath).Str("storage_id", target.ID).Msg("mkdir blocked: indexed target is read-only")
@@ -140,6 +144,7 @@ func (n *Node) Mkdir(ctx context.Context, name string, mode uint32, out *gofuse.
 		log.Error().Str("op", "mkdir").Str("path", virtualPath).Str("storage_id", target.ID).Err(err).Msg("failed to materialize parent dirs")
 		return nil, toErrno(err)
 	}
+	log.Debug().Str("op", "mkdir").Str("path", virtualPath).Str("storage_id", target.ID).Str("real_path", physicalPath).Msg("mkdir materialized parent dirs")
 
 	parentPhysical := filepath.Dir(physicalPath)
 	pst := syscall.Stat_t{}
@@ -158,11 +163,13 @@ func (n *Node) Mkdir(ctx context.Context, name string, mode uint32, out *gofuse.
 	if uint32(pst.Mode)&syscall.S_ISGID != 0 {
 		// setgid must propagate from the physical parent directory.
 		mode |= syscall.S_ISGID
+		log.Debug().Str("op", "mkdir").Str("path", virtualPath).Str("storage_id", target.ID).Str("real_path", parentPhysical).Msg("mkdir inherited setgid from physical parent")
 	}
 	if err := os.Mkdir(physicalPath, os.FileMode(mode)); err != nil {
 		log.Error().Str("op", "mkdir").Str("path", virtualPath).Str("storage_id", target.ID).Err(err).Msg("failed to mkdir")
 		return nil, toErrno(err)
 	}
+	log.Debug().Str("op", "mkdir").Str("path", virtualPath).Str("storage_id", target.ID).Str("real_path", physicalPath).Msg("mkdir created directory on disk")
 	// If the daemon runs as root, preserve the calling uid/gid (and force gid when parent has setgid).
 	if err := preserveOwnerForCreate(ctx, parentPhysical, -1, physicalPath); err != nil {
 		_ = syscall.Rmdir(physicalPath)
@@ -184,6 +191,6 @@ func (n *Node) Mkdir(ctx context.Context, name string, mode uint32, out *gofuse.
 	out.FromStat(&st)
 
 	ch := newChildInode(ctx, n.EmbeddedInode(), n.RootData, n.mountName, n.state, n.reload, n.db, n.disk, n.open, target.ID, virtualPath, uint32(st.Mode))
-	log.Debug().Str("op", "mkdir").Str("path", virtualPath).Str("storage_id", target.ID).Msg("mkdir")
+	log.Debug().Str("op", "mkdir").Str("path", virtualPath).Str("storage_id", target.ID).Str("real_path", physicalPath).Bool("indexed", false).Msg("mkdir")
 	return ch, 0
 }

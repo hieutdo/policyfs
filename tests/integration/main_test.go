@@ -209,6 +209,7 @@ func withMountedFS(t *testing.T, cfg IntegrationConfig, fn func(env *MountedFS))
 		MountName:    "integration",
 		MountPoint:   filepath.Join(mountBase, name),
 		ConfigPath:   filepath.Join(tmpDir, name+".yaml"),
+		LogPath:      filepath.Join(tmpDir, name+".log"),
 		RuntimeDir:   runtimeDir,
 		StateDir:     stateDir,
 		StorageRoots: storageRoots,
@@ -231,9 +232,8 @@ func withMountedFS(t *testing.T, cfg IntegrationConfig, fn func(env *MountedFS))
 
 	args := []string{"--config", env.ConfigPath, "mount", env.MountName}
 	args = append(args, cfg.MountArgs...)
-	logFile := filepath.Join(tmpDir, name+".log")
 	mountCmd := exec.CommandContext(ctx, pfsBin, args...)
-	mountCmd.Env = pfsTestEnv(env, logFile)
+	mountCmd.Env = pfsTestEnv(env, env.LogPath)
 	mountCmd.Stdout = os.Stdout
 	mountCmd.Stderr = os.Stderr
 	if err := mountCmd.Start(); err != nil {
@@ -288,7 +288,7 @@ func withMountedFS(t *testing.T, cfg IntegrationConfig, fn func(env *MountedFS))
 		_ = os.Remove(env.ConfigPath)
 		_ = os.RemoveAll(env.RuntimeDir)
 		_ = os.RemoveAll(env.StateDir)
-		_ = os.Remove(logFile)
+		_ = os.Remove(env.LogPath)
 	})
 
 	fn(env)
@@ -471,6 +471,7 @@ func writeIntegrationConfig(path string, mountName string, mountPoint string, st
 
 	rootCfg := config.RootConfig{
 		Fuse: config.FuseConfig{AllowOther: cfg.AllowOther},
+		Log:  config.LogConfig{Level: cfg.LogLevel},
 		Mounts: map[string]config.MountConfig{
 			mountName: mountCfg,
 		},

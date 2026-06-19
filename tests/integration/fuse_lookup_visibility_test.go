@@ -105,6 +105,55 @@ func TestMixed_lookup_shouldResolveIndexedChildrenWhenTopLevelDirExistsOnBothTar
 	})
 }
 
+// TestMixed_lookup_shouldResolveIndexedFileWhenCatchAllUsesStorageGroups verifies that a catch-all
+// rule using storage groups does not lose file visibility on indexed storage behind an unindexed
+// SSD read target.
+func TestMixed_lookup_shouldResolveIndexedFileWhenCatchAllUsesStorageGroups(t *testing.T) {
+	cfg := IntegrationConfig{
+		Storages: []IntegrationStorage{
+			{ID: "ssd1", Indexed: false, BasePath: "/mnt/ssd1/pfs-integration"},
+			{ID: "hdd1", Indexed: true, BasePath: "/mnt/hdd1/pfs-integration"},
+		},
+		StorageGroups: map[string][]string{
+			"ssds": {"ssd1"},
+			"hdds": {"hdd1"},
+		},
+		RoutingRules: []config.RoutingRule{{
+			Match:          "**",
+			ReadTargets:    []string{"ssds", "hdds"},
+			WriteTargets:   []string{"ssds"},
+			WritePolicy:    "most_free",
+			PathPreserving: true,
+		}},
+	}
+
+	withMountedFS(t, cfg, func(env *MountedFS) {
+		rel := "library/movies/existing/file.txt"
+		content := []byte("groups-regression")
+		env.MustCreateFileInStoragePath(t, content, "hdd1", rel)
+
+		mustRunPFS(t, env, "index", env.MountName)
+
+		rootEntries := env.MustReadDirInMountPoint(t, "")
+		require.Contains(t, dirEntryNames(rootEntries), "library")
+
+		libraryInfo := env.MustLstatInMountPoint(t, "library")
+		require.True(t, libraryInfo.IsDir())
+
+		moviesInfo := env.MustLstatInMountPoint(t, "library/movies")
+		require.True(t, moviesInfo.IsDir())
+
+		existingEntries := env.MustReadDirInMountPoint(t, "library/movies/existing")
+		require.Contains(t, dirEntryNames(existingEntries), "file.txt")
+
+		fileInfo := env.MustLstatInMountPoint(t, rel)
+		require.False(t, fileInfo.IsDir())
+
+		got := env.MustReadFileInMountPoint(t, rel)
+		require.Equal(t, content, got)
+	})
+}
+
 // TestMixed_lookup_shouldNotExposeFileHiddenByFirstMatchReadRule verifies that lookup/getattr do
 // not widen file visibility beyond first-match read routing, even when readdir unions descendant
 // rules for parent directories.

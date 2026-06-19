@@ -287,6 +287,19 @@ This command is intended for systemd timers to reduce disk wake-ups by batching 
 					printPruneAction(stdout, mountName, e)
 				}
 			}
+			effectiveLogCfg := mountCfg.EffectiveLogConfig(rootCfg.Log)
+			pruneLogBase, pruneLogCloser, err := NewJobLogger(effectiveLogCfg, "")
+			if err != nil {
+				if _, ok := errors.AsType[*OpenLogFileError](err); ok {
+					return &CLIError{Code: ExitFail, Cmd: "maint", Headline: "failed to open log file", Cause: rootCause(err)}
+				}
+				return &CLIError{Code: ExitFail, Cmd: "maint", Headline: "unexpected error", Cause: rootCause(err)}
+			}
+			if pruneLogCloser != nil {
+				defer func() { _ = pruneLogCloser() }()
+			}
+			pruneLog := pruneLogBase.With().Str("component", "cli").Str("op", "prune").Str("mount", mountName).Logger()
+			prHooks.Log = &pruneLog
 			prRes, err := prune.RunOneshot(ctx, mountName, mountCfg, prune.Opts{}, prHooks)
 			if err != nil {
 				if errors.Is(err, context.Canceled) {

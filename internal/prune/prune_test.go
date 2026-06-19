@@ -13,6 +13,7 @@ import (
 	"github.com/hieutdo/policyfs/internal/errkind"
 	"github.com/hieutdo/policyfs/internal/eventlog"
 	"github.com/hieutdo/policyfs/internal/indexdb"
+	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 )
 
@@ -153,7 +154,7 @@ func TestBuildVerboseEvent_shouldSetResultAndFields(t *testing.T) {
 // rely on string matching and returns stable typed errors.
 func TestApplyOneEvent_shouldHandleNilDBAndUnknownType(t *testing.T) {
 	t.Run("should return nil error kind when db is nil", func(t *testing.T) {
-		res, warnings, advance, retryLater, err := applyOneEvent(context.Background(), nil, nil, eventlog.DeleteEvent{Type: eventlog.TypeDelete, StorageID: "hdd1", Path: "a"}, false)
+		res, warnings, advance, retryLater, err := applyOneEvent(context.Background(), nil, nil, eventlog.DeleteEvent{Type: eventlog.TypeDelete, StorageID: "hdd1", Path: "a"}, false, zerolog.Nop())
 		require.Equal(t, int64(1), res.failed)
 		require.Empty(t, warnings)
 		require.False(t, advance)
@@ -170,7 +171,7 @@ func TestApplyOneEvent_shouldHandleNilDBAndUnknownType(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = db.Close() })
 
-		res, warnings, advance, retryLater, err := applyOneEvent(context.Background(), nil, db, fakeEvent{}, false)
+		res, warnings, advance, retryLater, err := applyOneEvent(context.Background(), nil, db, fakeEvent{}, false, zerolog.Nop())
 		require.Equal(t, int64(1), res.failed)
 		require.Empty(t, warnings)
 		require.True(t, advance)
@@ -261,7 +262,7 @@ func TestApplyDelete_shouldSkipWhenENOENT(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	ev := eventlog.DeleteEvent{Type: eventlog.TypeDelete, StorageID: "hdd1", Path: "missing.txt", IsDir: false, TS: 1}
-	res, warnings, advance, retryLater, err := applyDelete(context.Background(), storageRoots, db, ev, false)
+	res, warnings, advance, retryLater, err := applyDelete(context.Background(), storageRoots, db, ev, false, zerolog.Nop())
 
 	require.NoError(t, err)
 	require.True(t, advance)
@@ -287,7 +288,7 @@ func TestApplyDelete_shouldReturnHardErrorOnUnlinkDir(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	ev := eventlog.DeleteEvent{Type: eventlog.TypeDelete, StorageID: "hdd1", Path: rel, IsDir: false, TS: 1}
-	res, warnings, advance, retryLater, err := applyDelete(context.Background(), storageRoots, db, ev, false)
+	res, warnings, advance, retryLater, err := applyDelete(context.Background(), storageRoots, db, ev, false, zerolog.Nop())
 
 	require.Error(t, err)
 	require.True(t, errors.Is(err, syscall.EISDIR) || errors.Is(err, syscall.EPERM), "expected EISDIR/EPERM, got: %v", err)
@@ -324,7 +325,7 @@ func TestApplyDelete_shouldWarnOnPermissionDeniedFile(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	ev := eventlog.DeleteEvent{Type: eventlog.TypeDelete, StorageID: "hdd1", Path: targetRel, IsDir: false, TS: 1}
-	res, warnings, advance, retryLater, err := applyDelete(context.Background(), storageRoots, db, ev, false)
+	res, warnings, advance, retryLater, err := applyDelete(context.Background(), storageRoots, db, ev, false, zerolog.Nop())
 
 	require.NoError(t, err)
 	require.True(t, advance)
@@ -351,7 +352,7 @@ func TestApplyDelete_shouldReturnHardErrorOnENOTDIR(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	ev := eventlog.DeleteEvent{Type: eventlog.TypeDelete, StorageID: "hdd1", Path: rel, IsDir: true, TS: 1}
-	res, warnings, advance, retryLater, err := applyDelete(context.Background(), storageRoots, db, ev, false)
+	res, warnings, advance, retryLater, err := applyDelete(context.Background(), storageRoots, db, ev, false, zerolog.Nop())
 
 	require.Error(t, err)
 	require.ErrorIs(t, err, syscall.ENOTDIR)
@@ -375,7 +376,7 @@ func TestApplyRename_shouldSkipWhenOldENOENT(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	ev := eventlog.RenameEvent{Type: eventlog.TypeRename, StorageID: "hdd1", OldPath: "missing.txt", NewPath: "new.txt", TS: 1}
-	res, warnings, advance, retryLater, err := applyRename(context.Background(), storageRoots, db, ev, false)
+	res, warnings, advance, retryLater, err := applyRename(context.Background(), storageRoots, db, ev, false, zerolog.Nop())
 
 	require.NoError(t, err)
 	require.True(t, advance)
@@ -406,7 +407,7 @@ func TestApplyRename_shouldFailWhenMkdirAllFails(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	ev := eventlog.RenameEvent{Type: eventlog.TypeRename, StorageID: "hdd1", OldPath: oldRel, NewPath: "dest/new.txt", TS: 1}
-	res, warnings, advance, retryLater, err := applyRename(context.Background(), storageRoots, db, ev, false)
+	res, warnings, advance, retryLater, err := applyRename(context.Background(), storageRoots, db, ev, false, zerolog.Nop())
 
 	require.Error(t, err)
 	var pe *os.PathError
@@ -441,7 +442,7 @@ func TestApplyRename_shouldWarnOnNotEmpty(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	ev := eventlog.RenameEvent{Type: eventlog.TypeRename, StorageID: "hdd1", OldPath: oldRel, NewPath: newRel, TS: 1}
-	res, warnings, advance, retryLater, err := applyRename(context.Background(), storageRoots, db, ev, false)
+	res, warnings, advance, retryLater, err := applyRename(context.Background(), storageRoots, db, ev, false, zerolog.Nop())
 
 	require.NoError(t, err)
 	require.True(t, advance)
@@ -758,7 +759,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
 	}
 
 	storageRoots := map[string]string{"store1": storageRoot}
-	res, warnings, advance, retryLater, applyErr := applySetattr(context.Background(), storageRoots, db, ev, false)
+	res, warnings, advance, retryLater, applyErr := applySetattr(context.Background(), storageRoots, db, ev, false, zerolog.Nop())
 
 	// Should advance (not retry), report as failed due to partial failure, include warning.
 	require.True(t, advance, "should advance past the event")

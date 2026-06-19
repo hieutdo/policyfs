@@ -59,6 +59,7 @@ func (n *Node) Link(ctx context.Context, target fs.InodeEmbedder, name string, o
 	if errno != 0 {
 		return nil, errno
 	}
+	log.Debug().Str("op", "link").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Str("real_path", srcPhysicalPath).Bool("indexed", srcTarget.Indexed).Msg("link resolved source target")
 	// Indexed targets are not writable yet.
 	if srcTarget.Indexed {
 		log.Debug().Str("op", "link").Str("path", newVirtualPath).Str("storage_id", srcTarget.ID).Msg("link blocked: indexed target is read-only")
@@ -85,8 +86,10 @@ func (n *Node) Link(ctx context.Context, target fs.InodeEmbedder, name string, o
 	dstPhysicalPath := filepath.Join(srcTarget.Root, newVirtualPath)
 	// Ensure the destination parent dirs exist on the source target.
 	if err := materializeParentDirs(ctx, srcTarget.Root, newVirtualPath); err != nil {
+		log.Error().Str("op", "link").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Err(err).Msg("failed to materialize destination parent")
 		return nil, toErrno(err)
 	}
+	log.Debug().Str("op", "link").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Str("real_path", dstPhysicalPath).Msg("link materialized destination parent")
 	if callerOK {
 		parentPhysical := filepath.Dir(dstPhysicalPath)
 		pst := syscall.Stat_t{}
@@ -104,6 +107,7 @@ func (n *Node) Link(ctx context.Context, target fs.InodeEmbedder, name string, o
 		log.Error().Str("op", "link").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Err(err).Msg("failed to link")
 		return nil, toErrno(err)
 	}
+	log.Debug().Str("op", "link").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Str("real_path", dstPhysicalPath).Msg("link created hardlink on disk")
 
 	st := syscall.Stat_t{}
 	if err := syscall.Lstat(dstPhysicalPath, &st); err != nil {
@@ -112,6 +116,6 @@ func (n *Node) Link(ctx context.Context, target fs.InodeEmbedder, name string, o
 	out.FromStat(&st)
 
 	ch := newChildInode(ctx, n.EmbeddedInode(), n.RootData, n.mountName, n.state, n.reload, n.db, n.disk, n.open, srcTarget.ID, newVirtualPath, uint32(st.Mode))
-	log.Debug().Str("op", "link").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Msg("link")
+	log.Debug().Str("op", "link").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Str("real_path", dstPhysicalPath).Bool("indexed", false).Msg("link")
 	return ch, 0
 }

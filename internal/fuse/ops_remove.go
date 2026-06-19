@@ -41,18 +41,22 @@ func (n *Node) Unlink(ctx context.Context, name string) syscall.Errno {
 	if err != nil {
 		return toErrno(err)
 	}
+	log.Debug().Str("op", "unlink").Str("path", virtualPath).Msg("unlink resolved targets")
 
 	for _, t := range targets {
+		log.Debug().Str("op", "unlink").Str("path", virtualPath).Str("storage_id", t.ID).Bool("indexed", t.Indexed).Msg("unlink scanning target")
 		if !t.Indexed {
 			physicalPath := filepath.Join(t.Root, virtualPath)
 			st := syscall.Stat_t{}
 			if err := syscall.Lstat(physicalPath, &st); err != nil {
 				if errors.Is(err, syscall.ENOENT) {
+					log.Debug().Str("op", "unlink").Str("path", virtualPath).Str("storage_id", t.ID).Str("real_path", physicalPath).Msg("unlink missed on non-indexed target")
 					continue
 				}
 				return toErrno(err)
 			}
 			if uint32(st.Mode)&syscall.S_IFMT == syscall.S_IFDIR {
+				log.Debug().Str("op", "unlink").Str("path", virtualPath).Str("storage_id", t.ID).Str("real_path", physicalPath).Msg("unlink rejected directory on non-indexed target")
 				return syscall.EISDIR
 			}
 			if callerOK {
@@ -89,9 +93,11 @@ func (n *Node) Unlink(ctx context.Context, name string) syscall.Errno {
 			return toErrno(fmt.Errorf("failed to lookup indexed file: %w", err))
 		}
 		if !ok {
+			log.Debug().Str("op", "unlink").Str("path", virtualPath).Str("storage_id", t.ID).Msg("unlink missed on indexed target")
 			continue
 		}
 		if f.IsDir {
+			log.Debug().Str("op", "unlink").Str("path", virtualPath).Str("storage_id", t.ID).Msg("unlink rejected directory on indexed target")
 			return syscall.EISDIR
 		}
 		if callerOK && parentVirtualPath != "" {
@@ -117,16 +123,20 @@ func (n *Node) Unlink(ctx context.Context, name string) syscall.Errno {
 			return toErrno(err)
 		}
 		if !updated {
+			log.Debug().Str("op", "unlink").Str("path", virtualPath).Str("storage_id", t.ID).Msg("unlink indexed metadata update missed")
 			continue
 		}
+		log.Debug().Str("op", "unlink").Str("path", virtualPath).Str("storage_id", t.ID).Msg("unlink updated indexed metadata")
 		if err := eventlog.Append(ctx, n.mountName, eventlog.DeleteEvent{Type: eventlog.TypeDelete, StorageID: t.ID, Path: virtualPath, IsDir: false, TS: time.Now().Unix()}); err != nil {
 			log.Error().Str("op", "unlink").Str("path", virtualPath).Str("storage_id", t.ID).Err(err).Msg("failed to append eventlog")
 			return syscall.EIO
 		}
+		log.Debug().Str("op", "unlink").Str("path", virtualPath).Str("storage_id", t.ID).Msg("unlink appended deferred event")
 		log.Debug().Str("op", "unlink").Str("path", virtualPath).Str("storage_id", t.ID).Bool("indexed", true).Msg("unlink")
 		return 0
 	}
 
+	log.Debug().Str("op", "unlink").Str("path", virtualPath).Msg("unlink missed on all targets")
 	return syscall.ENOENT
 }
 
@@ -158,18 +168,22 @@ func (n *Node) Rmdir(ctx context.Context, name string) syscall.Errno {
 	if err != nil {
 		return toErrno(err)
 	}
+	log.Debug().Str("op", "rmdir").Str("path", virtualPath).Msg("rmdir resolved targets")
 
 	for _, t := range targets {
+		log.Debug().Str("op", "rmdir").Str("path", virtualPath).Str("storage_id", t.ID).Bool("indexed", t.Indexed).Msg("rmdir scanning target")
 		if !t.Indexed {
 			physicalPath := filepath.Join(t.Root, virtualPath)
 			st := syscall.Stat_t{}
 			if err := syscall.Lstat(physicalPath, &st); err != nil {
 				if errors.Is(err, syscall.ENOENT) {
+					log.Debug().Str("op", "rmdir").Str("path", virtualPath).Str("storage_id", t.ID).Str("real_path", physicalPath).Msg("rmdir missed on non-indexed target")
 					continue
 				}
 				return toErrno(err)
 			}
 			if uint32(st.Mode)&syscall.S_IFMT != syscall.S_IFDIR {
+				log.Debug().Str("op", "rmdir").Str("path", virtualPath).Str("storage_id", t.ID).Str("real_path", physicalPath).Msg("rmdir rejected non-directory on non-indexed target")
 				return syscall.ENOTDIR
 			}
 			if callerOK {
@@ -206,9 +220,11 @@ func (n *Node) Rmdir(ctx context.Context, name string) syscall.Errno {
 			return toErrno(fmt.Errorf("failed to lookup indexed dir: %w", err))
 		}
 		if !ok {
+			log.Debug().Str("op", "rmdir").Str("path", virtualPath).Str("storage_id", t.ID).Msg("rmdir missed on indexed target")
 			continue
 		}
 		if !f.IsDir {
+			log.Debug().Str("op", "rmdir").Str("path", virtualPath).Str("storage_id", t.ID).Msg("rmdir rejected non-directory on indexed target")
 			return syscall.ENOTDIR
 		}
 		if callerOK && parentVirtualPath != "" {
@@ -234,15 +250,19 @@ func (n *Node) Rmdir(ctx context.Context, name string) syscall.Errno {
 			return toErrno(err)
 		}
 		if !updated {
+			log.Debug().Str("op", "rmdir").Str("path", virtualPath).Str("storage_id", t.ID).Msg("rmdir indexed metadata update missed")
 			continue
 		}
+		log.Debug().Str("op", "rmdir").Str("path", virtualPath).Str("storage_id", t.ID).Msg("rmdir updated indexed metadata")
 		if err := eventlog.Append(ctx, n.mountName, eventlog.DeleteEvent{Type: eventlog.TypeDelete, StorageID: t.ID, Path: virtualPath, IsDir: true, TS: time.Now().Unix()}); err != nil {
 			log.Error().Str("op", "rmdir").Str("path", virtualPath).Str("storage_id", t.ID).Err(err).Msg("failed to append eventlog")
 			return syscall.EIO
 		}
+		log.Debug().Str("op", "rmdir").Str("path", virtualPath).Str("storage_id", t.ID).Msg("rmdir appended deferred event")
 		log.Debug().Str("op", "rmdir").Str("path", virtualPath).Str("storage_id", t.ID).Bool("indexed", true).Msg("rmdir")
 		return 0
 	}
 
+	log.Debug().Str("op", "rmdir").Str("path", virtualPath).Msg("rmdir missed on all targets")
 	return syscall.ENOENT
 }

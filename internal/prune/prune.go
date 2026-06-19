@@ -16,6 +16,7 @@ import (
 	"github.com/hieutdo/policyfs/internal/errkind"
 	"github.com/hieutdo/policyfs/internal/eventlog"
 	"github.com/hieutdo/policyfs/internal/indexdb"
+	"github.com/rs/zerolog"
 	"golang.org/x/sys/unix"
 )
 
@@ -58,6 +59,8 @@ type VerboseEvent struct {
 type Hooks struct {
 	// Verbose is called after each parsed event is handled.
 	Verbose func(e VerboseEvent)
+	// Log is an optional structured logger for detailed prune tracing.
+	Log *zerolog.Logger
 }
 
 // eventReader abstracts eventlog.Reader for deterministic unit tests.
@@ -77,6 +80,10 @@ var openEventReader = func(mountName string, offset int64) (eventReader, error) 
 func RunOneshot(ctx context.Context, mountName string, mountCfg *config.MountConfig, opts Opts, hooks Hooks) (Summary, error) {
 	start := time.Now()
 	out := Summary{Mount: mountName, ByType: map[eventlog.Type]int64{}}
+	jobLog := zerolog.Nop()
+	if hooks.Log != nil {
+		jobLog = *hooks.Log
+	}
 
 	storageRoots := map[string]string{}
 	if mountCfg != nil {
@@ -118,6 +125,7 @@ func RunOneshot(ctx context.Context, mountName string, mountCfg *config.MountCon
 		ev, parseErr := eventlog.Parse(line)
 		if parseErr != nil {
 			out.EventsFailed++
+			jobLog.Debug().Err(parseErr).Msg("failed to parse prune event")
 			if len(out.Warnings) < maxWarnings {
 				out.Warnings = append(out.Warnings, "invalid event json")
 			}
@@ -132,7 +140,7 @@ func RunOneshot(ctx context.Context, mountName string, mountCfg *config.MountCon
 		typ := ev.EventType()
 		out.ByType[typ]++
 
-		res, warnings, advance, retryLater, handleErr := applyOneEvent(ctx, storageRoots, db, ev, opts.DryRun)
+		res, warnings, advance, retryLater, handleErr := applyOneEvent(ctx, storageRoots, db, ev, opts.DryRun, jobLog)
 		out.EventsSucceeded += res.succeeded
 		out.EventsSkipped += res.skipped
 		out.EventsFailed += res.failed
@@ -148,9 +156,15 @@ func RunOneshot(ctx context.Context, mountName string, mountCfg *config.MountCon
 		}
 
 		if retryLater {
+			if handleErr != nil {
+				jobLog.Debug().Err(handleErr).Msg("failed to apply prune event; retry later")
+			}
 			return out, handleErr
 		}
 		if !advance {
+			if handleErr != nil {
+				jobLog.Debug().Err(handleErr).Msg("failed to apply prune event")
+			}
 			return out, handleErr
 		}
 		if !opts.DryRun {
@@ -166,6 +180,9 @@ func RunOneshot(ctx context.Context, mountName string, mountCfg *config.MountCon
 			return out, err
 		}
 		out.Truncated = truncated
+		if truncated {
+			jobLog.Debug().Msg("prune truncated event log")
+		}
 	}
 
 	out.DurationMS = time.Since(start).Milliseconds()
@@ -204,18 +221,18 @@ type applyResult struct {
 }
 
 // applyOneEvent dispatches to per-event-type handlers.
-func applyOneEvent(ctx context.Context, storageRoots map[string]string, db *indexdb.DB, ev eventlog.Event, dryRun bool) (res applyResult, warnings []string, advance bool, retryLater bool, err error) {
+func applyOneEvent(ctx context.Context, storageRoots map[string]string, db *indexdb.DB, ev eventlog.Event, dryRun bool, log zerolog.Logger) (res applyResult, warnings []string, advance bool, retryLater bool, err error) {
 	if db == nil {
 		return applyResult{failed: 1}, nil, false, true, &errkind.NilError{What: "index db"}
 	}
 
 	switch e := ev.(type) {
 	case eventlog.DeleteEvent:
-		return applyDelete(ctx, storageRoots, db, e, dryRun)
+		return applyDelete(ctx, storageRoots, db, e, dryRun, log)
 	case eventlog.RenameEvent:
-		return applyRename(ctx, storageRoots, db, e, dryRun)
+		return applyRename(ctx, storageRoots, db, e, dryRun, log)
 	case eventlog.SetattrEvent:
-		return applySetattr(ctx, storageRoots, db, e, dryRun)
+		return applySetattr(ctx, storageRoots, db, e, dryRun, log)
 	default:
 		return applyResult{failed: 1}, nil, true, false, &errkind.InvalidError{What: "event type"}
 	}
@@ -275,7 +292,7 @@ func physicalPathFor(storageRoots map[string]string, storageID string, rel strin
 }
 
 // applyDelete applies one DELETE event.
-func applyDelete(ctx context.Context, storageRoots map[string]string, db *indexdb.DB, e eventlog.DeleteEvent, dryRun bool) (applyResult, []string, bool, bool, error) {
+func applyDelete(ctx context.Context, storageRoots map[string]string, db *indexdb.DB, e eventlog.DeleteEvent, dryRun bool, log zerolog.Logger) (applyResult, []string, bool, bool, error) {
 	p, err := physicalPathFor(storageRoots, e.StorageID, e.Path)
 	if err != nil {
 		if errors.Is(err, errkind.ErrNotFound) {
@@ -288,17 +305,22 @@ func applyDelete(ctx context.Context, storageRoots map[string]string, db *indexd
 		}
 		return applyResult{failed: 1}, nil, false, true, err
 	}
+	log.Debug().Str("storage_id", e.StorageID).Str("path", e.Path).Str("real_path", p).Msg("prune resolved delete path")
 	if dryRun {
+		log.Debug().Str("storage_id", e.StorageID).Str("path", e.Path).Str("real_path", p).Msg("prune dry-run delete event")
 		return applyResult{succeeded: 1}, nil, true, false, nil
 	}
 
 	if e.IsDir {
+		log.Debug().Str("storage_id", e.StorageID).Str("path", e.Path).Str("real_path", p).Msg("prune applying rmdir event")
 		err := syscall.Rmdir(p)
 		if err != nil {
 			if errors.Is(err, syscall.ENOENT) {
+				log.Debug().Str("storage_id", e.StorageID).Str("path", e.Path).Str("real_path", p).Msg("prune rmdir missing on disk; finalizing metadata")
 				if err := db.FinalizeDelete(ctx, e.StorageID, e.Path, e.IsDir); err != nil {
 					return applyResult{failed: 1}, nil, false, true, fmt.Errorf("failed to finalize delete: %w", err)
 				}
+				log.Debug().Str("storage_id", e.StorageID).Str("path", e.Path).Msg("prune finalized delete metadata")
 				return applyResult{skipped: 1}, nil, true, false, nil
 			}
 			if errors.Is(err, syscall.ENOTEMPTY) {
@@ -311,13 +333,17 @@ func applyDelete(ctx context.Context, storageRoots map[string]string, db *indexd
 			}
 			return applyResult{failed: 1}, nil, false, true, fmt.Errorf("failed to rmdir: %w", err)
 		}
+		log.Debug().Str("storage_id", e.StorageID).Str("path", e.Path).Str("real_path", p).Msg("prune applied rmdir on disk")
 	} else {
+		log.Debug().Str("storage_id", e.StorageID).Str("path", e.Path).Str("real_path", p).Msg("prune applying unlink event")
 		err := syscall.Unlink(p)
 		if err != nil {
 			if errors.Is(err, syscall.ENOENT) {
+				log.Debug().Str("storage_id", e.StorageID).Str("path", e.Path).Str("real_path", p).Msg("prune unlink missing on disk; finalizing metadata")
 				if err := db.FinalizeDelete(ctx, e.StorageID, e.Path, e.IsDir); err != nil {
 					return applyResult{failed: 1}, nil, false, true, fmt.Errorf("failed to finalize delete: %w", err)
 				}
+				log.Debug().Str("storage_id", e.StorageID).Str("path", e.Path).Msg("prune finalized delete metadata")
 				return applyResult{skipped: 1}, nil, true, false, nil
 			}
 			if errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES) {
@@ -326,15 +352,17 @@ func applyDelete(ctx context.Context, storageRoots map[string]string, db *indexd
 			}
 			return applyResult{failed: 1}, nil, false, true, fmt.Errorf("failed to unlink: %w", err)
 		}
+		log.Debug().Str("storage_id", e.StorageID).Str("path", e.Path).Str("real_path", p).Msg("prune applied unlink on disk")
 	}
 	if err := db.FinalizeDelete(ctx, e.StorageID, e.Path, e.IsDir); err != nil {
 		return applyResult{failed: 1}, nil, false, true, fmt.Errorf("failed to finalize delete: %w", err)
 	}
+	log.Debug().Str("storage_id", e.StorageID).Str("path", e.Path).Msg("prune finalized delete metadata")
 	return applyResult{succeeded: 1}, nil, true, false, nil
 }
 
 // applyRename applies one RENAME event.
-func applyRename(ctx context.Context, storageRoots map[string]string, db *indexdb.DB, e eventlog.RenameEvent, dryRun bool) (applyResult, []string, bool, bool, error) {
+func applyRename(ctx context.Context, storageRoots map[string]string, db *indexdb.DB, e eventlog.RenameEvent, dryRun bool, log zerolog.Logger) (applyResult, []string, bool, bool, error) {
 	oldP, err := physicalPathFor(storageRoots, e.StorageID, e.OldPath)
 	if err != nil {
 		if errors.Is(err, errkind.ErrNotFound) {
@@ -347,6 +375,7 @@ func applyRename(ctx context.Context, storageRoots map[string]string, db *indexd
 		}
 		return applyResult{failed: 1}, nil, false, true, err
 	}
+	log.Debug().Str("storage_id", e.StorageID).Str("old_path", e.OldPath).Str("new_path", e.NewPath).Str("real_path", oldP).Msg("prune resolved rename source path")
 	newP, err := physicalPathFor(storageRoots, e.StorageID, e.NewPath)
 	if err != nil {
 		if errors.Is(err, errkind.ErrNotFound) {
@@ -359,20 +388,26 @@ func applyRename(ctx context.Context, storageRoots map[string]string, db *indexd
 		}
 		return applyResult{failed: 1}, nil, false, true, err
 	}
+	log.Debug().Str("storage_id", e.StorageID).Str("old_path", e.OldPath).Str("new_path", e.NewPath).Str("real_path", newP).Msg("prune resolved rename destination path")
 	if dryRun {
+		log.Debug().Str("storage_id", e.StorageID).Str("old_path", e.OldPath).Str("new_path", e.NewPath).Msg("prune dry-run rename event")
 		return applyResult{succeeded: 1}, nil, true, false, nil
 	}
 
 	if err := os.MkdirAll(filepath.Dir(newP), 0o755); err != nil {
 		return applyResult{failed: 1}, nil, false, true, fmt.Errorf("failed to create destination parent: %w", err)
 	}
+	log.Debug().Str("storage_id", e.StorageID).Str("old_path", e.OldPath).Str("new_path", e.NewPath).Msg("prune materialized rename destination parent")
 
+	log.Debug().Str("storage_id", e.StorageID).Str("old_path", e.OldPath).Str("new_path", e.NewPath).Msg("prune applying rename event")
 	err = syscall.Rename(oldP, newP)
 	if err != nil {
 		if errors.Is(err, syscall.ENOENT) {
+			log.Debug().Str("storage_id", e.StorageID).Str("old_path", e.OldPath).Str("new_path", e.NewPath).Msg("prune rename missing on disk; finalizing metadata")
 			if err := db.FinalizeRename(ctx, e.StorageID, e.OldPath, e.NewPath); err != nil {
 				return applyResult{failed: 1}, nil, false, true, fmt.Errorf("failed to finalize rename: %w", err)
 			}
+			log.Debug().Str("storage_id", e.StorageID).Str("old_path", e.OldPath).Str("new_path", e.NewPath).Msg("prune finalized rename metadata")
 			return applyResult{skipped: 1}, nil, true, false, nil
 		}
 		if errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES) {
@@ -385,14 +420,16 @@ func applyRename(ctx context.Context, storageRoots map[string]string, db *indexd
 		}
 		return applyResult{failed: 1}, nil, false, true, fmt.Errorf("failed to rename: %w", err)
 	}
+	log.Debug().Str("storage_id", e.StorageID).Str("old_path", e.OldPath).Str("new_path", e.NewPath).Msg("prune applied rename on disk")
 	if err := db.FinalizeRename(ctx, e.StorageID, e.OldPath, e.NewPath); err != nil {
 		return applyResult{failed: 1}, nil, false, true, fmt.Errorf("failed to finalize rename: %w", err)
 	}
+	log.Debug().Str("storage_id", e.StorageID).Str("old_path", e.OldPath).Str("new_path", e.NewPath).Msg("prune finalized rename metadata")
 	return applyResult{succeeded: 1}, nil, true, false, nil
 }
 
 // applySetattr applies one SETATTR event.
-func applySetattr(ctx context.Context, storageRoots map[string]string, db *indexdb.DB, e eventlog.SetattrEvent, dryRun bool) (applyResult, []string, bool, bool, error) {
+func applySetattr(ctx context.Context, storageRoots map[string]string, db *indexdb.DB, e eventlog.SetattrEvent, dryRun bool, log zerolog.Logger) (applyResult, []string, bool, bool, error) {
 	p, err := physicalPathFor(storageRoots, e.StorageID, e.Path)
 	if err != nil {
 		if errors.Is(err, errkind.ErrNotFound) {
@@ -405,7 +442,9 @@ func applySetattr(ctx context.Context, storageRoots map[string]string, db *index
 		}
 		return applyResult{failed: 1}, nil, false, true, err
 	}
+	log.Debug().Str("storage_id", e.StorageID).Str("path", e.Path).Str("real_path", p).Msg("prune resolved setattr path")
 	if dryRun {
+		log.Debug().Str("storage_id", e.StorageID).Str("path", e.Path).Msg("prune dry-run setattr event")
 		return applyResult{succeeded: 1}, nil, true, false, nil
 	}
 

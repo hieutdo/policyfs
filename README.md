@@ -11,6 +11,7 @@ PolicyFS is a Linux FUSE storage daemon that unifies multiple storage paths unde
 - **Routing rules**: decide where reads/writes go based on path patterns.
 - **Spin-down friendly listings**: keep HDDs asleep by serving metadata from an index (SQLite) for "indexed" paths.
 - **Deferred physical operations**: for indexed paths, record DELETE/RENAME events and apply them later.
+- **Support-friendly debug logs**: trace indexed read and deferred mutation flows without changing filesystem behavior.
 
 ## Status
 

@@ -95,12 +95,14 @@ func resolveLookupPath(ctx context.Context, rt *router.Router, db *indexdb.DB, l
 	if err != nil {
 		return nil, toErrno(err)
 	}
+	log.Debug().Str("op", op).Str("path", virtualPath).Msg("lookup resolved read targets")
 
 	resolved, seenTargets, errno := resolveLookupPathInTargets(ctx, targets, db, log, virtualPath, op, false, logNilDB, nil)
 	if errno != 0 {
 		return nil, errno
 	}
 	if resolved != nil {
+		log.Debug().Str("op", op).Str("path", virtualPath).Str("storage_id", resolved.targetID).Msg("lookup resolved on read target")
 		return resolved, 0
 	}
 
@@ -108,15 +110,18 @@ func resolveLookupPath(ctx context.Context, rt *router.Router, db *indexdb.DB, l
 	if err != nil {
 		return nil, toErrno(err)
 	}
+	log.Debug().Str("op", op).Str("path", virtualPath).Msg("lookup read targets exhausted; trying list fallback")
 
 	resolved, _, errno = resolveLookupPathInTargets(ctx, listTargets, db, log, virtualPath, op, true, logNilDB, seenTargets)
 	if errno != 0 {
 		return nil, errno
 	}
 	if resolved != nil {
+		log.Debug().Str("op", op).Str("path", virtualPath).Str("storage_id", resolved.targetID).Msg("lookup resolved on list fallback")
 		return resolved, 0
 	}
 
+	log.Debug().Str("op", op).Str("path", virtualPath).Msg("lookup missed on all targets")
 	return nil, syscall.ENOENT
 }
 
@@ -128,9 +133,11 @@ func resolveLookupPathInTargets(ctx context.Context, targets []router.Target, db
 
 	for _, t := range targets {
 		if _, seen := seenTargets[t.ID]; seen {
+			log.Debug().Str("op", op).Str("path", virtualPath).Str("storage_id", t.ID).Bool("indexed", t.Indexed).Msg("lookup skipped previously scanned target")
 			continue
 		}
 		seenTargets[t.ID] = struct{}{}
+		log.Debug().Str("op", op).Str("path", virtualPath).Str("storage_id", t.ID).Bool("indexed", t.Indexed).Msg("lookup scanning target")
 
 		resolved, errno := resolveLookupPathOnTarget(ctx, t, db, log, virtualPath, op, directoriesOnly, logNilDB)
 		if errno != 0 {
@@ -152,13 +159,17 @@ func resolveLookupPathOnTarget(ctx context.Context, t router.Target, db *indexdb
 		err := syscall.Lstat(p, &st)
 		if err != nil {
 			if errors.Is(err, syscall.ENOENT) {
+				log.Debug().Str("op", op).Str("path", virtualPath).Str("storage_id", t.ID).Str("real_path", p).Msg("lookup missed on non-indexed target")
 				return nil, 0
 			}
+			log.Debug().Str("op", op).Str("path", virtualPath).Str("storage_id", t.ID).Str("real_path", p).Err(err).Msg("failed to lookup on non-indexed target")
 			return nil, toErrno(err)
 		}
 		if directoriesOnly && st.Mode&syscall.S_IFMT != syscall.S_IFDIR {
+			log.Debug().Str("op", op).Str("path", virtualPath).Str("storage_id", t.ID).Str("real_path", p).Msg("lookup skipped non-directory on non-indexed target")
 			return nil, 0
 		}
+		log.Debug().Str("op", op).Str("path", virtualPath).Str("storage_id", t.ID).Str("real_path", p).Msg("lookup hit on non-indexed target")
 		return &resolvedLookupPath{targetID: t.ID, attr: newResolvedLookupAttrFromStat(&st)}, 0
 	}
 
@@ -171,12 +182,16 @@ func resolveLookupPathOnTarget(ctx context.Context, t router.Target, db *indexdb
 
 	f, ok, err := db.GetEffectiveFile(ctx, t.ID, virtualPath)
 	if err != nil {
+		log.Debug().Str("op", op).Str("path", virtualPath).Str("storage_id", t.ID).Err(err).Msg("failed to lookup indexed file")
 		return nil, toErrno(fmt.Errorf("failed to %s indexed file: %w", op, err))
 	}
 	if ok {
+		realPath := filepath.Join(t.Root, f.RealPath)
 		if directoriesOnly && !f.IsDir {
+			log.Debug().Str("op", op).Str("path", virtualPath).Str("storage_id", t.ID).Str("real_path", realPath).Msg("lookup skipped non-directory on indexed target")
 			return nil, 0
 		}
+		log.Debug().Str("op", op).Str("path", virtualPath).Str("storage_id", t.ID).Str("real_path", realPath).Msg("lookup hit on indexed target")
 		return &resolvedLookupPath{
 			targetID: t.ID,
 			attr: resolvedLookupAttr{
@@ -190,15 +205,19 @@ func resolveLookupPathOnTarget(ctx context.Context, t router.Target, db *indexdb
 			},
 		}, 0
 	}
+	log.Debug().Str("op", op).Str("path", virtualPath).Str("storage_id", t.ID).Msg("lookup indexed file missed; probing directory")
 
 	dirOK, err := db.DirExists(ctx, t.ID, virtualPath)
 	if err != nil {
+		log.Debug().Str("op", op).Str("path", virtualPath).Str("storage_id", t.ID).Err(err).Msg("failed to lookup indexed dir")
 		return nil, toErrno(fmt.Errorf("failed to %s indexed dir: %w", op, err))
 	}
 	if !dirOK {
+		log.Debug().Str("op", op).Str("path", virtualPath).Str("storage_id", t.ID).Msg("lookup missed on indexed target")
 		return nil, 0
 	}
 
+	log.Debug().Str("op", op).Str("path", virtualPath).Str("storage_id", t.ID).Msg("lookup synthesized indexed directory")
 	return &resolvedLookupPath{targetID: t.ID, attr: newSyntheticDirLookupAttr()}, 0
 }
 
@@ -233,7 +252,7 @@ func lookupChild(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoo
 }
 
 // getattrPath gets attributes for a virtual path by searching read targets.
-func getattrPath(ctx context.Context, ino *fs.Inode, rt *router.Router, db *indexdb.DB, out *gofuse.AttrOut) syscall.Errno {
+func getattrPath(ctx context.Context, ino *fs.Inode, rt *router.Router, db *indexdb.DB, log zerolog.Logger, out *gofuse.AttrOut) syscall.Errno {
 	if ino == nil {
 		return toErrno(&errkind.NilError{What: "inode"})
 	}
@@ -249,7 +268,7 @@ func getattrPath(ctx context.Context, ino *fs.Inode, rt *router.Router, db *inde
 		return errno
 	}
 
-	resolved, errno := resolveLookupPath(ctx, rt, db, zerolog.Logger{}, virtualPath, "getattr", false)
+	resolved, errno := resolveLookupPath(ctx, rt, db, log, virtualPath, "getattr", false)
 	if errno != 0 {
 		return errno
 	}
@@ -259,8 +278,8 @@ func getattrPath(ctx context.Context, ino *fs.Inode, rt *router.Router, db *inde
 }
 
 // readdirPath lists directory entries across read targets and dedupes by name.
-func readdirPath(ctx context.Context, ino *fs.Inode, rt *router.Router, db *indexdb.DB) (fs.DirStream, syscall.Errno) {
-	entries, errno := listDirEntries(ctx, ino, rt, db)
+func readdirPath(ctx context.Context, ino *fs.Inode, rt *router.Router, db *indexdb.DB, log zerolog.Logger) (fs.DirStream, syscall.Errno) {
+	entries, errno := listDirEntries(ctx, ino, rt, db, log)
 	if errno != 0 {
 		return nil, errno
 	}
@@ -268,7 +287,7 @@ func readdirPath(ctx context.Context, ino *fs.Inode, rt *router.Router, db *inde
 }
 
 // listDirEntries returns merged directory entries across read targets (union + dedupe).
-func listDirEntries(ctx context.Context, ino *fs.Inode, rt *router.Router, db *indexdb.DB) ([]gofuse.DirEntry, syscall.Errno) {
+func listDirEntries(ctx context.Context, ino *fs.Inode, rt *router.Router, db *indexdb.DB, log zerolog.Logger) ([]gofuse.DirEntry, syscall.Errno) {
 	if ino == nil {
 		return nil, toErrno(&errkind.NilError{What: "inode"})
 	}
@@ -277,11 +296,11 @@ func listDirEntries(ctx context.Context, ino *fs.Inode, rt *router.Router, db *i
 	}
 
 	virtualPath := ino.Path(ino.Root())
-	return listDirEntriesForVirtualPath(ctx, virtualPath, rt, db)
+	return listDirEntriesForVirtualPath(ctx, virtualPath, rt, db, log)
 }
 
 // listDirEntriesForVirtualPath returns merged directory entries across read targets (union + dedupe).
-func listDirEntriesForVirtualPath(ctx context.Context, virtualPath string, rt *router.Router, db *indexdb.DB) ([]gofuse.DirEntry, syscall.Errno) {
+func listDirEntriesForVirtualPath(ctx context.Context, virtualPath string, rt *router.Router, db *indexdb.DB, log zerolog.Logger) ([]gofuse.DirEntry, syscall.Errno) {
 	if rt == nil {
 		return nil, toErrno(&errkind.NilError{What: "router"})
 	}
@@ -296,6 +315,7 @@ func listDirEntriesForVirtualPath(ctx context.Context, virtualPath string, rt *r
 	if err != nil {
 		return nil, toErrno(err)
 	}
+	log.Debug().Str("op", "readdir").Str("path", virtualPath).Msg("readdir resolved list targets")
 
 	readTargetCache := map[string][]router.Target{}
 	listTargetCache := map[string][]router.Target{}
@@ -310,11 +330,14 @@ func listDirEntriesForVirtualPath(ctx context.Context, virtualPath string, rt *r
 			list, err := os.ReadDir(p)
 			if err != nil {
 				if errors.Is(err, os.ErrNotExist) {
+					log.Debug().Str("op", "readdir").Str("path", virtualPath).Str("storage_id", t.ID).Str("real_path", p).Msg("readdir missed on non-indexed target")
 					continue
 				}
+				log.Debug().Str("op", "readdir").Str("path", virtualPath).Str("storage_id", t.ID).Str("real_path", p).Err(err).Msg("failed to readdir non-indexed target")
 				return nil, toErrno(err)
 			}
 			foundAnyDir = true
+			log.Debug().Str("op", "readdir").Str("path", virtualPath).Str("storage_id", t.ID).Str("real_path", p).Msg("readdir scanning non-indexed target")
 			for _, e := range list {
 				name := e.Name()
 				mode := uint32(gofuse.S_IFREG)
@@ -360,29 +383,36 @@ func listDirEntriesForVirtualPath(ctx context.Context, virtualPath string, rt *r
 					}
 				}
 				if !allowed {
+					log.Debug().Str("op", "readdir").Str("path", childPath).Str("storage_id", t.ID).Msg("readdir skipped entry by routing")
 					continue
 				}
 
 				if _, ok := seen[name]; ok {
+					log.Debug().Str("op", "readdir").Str("path", childPath).Str("storage_id", t.ID).Msg("readdir skipped duplicate entry")
 					continue
 				}
 				seen[name] = struct{}{}
+				log.Debug().Str("op", "readdir").Str("path", childPath).Str("storage_id", t.ID).Msg("readdir added entry")
 				entries = append(entries, gofuse.DirEntry{Name: name, Mode: mode, Ino: stableIno(t.ID, childPath)})
 			}
 			continue
 		}
 
 		if db == nil {
+			log.Error().Str("op", "readdir").Str("path", virtualPath).Str("storage_id", t.ID).Msg("failed to readdir: db is nil for indexed target")
 			return nil, syscall.EIO
 		}
 		list, ok, err := db.ListDirEntries(ctx, t.ID, virtualPath)
 		if err != nil {
+			log.Debug().Str("op", "readdir").Str("path", virtualPath).Str("storage_id", t.ID).Err(err).Msg("failed to readdir indexed target")
 			return nil, toErrno(fmt.Errorf("failed to readdir indexed dir: %w", err))
 		}
 		if !ok {
+			log.Debug().Str("op", "readdir").Str("path", virtualPath).Str("storage_id", t.ID).Msg("readdir missed on indexed target")
 			continue
 		}
 		foundAnyDir = true
+		log.Debug().Str("op", "readdir").Str("path", virtualPath).Str("storage_id", t.ID).Msg("readdir scanning indexed target")
 		for _, e := range list {
 			name := e.Name
 
@@ -424,17 +454,21 @@ func listDirEntriesForVirtualPath(ctx context.Context, virtualPath string, rt *r
 				}
 			}
 			if !allowed {
+				log.Debug().Str("op", "readdir").Str("path", childPath).Str("storage_id", t.ID).Msg("readdir skipped entry by routing")
 				continue
 			}
 
 			if _, ok := seen[name]; ok {
+				log.Debug().Str("op", "readdir").Str("path", childPath).Str("storage_id", t.ID).Msg("readdir skipped duplicate entry")
 				continue
 			}
 			seen[name] = struct{}{}
+			log.Debug().Str("op", "readdir").Str("path", childPath).Str("storage_id", t.ID).Msg("readdir added entry")
 			entries = append(entries, gofuse.DirEntry{Name: name, Mode: e.Mode, Ino: stableIno(t.ID, childPath)})
 		}
 	}
 	if !foundAnyDir {
+		log.Debug().Str("op", "readdir").Str("path", virtualPath).Msg("readdir missed on all targets")
 		return nil, syscall.ENOENT
 	}
 
@@ -448,6 +482,7 @@ func listDirEntriesForVirtualPath(ctx context.Context, virtualPath string, rt *r
 		out = append(out, gofuse.DirEntry{Name: "..", Mode: uint32(gofuse.S_IFDIR)})
 	}
 	out = append(out, entries...)
+	log.Debug().Str("op", "readdir").Str("path", virtualPath).Msg("readdir merged entries")
 	_ = ctx
 	return out, 0
 }

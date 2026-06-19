@@ -114,6 +114,7 @@ func startNamedMountedFS(t *testing.T, testName string, mountLabel string, mount
 		MountName:    mountName,
 		MountPoint:   mountPoint,
 		ConfigPath:   filepath.Join(tmpDir, testName+"-"+mountLabel+".yaml"),
+		LogPath:      filepath.Join(tmpDir, testName+"-"+mountLabel+".log"),
 		RuntimeDir:   runtimeDir,
 		StateDir:     stateDir,
 		StorageRoots: storageRoots,
@@ -135,9 +136,8 @@ func startNamedMountedFS(t *testing.T, testName string, mountLabel string, mount
 	ctx, cancel := context.WithCancel(context.Background())
 	args := []string{"--config", env.ConfigPath, "mount", env.MountName}
 	args = append(args, cfg.MountArgs...)
-	logFile := filepath.Join(tmpDir, testName+"-"+mountLabel+".log")
 	mountCmd := exec.CommandContext(ctx, pfsBin, args...)
-	mountCmd.Env = pfsTestEnv(env, logFile)
+	mountCmd.Env = pfsTestEnv(env, env.LogPath)
 	mountCmd.Stdout = os.Stdout
 	mountCmd.Stderr = os.Stderr
 	if err := mountCmd.Start(); err != nil {
@@ -192,7 +192,7 @@ func startNamedMountedFS(t *testing.T, testName string, mountLabel string, mount
 		_ = os.Remove(env.ConfigPath)
 		_ = os.RemoveAll(env.RuntimeDir)
 		_ = os.RemoveAll(env.StateDir)
-		_ = os.Remove(logFile)
+		_ = os.Remove(env.LogPath)
 	})
 
 	return env

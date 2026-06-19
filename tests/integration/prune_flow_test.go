@@ -30,7 +30,7 @@ const exitNoChanges = 3
 func mustRunPFS(t *testing.T, env *MountedFS, args ...string) {
 	t.Helper()
 	cmd := exec.Command(pfsBin, append([]string{"--config", env.ConfigPath}, args...)...)
-	cmd.Env = pfsTestEnv(env, "")
+	cmd.Env = pfsTestEnv(env, env.LogPath)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -47,7 +47,7 @@ func mustRunPFS(t *testing.T, env *MountedFS, args ...string) {
 func runPFSOutput(t *testing.T, env *MountedFS, args ...string) ([]byte, error) {
 	t.Helper()
 	cmd := exec.Command(pfsBin, append([]string{"--config", env.ConfigPath}, args...)...)
-	cmd.Env = pfsTestEnv(env, "")
+	cmd.Env = pfsTestEnv(env, env.LogPath)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		if ee, ok := errors.AsType[*exec.ExitError](err); ok {

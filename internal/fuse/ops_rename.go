@@ -64,13 +64,16 @@ func (n *Node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 		if err != nil {
 			return toErrno(err)
 		}
+		log.Debug().Str("op", "rename").Str("old_path", oldVirtualPath).Msg("rename resolved source targets")
 		found := false
 		for _, t := range targets {
+			log.Debug().Str("op", "rename").Str("old_path", oldVirtualPath).Str("storage_id", t.ID).Bool("indexed", t.Indexed).Msg("rename scanning source target")
 			if !t.Indexed {
 				p := filepath.Join(t.Root, oldVirtualPath)
 				st := syscall.Stat_t{}
 				if err := syscall.Lstat(p, &st); err != nil {
 					if errors.Is(err, syscall.ENOENT) {
+						log.Debug().Str("op", "rename").Str("old_path", oldVirtualPath).Str("storage_id", t.ID).Str("real_path", p).Msg("rename missed on non-indexed source target")
 						continue
 					}
 					return toErrno(err)
@@ -95,9 +98,11 @@ func (n *Node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 			if ok {
 				srcTarget = t
 				srcWasIndexed = true
+				log.Debug().Str("op", "rename").Str("old_path", oldVirtualPath).Str("storage_id", t.ID).Msg("rename resolved indexed source file")
 				found = true
 				break
 			}
+			log.Debug().Str("op", "rename").Str("old_path", oldVirtualPath).Str("storage_id", t.ID).Msg("rename indexed source file missed; probing directory")
 			dirOK, err := n.db.DirExists(ctx, t.ID, oldVirtualPath)
 			if err != nil {
 				return toErrno(fmt.Errorf("failed to lookup indexed source dir: %w", err))
@@ -105,11 +110,14 @@ func (n *Node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 			if dirOK {
 				srcTarget = t
 				srcWasIndexed = true
+				log.Debug().Str("op", "rename").Str("old_path", oldVirtualPath).Str("storage_id", t.ID).Msg("rename resolved indexed source directory")
 				found = true
 				break
 			}
+			log.Debug().Str("op", "rename").Str("old_path", oldVirtualPath).Str("storage_id", t.ID).Msg("rename missed on indexed source target")
 		}
 		if !found {
+			log.Debug().Str("op", "rename").Str("old_path", oldVirtualPath).Msg("rename missed on all source targets")
 			return syscall.ENOENT
 		}
 	}
@@ -218,12 +226,15 @@ func (n *Node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 			return toErrno(err)
 		}
 		if !updated {
+			log.Debug().Str("op", "rename").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Msg("rename indexed metadata update missed")
 			return syscall.ENOENT
 		}
+		log.Debug().Str("op", "rename").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Msg("rename updated indexed metadata")
 		if err := eventlog.Append(ctx, n.mountName, eventlog.RenameEvent{Type: eventlog.TypeRename, StorageID: srcTarget.ID, OldPath: oldVirtualPath, NewPath: newVirtualPath, TS: time.Now().Unix()}); err != nil {
 			log.Error().Str("op", "rename").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Err(err).Msg("failed to append eventlog")
 			return syscall.EIO
 		}
+		log.Debug().Str("op", "rename").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Msg("rename appended deferred event")
 		log.Debug().Str("op", "rename").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Bool("indexed", true).Msg("rename")
 		return 0
 	}
@@ -232,6 +243,7 @@ func (n *Node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 	if err != nil {
 		return toErrno(err)
 	}
+	log.Debug().Str("op", "rename").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Msg("rename resolved write targets")
 	allowedSameTarget := false
 	for _, t := range allowed {
 		if t.ID == srcTarget.ID {
@@ -251,6 +263,7 @@ func (n *Node) Rename(ctx context.Context, name string, newParent fs.InodeEmbedd
 		log.Error().Str("op", "rename").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Err(err).Msg("failed to materialize parent dirs")
 		return toErrno(err)
 	}
+	log.Debug().Str("op", "rename").Str("old_path", oldVirtualPath).Str("new_path", newVirtualPath).Str("storage_id", srcTarget.ID).Msg("rename materialized destination parent dirs")
 	if callerOK {
 		newParentPhysical := filepath.Dir(dstPhysicalPath)
 		pst := syscall.Stat_t{}
