@@ -213,6 +213,7 @@ func (r *Router) SelectWriteTarget(virtualPath string) (Target, error) {
 
 	filtered := []Target{}
 	filteredScores := []float64{}
+	rejectedByMinFree := []string{}
 
 	for _, t := range candidates {
 		freeGB, err := freeSpaceGB(t.Root)
@@ -225,13 +226,18 @@ func (r *Router) SelectWriteTarget(virtualPath string) (Target, error) {
 			return Target{}, &errkind.InvalidError{Msg: fmt.Sprintf("unknown storage id %q", t.ID)}
 		}
 		if sp.MinFreeGB > 0 && freeGB < sp.MinFreeGB {
+			rejectedByMinFree = append(rejectedByMinFree, fmt.Sprintf("%s: %.1f GiB available, min_free_gb=%.1f GiB", t.ID, freeGB, sp.MinFreeGB))
 			continue
 		}
 		filtered = append(filtered, t)
 		filteredScores = append(filteredScores, freeGB)
 	}
 	if len(filtered) == 0 {
-		return Target{}, &errkind.KindError{Kind: ErrNoWriteSpace, Msg: fmt.Sprintf("no write target has enough free space for path: %s", virtualPath)}
+		msg := fmt.Sprintf("no write target has enough free space for path: %s", virtualPath)
+		if len(rejectedByMinFree) > 0 {
+			msg += fmt.Sprintf(" (checked: %s)", strings.Join(rejectedByMinFree, "; "))
+		}
+		return Target{}, &errkind.KindError{Kind: ErrNoWriteSpace, Msg: msg}
 	}
 
 	switch policy {

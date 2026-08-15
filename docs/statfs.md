@@ -14,6 +14,8 @@ This page explains what the `mounts.<name>.statfs.reporting` modes mean and when
 
 PolicyFS is different: it presents a single mountpoint backed by multiple underlying filesystems and a routing policy. PolicyFS therefore has to choose which underlying roots to report.
 
+`min_free_gb` is a write-target eligibility rule, not a statfs reservation. Current statfs reporting does not subtract it from the reported free space. A write can therefore be rejected for a specific target even when mount-wide `df` reports free space from other write targets.
+
 ## Reporting modes
 
 ### `mount_pooled_targets` (default)

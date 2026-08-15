@@ -457,8 +457,7 @@ func TestRouter_SelectWriteTarget_shouldPreferPathPreserving(t *testing.T) {
 	require.Equal(t, "b", tgt.ID)
 }
 
-// TestRouter_SelectWriteTarget_shouldReturnErrNoWriteSpace verifies min_free_gb constraints can result
-// in a stable ErrNoWriteSpace sentinel.
+// TestRouter_SelectWriteTarget_shouldReturnErrNoWriteSpace verifies min_free_gb errors include rejected target diagnostics.
 func TestRouter_SelectWriteTarget_shouldReturnErrNoWriteSpace(t *testing.T) {
 	rootA := t.TempDir()
 	rootB := t.TempDir()
@@ -479,6 +478,9 @@ func TestRouter_SelectWriteTarget_shouldReturnErrNoWriteSpace(t *testing.T) {
 	_, err = r.SelectWriteTarget("x")
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrNoWriteSpace)
+	require.Contains(t, err.Error(), "a:")
+	require.Contains(t, err.Error(), "b:")
+	require.Contains(t, err.Error(), "GiB available, min_free_gb=1000000000.0 GiB")
 }
 
 // TestParentVirtualDir_shouldHandleRoot verifies parentVirtualDir returns an empty parent for root-level

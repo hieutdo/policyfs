@@ -89,6 +89,8 @@ Checklist:
 
   This mode is useful for some applications, but it can confuse humans because the mount root and a subdirectory may legitimately report different totals.
 
+- If a write is rejected by `min_free_gb`, inspect the PolicyFS log. The error names each rejected target with its measured free GiB and configured minimum. A mount-wide `df` value can still be larger because it pools other write targets.
+
 - If a storage path is missing/unavailable, the default `ignore_failed` will pool what it can.
   If you would rather fail fast (so monitoring catches it), set:
 
