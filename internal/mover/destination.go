@@ -1,7 +1,6 @@
 package mover
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -12,6 +11,9 @@ import (
 	"github.com/hieutdo/policyfs/internal/config"
 	"github.com/hieutdo/policyfs/internal/errkind"
 )
+
+// errNoDestinationAvailable indicates that no destination survives availability checks.
+var errNoDestinationAvailable = errkind.SentinelError("no destination available")
 
 // destChoice is a resolved destination root.
 type destChoice struct {
@@ -26,7 +28,25 @@ type destResult struct {
 	pathPreservingKept []string // destinations that passed path_preserving filter (nil if not applicable)
 }
 
-// selectDestinations returns an ordered list of destination choices for a candidate.
+// filterAvailableDestinations keeps destinations that pass statfs and min_free_gb checks.
+func (p *planner) filterAvailableDestinations(dstIDs []string) []destChoice {
+	filtered := []destChoice{}
+	for _, id := range dstIDs {
+		sp := p.storageByID[id]
+		freeGB, err := p.freeSpaceGB(sp.Path)
+		if err != nil {
+			// Skip offline/unstatfs-able destinations.
+			continue
+		}
+		if sp.MinFreeGB > 0 && freeGB < sp.MinFreeGB {
+			continue
+		}
+		filtered = append(filtered, destChoice{id: id, root: sp.Path, free: freeGB})
+	}
+	return filtered
+}
+
+// selectDestinations returns policy-ordered destinations, preferring existing parent directories when possible.
 func (p *planner) selectDestinations(j config.MoverJobConfig, dstIDs []string, c candidate) (destResult, error) {
 	if p == nil {
 		return destResult{}, &errkind.NilError{What: "planner"}
@@ -53,22 +73,12 @@ func (p *planner) selectDestinations(j config.MoverJobConfig, dstIDs []string, c
 		}
 	}
 
-	// Filter min_free_gb.
-	filtered := []destChoice{}
-	for _, id := range cands {
-		sp := p.storageByID[id]
-		freeGB, err := p.freeSpaceGB(sp.Path)
-		if err != nil {
-			// Skip offline/unstatfs-able destinations.
-			continue
-		}
-		if sp.MinFreeGB > 0 && freeGB < sp.MinFreeGB {
-			continue
-		}
-		filtered = append(filtered, destChoice{id: id, root: sp.Path, free: freeGB})
+	filtered := p.filterAvailableDestinations(cands)
+	if len(filtered) == 0 && len(ppKept) > 0 {
+		filtered = p.filterAvailableDestinations(dstIDs)
 	}
 	if len(filtered) == 0 {
-		return destResult{}, errors.New("no destination available")
+		return destResult{}, errNoDestinationAvailable
 	}
 
 	policy := strings.TrimSpace(j.Destination.Policy)

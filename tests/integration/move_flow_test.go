@@ -106,6 +106,59 @@ func TestMove_shouldMoveFromNonIndexedToIndexed_andMountShouldExposeWithoutIndex
 	})
 }
 
+// TestMove_pathPreservingBelowMinFree_shouldFallbackToEligibleDestination verifies an ineligible existing parent falls back to another destination.
+func TestMove_pathPreservingBelowMinFree_shouldFallbackToEligibleDestination(t *testing.T) {
+	if os.Getenv(config.EnvIntegrationUseExistingMount) != "" {
+		t.Skip("skip move flow test when using an existing mount")
+	}
+
+	jobName := "archive-fallback"
+	rel := "library/tv/show/episode.mkv"
+	content := []byte("path-preserving-fallback")
+
+	mv := &config.MoverConfig{
+		Enabled: new(true),
+		Jobs: []config.MoverJobConfig{{
+			Name:    jobName,
+			Trigger: config.MoverTriggerConfig{Type: "manual"},
+			Source: config.MoverSourceConfig{
+				Paths:    []string{"ssd1"},
+				Patterns: []string{"library/**"},
+			},
+			Destination: config.MoverDestinationConfig{
+				Paths:          []string{"hdd1", "hdd2"},
+				Policy:         "first_found",
+				PathPreserving: true,
+			},
+			DeleteSource: new(true),
+			Verify:       new(true),
+		}},
+	}
+
+	cfg := IntegrationConfig{
+		Storages: []IntegrationStorage{
+			{ID: "ssd1", Indexed: false, BasePath: "/mnt/ssd1/pfs-integration"},
+			{ID: "hdd1", Indexed: false, MinFreeGB: 1e9, BasePath: "/mnt/hdd1/pfs-integration"},
+			{ID: "hdd2", Indexed: false, BasePath: "/mnt/hdd2/pfs-integration"},
+		},
+		Targets:     []string{"ssd1"},
+		ReadTargets: []string{"ssd1"},
+		Mover:       mv,
+	}
+
+	withMountedFS(t, cfg, func(env *MountedFS) {
+		env.MustCreateDirInStoragePath(t, "hdd1", filepath.Dir(rel))
+		env.MustCreateFileInStoragePath(t, content, "ssd1", rel)
+
+		mustRunPFS(t, env, "move", env.MountName, "--job", jobName, "--progress=off")
+
+		require.NoFileExists(t, env.StoragePath("ssd1", rel))
+		require.NoFileExists(t, env.StoragePath("hdd1", rel))
+		require.FileExists(t, env.StoragePath("hdd2", rel))
+		require.Equal(t, content, env.MustReadFileInStoragePath(t, "hdd2", rel))
+	})
+}
+
 // TestMove_skipIfExistsAny_shouldAvoidDuplicate verifies destination.skip_if_exists_any skips copying
 // when the destination path already exists on any destination storage.
 func TestMove_skipIfExistsAny_shouldAvoidDuplicate(t *testing.T) {

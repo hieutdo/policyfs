@@ -96,7 +96,7 @@ func TestPlanner_activeSourcesForJob_usage_shouldFilterAndSort(t *testing.T) {
 	require.Equal(t, []string{"ssd1", "ssd2"}, ids)
 }
 
-// TestPlanner_selectDestinations_pathPreserving_shouldPreferExistingParent verifies path_preserving narrows destinations to those with an existing parent dir.
+// TestPlanner_selectDestinations_pathPreserving_shouldPreferExistingParent verifies path_preserving keeps an eligible existing parent preferred.
 func TestPlanner_selectDestinations_pathPreserving_shouldPreferExistingParent(t *testing.T) {
 	hdd1 := t.TempDir()
 	hdd2 := t.TempDir()
@@ -113,6 +113,52 @@ func TestPlanner_selectDestinations_pathPreserving_shouldPreferExistingParent(t 
 	require.Len(t, dr.choices, 1)
 	require.Equal(t, "hdd1", dr.choices[0].id)
 	require.Equal(t, []string{"hdd1"}, dr.pathPreservingKept)
+}
+
+// TestPlanner_selectDestinations_pathPreservingBelowMinFree_shouldFallback verifies an ineligible existing parent falls back to another eligible destination.
+func TestPlanner_selectDestinations_pathPreservingBelowMinFree_shouldFallback(t *testing.T) {
+	hdd1 := t.TempDir()
+	hdd2 := t.TempDir()
+	rel := "library/tv/Show/S01E01.mkv"
+	require.NoError(t, os.MkdirAll(filepath.Join(hdd1, filepath.FromSlash("library/tv/Show")), 0o755))
+
+	mc := &config.MountConfig{StoragePaths: []config.StoragePath{
+		{ID: "hdd1", Path: hdd1, MinFreeGB: 10},
+		{ID: "hdd2", Path: hdd2, MinFreeGB: 10},
+	}}
+	p := newPlanner("media", mc, Opts{})
+	p.freeSpaceGB = func(path string) (float64, error) {
+		if path == hdd1 {
+			return 5, nil
+		}
+		return 20, nil
+	}
+
+	j := config.MoverJobConfig{Destination: config.MoverDestinationConfig{PathPreserving: true, Policy: "first_found"}}
+	dr, err := p.selectDestinations(j, []string{"hdd1", "hdd2"}, candidate{RelPath: rel})
+	require.NoError(t, err)
+	require.Len(t, dr.choices, 1)
+	require.Equal(t, "hdd2", dr.choices[0].id)
+	require.Equal(t, []string{"hdd1"}, dr.pathPreservingKept)
+}
+
+// TestPlanner_selectDestinations_pathPreservingAllBelowMinFree_shouldReturnError verifies fallback still fails when every destination is below min_free_gb.
+func TestPlanner_selectDestinations_pathPreservingAllBelowMinFree_shouldReturnError(t *testing.T) {
+	hdd1 := t.TempDir()
+	hdd2 := t.TempDir()
+	rel := "library/tv/Show/S01E01.mkv"
+	require.NoError(t, os.MkdirAll(filepath.Join(hdd1, filepath.FromSlash("library/tv/Show")), 0o755))
+
+	mc := &config.MountConfig{StoragePaths: []config.StoragePath{
+		{ID: "hdd1", Path: hdd1, MinFreeGB: 10},
+		{ID: "hdd2", Path: hdd2, MinFreeGB: 10},
+	}}
+	p := newPlanner("media", mc, Opts{})
+	p.freeSpaceGB = func(_ string) (float64, error) { return 5, nil }
+
+	j := config.MoverJobConfig{Destination: config.MoverDestinationConfig{PathPreserving: true, Policy: "first_found"}}
+	_, err := p.selectDestinations(j, []string{"hdd1", "hdd2"}, candidate{RelPath: rel})
+	require.ErrorIs(t, err, errNoDestinationAvailable)
 }
 
 // TestPlanner_selectDestinations_policyMostFree_shouldSort verifies most_free sorts by free space descending.
@@ -546,7 +592,7 @@ func TestSelectDestinations_allOffline_shouldReturnError(t *testing.T) {
 	j := config.MoverJobConfig{Destination: config.MoverDestinationConfig{Policy: "first_found"}}
 	_, err := p.selectDestinations(j, []string{"hdd1", "hdd2"}, candidate{RelPath: "a.txt"})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "no destination available")
+	require.ErrorIs(t, err, errNoDestinationAvailable)
 }
 
 // TestSelectDestinations_destFull_shouldFilterByMinFreeGB verifies destinations below min_free_gb are excluded.
@@ -586,7 +632,7 @@ func TestSelectDestinations_allFull_shouldReturnError(t *testing.T) {
 	j := config.MoverJobConfig{Destination: config.MoverDestinationConfig{Policy: "first_found"}}
 	_, err := p.selectDestinations(j, []string{"hdd1", "hdd2"}, candidate{RelPath: "a.txt"})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "no destination available")
+	require.ErrorIs(t, err, errNoDestinationAvailable)
 }
 
 // TestCopyFileWithVerifyRetry_copyFailed_shouldRetryAndFail verifies copy failures are retried 3x then return error.

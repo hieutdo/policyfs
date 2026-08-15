@@ -246,7 +246,7 @@ wins: if a path matches `ignore` or `ignore_file`, it is skipped regardless of `
 | `groups`             | list   | -           | Storage group names as destinations (expanded to IDs).                                                                                                                                                                        |
 | `policy`             | string | `most_free` | Target selection: `most_free`, `least_free`, or `first_found`.                                                                                                                                                                |
 | `skip_if_exists_any` | bool   | `false`     | If `true`, skip a candidate when the destination path already exists on any destination storage (avoids duplicates; may increase disk I/O). When a file is skipped, `delete_source` does not apply - the source file is kept. |
-| `path_preserving`    | bool   | `false`     | Prefer destinations where the parent directory already exists.                                                                                                                                                                |
+| `path_preserving`    | bool   | `false`     | Prefer destinations where the parent directory already exists. The mover applies `min_free_gb` to those destinations first, then falls back to all destinations if none remain eligible.                                      |
 
 #### `conditions`
 
