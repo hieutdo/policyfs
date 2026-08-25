@@ -14,6 +14,7 @@ import (
 	"github.com/hieutdo/policyfs/internal/config"
 	"github.com/hieutdo/policyfs/internal/pathmatch"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 )
 
 // TestParseConditions_shouldParseMinAgeMinSizeMaxSize verifies parseConditions accepts valid humanfmt fields.
@@ -304,12 +305,10 @@ func TestCopyFileWithVerify_destinationExists_shouldReturnSkip(t *testing.T) {
 	require.NoError(t, os.WriteFile(src, []byte("hello"), 0o644))
 	require.NoError(t, os.WriteFile(dst, []byte("exists"), 0o644))
 
-	st, err := os.Stat(src)
-	require.NoError(t, err)
-
-	c := candidate{Mode: uint32(st.Mode()), MTimeSec: st.ModTime().Unix()}
-	err = copyFileWithVerify(context.Background(), src, dst, c, false, nil)
+	c := testCandidate(t, src)
+	err := copyFileWithVerify(context.Background(), copyLocation{root: filepath.Dir(src), physicalPath: src}, copyLocation{root: filepath.Dir(dst), physicalPath: dst}, c, false, nil)
 	require.Error(t, err)
+	require.ErrorIs(t, err, errDestinationExists)
 	_, ok := errors.AsType[*skipError](err)
 	require.True(t, ok)
 }
@@ -329,11 +328,8 @@ func TestCopyFileWithVerify_verifyMismatch_shouldReturnSkipAndNotCreateDest(t *t
 	}
 	t.Cleanup(func() { hashXX64Func = old })
 
-	st, err := os.Stat(src)
-	require.NoError(t, err)
-
-	c := candidate{Mode: uint32(st.Mode()), MTimeSec: st.ModTime().Unix()}
-	err = copyFileWithVerify(context.Background(), src, dst, c, true, nil)
+	c := testCandidate(t, src)
+	err := copyFileWithVerify(context.Background(), copyLocation{root: filepath.Dir(src), physicalPath: src}, copyLocation{root: filepath.Dir(dst), physicalPath: dst}, c, true, nil)
 	require.Error(t, err)
 
 	_, ok := errors.AsType[*skipError](err)
@@ -349,16 +345,262 @@ func TestCopyFileWithVerify_success_shouldCopyContent(t *testing.T) {
 	content := []byte("hello")
 	require.NoError(t, os.WriteFile(src, content, 0o644))
 
-	st, err := os.Stat(src)
-	require.NoError(t, err)
-
-	c := candidate{Mode: uint32(st.Mode()), MTimeSec: st.ModTime().Unix()}
-	err = copyFileWithVerify(context.Background(), src, dst, c, false, nil)
+	c := testCandidate(t, src)
+	err := copyFileWithVerify(context.Background(), copyLocation{root: filepath.Dir(src), physicalPath: src}, copyLocation{root: filepath.Dir(dst), physicalPath: dst}, c, false, nil)
 	require.NoError(t, err)
 
 	got, err := os.ReadFile(dst)
 	require.NoError(t, err)
 	require.Equal(t, content, got)
+}
+
+// testSetMetadata changes test path ownership and mode for root and non-root fixtures.
+func testSetMetadata(t *testing.T, path string, uid uint32, gid uint32, mode os.FileMode) {
+	t.Helper()
+	require.NoError(t, os.Chown(path, int(uid), int(gid)))
+	require.NoError(t, syscall.Chmod(path, uint32(mode)))
+}
+
+// testOwnershipIDs uses synthetic IDs as root and current IDs otherwise.
+func testOwnershipIDs() (uint32, uint32, uint32) {
+	if os.Geteuid() == 0 {
+		return 12345, 12346, 0
+	}
+	return uint32(os.Geteuid()), uint32(os.Getegid()), uint32(os.Geteuid())
+}
+
+// testStatMetadata reads portable test metadata fields needed for filesystem assertions.
+func testStatMetadata(t *testing.T, path string) syscall.Stat_t {
+	t.Helper()
+	info, err := os.Lstat(path)
+	require.NoError(t, err)
+	st, ok := info.Sys().(*syscall.Stat_t)
+	require.True(t, ok, "expected syscall.Stat_t for %s, got %T", path, info.Sys())
+	require.NotNil(t, st, "expected non-nil stat metadata for %s", path)
+	return *st
+}
+
+// testCandidate reads complete file metadata for direct copy tests.
+func testCandidate(t *testing.T, path string) candidate {
+	t.Helper()
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	st := testStatMetadata(t, path)
+	return candidate{Mode: uint32(st.Mode), UID: st.Uid, GID: st.Gid, MTimeSec: info.ModTime().Unix(), SizeBytes: info.Size()}
+}
+
+// TestCopyFileWithVerify_missingDestinationDirs_shouldMirrorSourceMetadata verifies missing destination components
+// inherit source metadata, group-write, and setgid without changing the existing destination root.
+func TestCopyFileWithVerify_missingDestinationDirs_shouldMirrorSourceMetadata(t *testing.T) {
+	root := t.TempDir()
+	srcRoot := filepath.Join(root, "source")
+	dstRoot := filepath.Join(root, "destination")
+	rel := filepath.Join("library", "movies", "Test Movie (2026)", "Test Movie.mkv")
+	uid, gid, dstUID := testOwnershipIDs()
+
+	require.NoError(t, os.MkdirAll(srcRoot, 0o755))
+	srcParent := filepath.Join(srcRoot, filepath.Dir(rel))
+	require.NoError(t, os.MkdirAll(srcParent, 0o755))
+	testSetMetadata(t, filepath.Join(srcRoot, "library"), uid, gid, 0o755)
+	testSetMetadata(t, filepath.Join(srcRoot, "library", "movies"), uid, gid, 0o2770)
+	testSetMetadata(t, filepath.Join(srcRoot, "library", "movies", "Test Movie (2026)"), uid, gid, 0o0750)
+	srcFile := filepath.Join(srcRoot, rel)
+	require.NoError(t, os.WriteFile(srcFile, []byte("movie"), 0o644))
+	testSetMetadata(t, srcFile, uid, gid, 0o664)
+
+	require.NoError(t, os.MkdirAll(dstRoot, 0o755))
+	testSetMetadata(t, dstRoot, dstUID, gid, 0o2775)
+	dstRootBefore := testStatMetadata(t, dstRoot)
+
+	mtime := time.Unix(1700000000, 0)
+	c := candidate{Mode: uint32(0o664), UID: uid, GID: gid, MTimeSec: mtime.Unix()}
+	require.NoError(t, copyFileWithVerify(context.Background(), copyLocation{root: srcRoot, physicalPath: filepath.Join(srcRoot, rel)}, copyLocation{root: dstRoot, physicalPath: filepath.Join(dstRoot, rel)}, c, false, nil))
+
+	for _, tc := range []struct {
+		name string
+		mode uint32
+	}{
+		{name: filepath.Join("library"), mode: 0o2775},
+		{name: filepath.Join("library", "movies"), mode: 0o2770},
+		{name: filepath.Join("library", "movies", "Test Movie (2026)"), mode: 0o2770},
+	} {
+		st := testStatMetadata(t, filepath.Join(dstRoot, tc.name))
+		require.Equal(t, uid, st.Uid, "expected source UID on new directory %s, got %d", tc.name, st.Uid)
+		require.Equal(t, gid, st.Gid, "expected source GID on new directory %s, got %d", tc.name, st.Gid)
+		require.Equal(t, tc.mode, uint32(st.Mode)&0o7777, "expected directory mode %04o for %s, got %04o", tc.mode, tc.name, uint32(st.Mode)&0o7777)
+	}
+
+	dstFile := filepath.Join(dstRoot, rel)
+	fileSt := testStatMetadata(t, dstFile)
+	require.Equal(t, uid, fileSt.Uid, "expected source UID on destination file, got %d", fileSt.Uid)
+	require.Equal(t, gid, fileSt.Gid, "expected source GID on destination file, got %d", fileSt.Gid)
+	require.Equal(t, uint32(0o664), uint32(fileSt.Mode)&0o7777, "expected file mode 0664, got %04o", uint32(fileSt.Mode)&0o7777)
+	fileInfo, err := os.Stat(dstFile)
+	require.NoError(t, err, "expected destination file stat to succeed: %s", dstFile)
+	require.Equal(t, mtime.Unix(), fileInfo.ModTime().Unix(), "expected destination mtime %d, got %d", mtime.Unix(), fileInfo.ModTime().Unix())
+	content, err := os.ReadFile(dstFile)
+	require.NoError(t, err, "expected destination file to be readable: %s", dstFile)
+	require.Equal(t, []byte("movie"), content, "expected copied movie content")
+
+	dstRootAfter := testStatMetadata(t, dstRoot)
+	require.Equal(t, dstRootBefore.Uid, dstRootAfter.Uid, "existing destination root UID changed from %d to %d", dstRootBefore.Uid, dstRootAfter.Uid)
+	require.Equal(t, dstRootBefore.Gid, dstRootAfter.Gid, "existing destination root GID changed from %d to %d", dstRootBefore.Gid, dstRootAfter.Gid)
+	require.Equal(t, uint32(dstRootBefore.Mode)&0o7777, uint32(dstRootAfter.Mode)&0o7777, "existing destination root mode changed")
+}
+
+// TestCopyFileWithVerify_existingDestinationDirs_shouldPreserveMetadata verifies existing destination directories stay untouched.
+func TestCopyFileWithVerify_existingDestinationDirs_shouldPreserveMetadata(t *testing.T) {
+	root := t.TempDir()
+	srcRoot := filepath.Join(root, "source")
+	dstRoot := filepath.Join(root, "destination")
+	rel := filepath.Join("library", "movies", "movie.mkv")
+	uid, gid, dstUID := testOwnershipIDs()
+
+	srcParent := filepath.Join(srcRoot, filepath.Dir(rel))
+	require.NoError(t, os.MkdirAll(srcParent, 0o755))
+	srcFile := filepath.Join(srcRoot, rel)
+	require.NoError(t, os.WriteFile(srcFile, []byte("movie"), 0o644))
+	testSetMetadata(t, filepath.Join(srcRoot, "library"), uid, gid, 0o2755)
+	testSetMetadata(t, filepath.Join(srcRoot, "library", "movies"), uid, gid, 0o2770)
+	testSetMetadata(t, srcFile, uid, gid, 0o664)
+
+	dstParent := filepath.Join(dstRoot, filepath.Dir(rel))
+	require.NoError(t, os.MkdirAll(dstParent, 0o755))
+	testSetMetadata(t, filepath.Join(dstRoot, "library"), dstUID, gid, 0o2701)
+	testSetMetadata(t, filepath.Join(dstRoot, "library", "movies"), dstUID, gid, 0o2711)
+	beforeLibrary := testStatMetadata(t, filepath.Join(dstRoot, "library"))
+	beforeMovies := testStatMetadata(t, filepath.Join(dstRoot, "library", "movies"))
+
+	c := candidate{Mode: 0o664, UID: uid, GID: gid, MTimeSec: time.Now().Unix()}
+	require.NoError(t, copyFileWithVerify(context.Background(), copyLocation{root: srcRoot, physicalPath: filepath.Join(srcRoot, rel)}, copyLocation{root: dstRoot, physicalPath: filepath.Join(dstRoot, rel)}, c, false, nil))
+
+	afterLibrary := testStatMetadata(t, filepath.Join(dstRoot, "library"))
+	afterMovies := testStatMetadata(t, filepath.Join(dstRoot, "library", "movies"))
+	require.Equal(t, beforeLibrary.Uid, afterLibrary.Uid, "existing library UID changed")
+	require.Equal(t, beforeLibrary.Gid, afterLibrary.Gid, "existing library GID changed")
+	require.Equal(t, uint32(beforeLibrary.Mode)&0o7777, uint32(afterLibrary.Mode)&0o7777, "existing library mode changed")
+	require.Equal(t, beforeMovies.Uid, afterMovies.Uid, "existing movies UID changed")
+	require.Equal(t, beforeMovies.Gid, afterMovies.Gid, "existing movies GID changed")
+	require.Equal(t, uint32(beforeMovies.Mode)&0o7777, uint32(afterMovies.Mode)&0o7777, "existing movies mode changed")
+}
+
+// TestCopyFileWithVerify_failedCopy_shouldRemoveCreatedDirectories verifies failed verification leaves no partial directory chain.
+func TestCopyFileWithVerify_failedCopy_shouldRemoveCreatedDirectories(t *testing.T) {
+	root := t.TempDir()
+	srcRoot := filepath.Join(root, "source")
+	dstRoot := filepath.Join(root, "destination")
+	rel := filepath.Join("library", "movies", "movie.mkv")
+	uid, gid, dstUID := testOwnershipIDs()
+
+	srcParent := filepath.Join(srcRoot, filepath.Dir(rel))
+	require.NoError(t, os.MkdirAll(srcParent, 0o755))
+	testSetMetadata(t, filepath.Join(srcRoot, "library"), uid, gid, 0o2775)
+	testSetMetadata(t, filepath.Join(srcRoot, "library", "movies"), uid, gid, 0o2775)
+	srcFile := filepath.Join(srcRoot, rel)
+	require.NoError(t, os.WriteFile(srcFile, []byte("movie"), 0o644))
+	testSetMetadata(t, srcFile, uid, gid, 0o664)
+	require.NoError(t, os.MkdirAll(dstRoot, 0o755))
+	testSetMetadata(t, dstRoot, dstUID, gid, 0o2775)
+
+	oldHash := hashXX64Func
+	hashXX64Func = func(_ context.Context, _ string, _ copyProgressFunc) (uint64, error) {
+		return 999, nil
+	}
+	t.Cleanup(func() { hashXX64Func = oldHash })
+
+	c := candidate{Mode: 0o664, UID: uid, GID: gid, MTimeSec: time.Now().Unix()}
+	err := copyFileWithVerify(context.Background(), copyLocation{root: srcRoot, physicalPath: filepath.Join(srcRoot, rel)}, copyLocation{root: dstRoot, physicalPath: filepath.Join(dstRoot, rel)}, c, true, nil)
+	require.Error(t, err, "expected checksum verification failure")
+	var skip *skipError
+	require.ErrorAs(t, err, &skip)
+	require.NoDirExists(t, filepath.Join(dstRoot, "library"))
+	require.NoFileExists(t, filepath.Join(dstRoot, rel))
+}
+
+// TestCreatedDirectories_cleanup_shouldReturnUnexpectedError verifies rollback failures remain observable.
+func TestCreatedDirectories_cleanup_shouldReturnUnexpectedError(t *testing.T) {
+	parentFD, err := unix.Open(t.TempDir(), unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	require.NoError(t, err)
+
+	oldUnlinkat := unlinkatFunc
+	unlinkatFunc = func(_ int, _ string, _ int) error { return unix.EIO }
+	t.Cleanup(func() { unlinkatFunc = oldUnlinkat })
+
+	created := &createdDirectories{entries: []createdDirectory{{parentFD: parentFD, name: "partial"}}}
+	require.ErrorIs(t, created.cleanup(), unix.EIO)
+}
+
+// TestDestinationDirectoryMode_shouldAddGroupWriteAndExecute verifies new directories stay usable by their group.
+func TestDestinationDirectoryMode_shouldAddGroupWriteAndExecute(t *testing.T) {
+	require.Equal(t, uint32(0o670), destinationDirectoryMode(0o640, 0))
+}
+
+// TestCopyFileWithVerify_destinationSymlink_shouldNotEscapeRoot verifies root-relative creation rejects symlink traversal.
+func TestCopyFileWithVerify_destinationSymlink_shouldNotEscapeRoot(t *testing.T) {
+	root := t.TempDir()
+	srcRoot := filepath.Join(root, "source")
+	dstRoot := filepath.Join(root, "destination")
+	outside := filepath.Join(root, "outside")
+	rel := filepath.Join("library", "movies", "movie.mkv")
+	uid, gid, dstUID := testOwnershipIDs()
+
+	srcParent := filepath.Join(srcRoot, filepath.Dir(rel))
+	require.NoError(t, os.MkdirAll(srcParent, 0o755))
+	testSetMetadata(t, filepath.Join(srcRoot, "library"), uid, gid, 0o775)
+	testSetMetadata(t, filepath.Join(srcRoot, "library", "movies"), uid, gid, 0o775)
+	srcFile := filepath.Join(srcRoot, rel)
+	require.NoError(t, os.WriteFile(srcFile, []byte("movie"), 0o644))
+	testSetMetadata(t, srcFile, uid, gid, 0o664)
+
+	require.NoError(t, os.MkdirAll(dstRoot, 0o755))
+	require.NoError(t, os.MkdirAll(outside, 0o755))
+	testSetMetadata(t, outside, dstUID, gid, 0o755)
+	outsideBefore := testStatMetadata(t, outside)
+	require.NoError(t, os.Symlink(outside, filepath.Join(dstRoot, "library")))
+
+	c := candidate{Mode: 0o664, UID: uid, GID: gid, MTimeSec: time.Now().Unix()}
+	err := copyFileWithVerify(context.Background(), copyLocation{root: srcRoot, physicalPath: srcFile}, copyLocation{root: dstRoot, physicalPath: filepath.Join(dstRoot, rel)}, c, false, nil)
+	require.Error(t, err, "expected destination symlink traversal to fail")
+	require.NoDirExists(t, filepath.Join(outside, "movies"))
+	outsideAfter := testStatMetadata(t, outside)
+	require.Equal(t, outsideBefore.Uid, outsideAfter.Uid, "outside directory UID changed")
+	require.Equal(t, outsideBefore.Gid, outsideAfter.Gid, "outside directory GID changed")
+	require.Equal(t, uint32(outsideBefore.Mode)&0o7777, uint32(outsideAfter.Mode)&0o7777, "outside directory mode changed")
+}
+
+// TestCopyFileWithVerify_racingDirectoryCreate_shouldUseExistingDirectory verifies EEXIST races are idempotent.
+func TestCopyFileWithVerify_racingDirectoryCreate_shouldUseExistingDirectory(t *testing.T) {
+	root := t.TempDir()
+	srcRoot := filepath.Join(root, "source")
+	dstRoot := filepath.Join(root, "destination")
+	rel := filepath.Join("library", "movie.mkv")
+	uid, gid, _ := testOwnershipIDs()
+
+	srcParent := filepath.Join(srcRoot, filepath.Dir(rel))
+	require.NoError(t, os.MkdirAll(srcParent, 0o755))
+	testSetMetadata(t, srcParent, uid, gid, 0o775)
+	srcFile := filepath.Join(srcRoot, rel)
+	require.NoError(t, os.WriteFile(srcFile, []byte("movie"), 0o644))
+	testSetMetadata(t, srcFile, uid, gid, 0o664)
+	require.NoError(t, os.MkdirAll(dstRoot, 0o755))
+
+	oldMkdirat := mkdiratFunc
+	raced := false
+	mkdiratFunc = func(dirfd int, path string, mode uint32) error {
+		if !raced {
+			raced = true
+			require.NoError(t, unix.Mkdirat(dirfd, path, 0o700))
+			return unix.EEXIST
+		}
+		return oldMkdirat(dirfd, path, mode)
+	}
+	t.Cleanup(func() { mkdiratFunc = oldMkdirat })
+
+	c := candidate{Mode: 0o664, UID: uid, GID: gid, MTimeSec: time.Now().Unix()}
+	require.NoError(t, copyFileWithVerify(context.Background(), copyLocation{root: srcRoot, physicalPath: srcFile}, copyLocation{root: dstRoot, physicalPath: filepath.Join(dstRoot, rel)}, c, false, nil))
+	require.True(t, raced, "expected injected EEXIST race")
+	st := testStatMetadata(t, filepath.Join(dstRoot, "library"))
+	require.Equal(t, uint32(0o700), uint32(st.Mode)&0o7777, "racing creator directory metadata should stay unchanged")
 }
 
 // --- inAllowedWindow tests ---
@@ -459,24 +701,22 @@ func TestCopyFileWithVerifyRetry_shouldRetryOnTransientError(t *testing.T) {
 	dst := filepath.Join(dir, "dst.txt")
 	require.NoError(t, os.WriteFile(src, []byte("hello"), 0o644))
 
-	st, err := os.Stat(src)
-	require.NoError(t, err)
-	c := candidate{Mode: uint32(st.Mode()), MTimeSec: st.ModTime().Unix()}
+	c := testCandidate(t, src)
 
 	callCount := 0
 	oldHash := hashXX64Func
 	// hashXX64Func is called once per attempt for the dest hash (source hash is streamed).
 	// First 2 attempts fail; 3rd succeeds.
-	hashXX64Func = func(ctx context.Context, p string, _ copyProgressFunc) (uint64, error) {
+	hashXX64Func = func(ctx context.Context, path string, _ copyProgressFunc) (uint64, error) {
 		callCount++
 		if callCount <= 2 {
 			return 0, errors.New("transient IO error")
 		}
-		return oldHash(ctx, p, nil)
+		return oldHash(ctx, path, nil)
 	}
 	t.Cleanup(func() { hashXX64Func = oldHash })
 
-	err = copyFileWithVerifyRetry(context.Background(), src, dst, c, true, 3, nil)
+	err := copyFileWithVerifyRetry(context.Background(), copyLocation{root: filepath.Dir(src), physicalPath: src}, copyLocation{root: filepath.Dir(dst), physicalPath: dst}, c, true, 3, nil)
 	require.NoError(t, err, "should succeed on 3rd attempt")
 	require.FileExists(t, dst)
 }
@@ -493,9 +733,7 @@ func TestCopyFileWithVerifyRetry_shouldNotRetryOnENOSPC(t *testing.T) {
 	require.NoError(t, os.MkdirAll(dstDir, 0o755))
 	dst := filepath.Join(dstDir, "dst.txt")
 
-	st, err := os.Stat(src)
-	require.NoError(t, err)
-	c := candidate{Mode: uint32(st.Mode()), MTimeSec: st.ModTime().Unix()}
+	c := testCandidate(t, src)
 
 	callCount := 0
 	oldHash := hashXX64Func
@@ -506,7 +744,7 @@ func TestCopyFileWithVerifyRetry_shouldNotRetryOnENOSPC(t *testing.T) {
 	}
 	t.Cleanup(func() { hashXX64Func = oldHash })
 
-	err = copyFileWithVerifyRetry(context.Background(), src, dst, c, true, 3, nil)
+	err := copyFileWithVerifyRetry(context.Background(), copyLocation{root: filepath.Dir(src), physicalPath: src}, copyLocation{root: filepath.Dir(dst), physicalPath: dst}, c, true, 3, nil)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, syscall.ENOSPC))
 	// Hash func called only once for dest hash - ENOSPC should not retry.
@@ -520,9 +758,7 @@ func TestCopyFileWithVerifyRetry_verifyMismatch_shouldNotRetry(t *testing.T) {
 	dst := filepath.Join(dir, "dst.txt")
 	require.NoError(t, os.WriteFile(src, []byte("hello"), 0o644))
 
-	st, err := os.Stat(src)
-	require.NoError(t, err)
-	c := candidate{Mode: uint32(st.Mode()), MTimeSec: st.ModTime().Unix()}
+	c := testCandidate(t, src)
 
 	callCount := 0
 	oldHash := hashXX64Func
@@ -533,7 +769,7 @@ func TestCopyFileWithVerifyRetry_verifyMismatch_shouldNotRetry(t *testing.T) {
 	}
 	t.Cleanup(func() { hashXX64Func = oldHash })
 
-	err = copyFileWithVerifyRetry(context.Background(), src, dst, c, true, 3, nil)
+	err := copyFileWithVerifyRetry(context.Background(), copyLocation{root: filepath.Dir(src), physicalPath: src}, copyLocation{root: filepath.Dir(dst), physicalPath: dst}, c, true, 3, nil)
 	require.Error(t, err)
 	_, ok := errors.AsType[*skipError](err)
 	require.True(t, ok, "verify mismatch should be skipError")
@@ -550,7 +786,7 @@ func TestCopyFileWithVerify_sourceDisappeared_shouldReturnNotExist(t *testing.T)
 	dst := filepath.Join(dir, "dst.txt")
 
 	c := candidate{Mode: 0o644, MTimeSec: time.Now().Unix()}
-	err := copyFileWithVerify(context.Background(), src, dst, c, false, nil)
+	err := copyFileWithVerify(context.Background(), copyLocation{root: filepath.Dir(src), physicalPath: src}, copyLocation{root: filepath.Dir(dst), physicalPath: dst}, c, false, nil)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, os.ErrNotExist), "source disappeared should wrap os.ErrNotExist, got: %v", err)
 }
@@ -570,13 +806,11 @@ func TestCopyFileWithVerify_destDirPermissionDenied_shouldReturnError(t *testing
 	require.NoError(t, os.MkdirAll(restrictedDir, 0o555))
 	t.Cleanup(func() { _ = os.Chmod(restrictedDir, 0o755) })
 
-	dst := filepath.Join(restrictedDir, "subdir", "dst.txt")
+	dst := filepath.Join(restrictedDir, "dst.txt")
 
-	st, err := os.Stat(src)
-	require.NoError(t, err)
-	c := candidate{Mode: uint32(st.Mode()), MTimeSec: st.ModTime().Unix()}
+	c := testCandidate(t, src)
 
-	err = copyFileWithVerify(context.Background(), src, dst, c, false, nil)
+	err := copyFileWithVerify(context.Background(), copyLocation{root: filepath.Dir(src), physicalPath: src}, copyLocation{root: filepath.Dir(dst), physicalPath: dst}, c, false, nil)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, syscall.EACCES), "permission denied on dest should wrap EACCES, got: %v", err)
 }
@@ -642,9 +876,7 @@ func TestCopyFileWithVerifyRetry_copyFailed_shouldRetryAndFail(t *testing.T) {
 	dst := filepath.Join(dir, "dst.txt")
 	require.NoError(t, os.WriteFile(src, []byte("hello"), 0o644))
 
-	st, err := os.Stat(src)
-	require.NoError(t, err)
-	c := candidate{Mode: uint32(st.Mode()), MTimeSec: st.ModTime().Unix()}
+	c := testCandidate(t, src)
 
 	callCount := 0
 	oldHash := hashXX64Func
@@ -655,7 +887,7 @@ func TestCopyFileWithVerifyRetry_copyFailed_shouldRetryAndFail(t *testing.T) {
 	}
 	t.Cleanup(func() { hashXX64Func = oldHash })
 
-	err = copyFileWithVerifyRetry(context.Background(), src, dst, c, true, 3, nil)
+	err := copyFileWithVerifyRetry(context.Background(), copyLocation{root: filepath.Dir(src), physicalPath: src}, copyLocation{root: filepath.Dir(dst), physicalPath: dst}, c, true, 3, nil)
 	require.Error(t, err)
 	// Each attempt calls hashXX64Func once for dest hash before failing.
 	require.Equal(t, 3, callCount, "should retry exactly 3 times")

@@ -11,10 +11,20 @@ import (
 	"time"
 
 	"github.com/cespare/xxhash/v2"
+	"github.com/hieutdo/policyfs/internal/errkind"
 )
 
 // defaultCopyRetries is the number of copy attempts before giving up on transient errors.
 const defaultCopyRetries = 3
+
+// errDestinationExists marks a candidate skipped because its destination already exists.
+var errDestinationExists = errkind.SentinelError("destination already exists")
+
+// errVerifyMismatch marks a candidate skipped after checksum verification fails.
+var errVerifyMismatch = errkind.SentinelError("verify failed: checksum mismatch")
+
+// errCopyFailed marks a retry loop that completed without a concrete cause.
+var errCopyFailed = errkind.SentinelError("copy failed")
 
 // hashXX64Func is a test seam for hashXX64.
 var hashXX64Func = hashXX64
@@ -80,24 +90,41 @@ func (e *skipError) Unwrap() error {
 	return e.Cause
 }
 
-// copyFileWithVerify copies a file to destination with optional checksum verification.
+// copyLocation identifies one physical file and its configured storage root.
+type copyLocation struct {
+	root         string
+	physicalPath string
+}
+
+// copyFileWithVerify copies a file to destination with optional checksum verification and metadata-aware parents.
 //
 // When verify is true, the source hash is computed in a single streaming pass during
 // the copy (via io.MultiWriter) to avoid re-reading the source. Only the destination
 // temp file is read a second time for the verification hash.
-func copyFileWithVerify(ctx context.Context, srcPhys string, dstPhys string, c candidate, verify bool, progress func(phase string, doneBytes int64, totalBytes int64)) error {
+func copyFileWithVerify(ctx context.Context, srcLocation copyLocation, dstLocation copyLocation, c candidate, verify bool, progress func(phase string, doneBytes int64, totalBytes int64)) (retErr error) {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("copy canceled: %w", err)
 	}
-
-	if err := os.MkdirAll(filepath.Dir(dstPhys), 0o755); err != nil {
-		return fmt.Errorf("failed to create destination dir: %w", err)
-	}
-	if _, err := os.Stat(dstPhys); err == nil {
-		return &skipError{Cause: errors.New("destination already exists")}
+	if _, err := os.Stat(dstLocation.physicalPath); err == nil {
+		return &skipError{Cause: errDestinationExists}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("failed to stat destination: %w", err)
 	}
 
-	tmp, err := os.CreateTemp(filepath.Dir(dstPhys), ".pfs-move-*")
+	createdDirs, err := ensureDestinationParent(srcLocation, dstLocation)
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if committed {
+			createdDirs.close()
+			return
+		}
+		retErr = errors.Join(retErr, createdDirs.cleanup())
+	}()
+
+	tmp, err := os.CreateTemp(filepath.Dir(dstLocation.physicalPath), ".pfs-move-*")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file: %w", err)
 	}
@@ -107,10 +134,10 @@ func copyFileWithVerify(ctx context.Context, srcPhys string, dstPhys string, c c
 		if !closed {
 			_ = tmp.Close()
 		}
-		_ = os.Remove(tmpPath) // no-op if already renamed
+		_ = os.Remove(tmpPath)
 	}()
 
-	src, err := os.Open(srcPhys)
+	src, err := os.Open(srcLocation.physicalPath)
 	if err != nil {
 		return fmt.Errorf("failed to open source: %w", err)
 	}
@@ -138,7 +165,6 @@ func copyFileWithVerify(ctx context.Context, srcPhys string, dstPhys string, c c
 	if verify {
 		srcHash = srcHasher.Sum64()
 	}
-
 	if err := tmp.Sync(); err != nil {
 		return fmt.Errorf("failed to sync temp file: %w", err)
 	}
@@ -148,8 +174,7 @@ func copyFileWithVerify(ctx context.Context, srcPhys string, dstPhys string, c c
 	closed = true
 
 	// Best-effort permission preservation.
-	perm := os.FileMode(c.Mode & 0o777)
-	_ = os.Chmod(tmpPath, perm)
+	_ = os.Chmod(tmpPath, os.FileMode(c.Mode&0o777))
 
 	if verify {
 		var verifyProgress copyProgressFunc
@@ -164,30 +189,29 @@ func copyFileWithVerify(ctx context.Context, srcPhys string, dstPhys string, c c
 			return err
 		}
 		if srcHash != dstHash {
-			return &skipError{Cause: errors.New("verify failed: checksum mismatch")}
+			return &skipError{Cause: errVerifyMismatch}
 		}
 	}
-
-	if err := os.Rename(tmpPath, dstPhys); err != nil {
+	if err := os.Rename(tmpPath, dstLocation.physicalPath); err != nil {
 		return fmt.Errorf("failed to rename temp file: %w", err)
 	}
+	committed = true
 
 	// Best-effort metadata preservation.
-	_ = syscall.Chown(dstPhys, int(c.UID), int(c.GID))
-	mt := time.Unix(c.MTimeSec, 0)
-	_ = os.Chtimes(dstPhys, mt, mt)
-
+	_ = syscall.Chown(dstLocation.physicalPath, int(c.UID), int(c.GID))
+	mtime := time.Unix(c.MTimeSec, 0)
+	_ = os.Chtimes(dstLocation.physicalPath, mtime, mtime)
 	return nil
 }
 
 // copyFileWithVerifyRetry retries copy/verify a few times for transient errors.
-func copyFileWithVerifyRetry(ctx context.Context, srcPhys string, dstPhys string, c candidate, verify bool, attempts int, progress func(phase string, doneBytes int64, totalBytes int64)) error {
+func copyFileWithVerifyRetry(ctx context.Context, srcLocation copyLocation, dstLocation copyLocation, c candidate, verify bool, attempts int, progress func(phase string, doneBytes int64, totalBytes int64)) error {
 	if attempts < 1 {
 		attempts = 1
 	}
 	var last error
 	for i := 0; i < attempts; i++ {
-		err := copyFileWithVerify(ctx, srcPhys, dstPhys, c, verify, progress)
+		err := copyFileWithVerify(ctx, srcLocation, dstLocation, c, verify, progress)
 		if err == nil {
 			return nil
 		}
@@ -207,21 +231,21 @@ func copyFileWithVerifyRetry(ctx context.Context, srcPhys string, dstPhys string
 		}
 	}
 	if last == nil {
-		last = errors.New("copy failed")
+		last = errCopyFailed
 	}
 	return last
 }
 
 // hashXX64 computes xxhash64 for a file path.
-func hashXX64(ctx context.Context, p string, progress copyProgressFunc) (uint64, error) {
-	f, err := os.Open(p)
+func hashXX64(ctx context.Context, path string, progress copyProgressFunc) (uint64, error) {
+	file, err := os.Open(path)
 	if err != nil {
 		return 0, fmt.Errorf("failed to open file for hash: %w", err)
 	}
-	defer func() { _ = f.Close() }()
+	defer func() { _ = file.Close() }()
 
 	h := xxhash.New()
-	if err := copyWithContext(ctx, h, f, progress); err != nil {
+	if err := copyWithContext(ctx, h, file, progress); err != nil {
 		return 0, fmt.Errorf("failed to hash file: %w", err)
 	}
 	return h.Sum64(), nil

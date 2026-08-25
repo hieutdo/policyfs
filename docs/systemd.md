@@ -28,6 +28,12 @@ I recommend starting with **`pfs-maint`** unless you have a reason to separate t
 
 Avoid enabling `pfs-maint@<mount>.timer` at the same time as the individual timers.
 
+## Mover filesystem permissions
+
+The packaged `pfs-move` and `pfs-maint` services run as root unless you add a local systemd override. This lets the mover preserve source file and directory ownership without hard-coding a media user or group.
+
+Directory creation behavior is documented under [mover destinations](config.md#destination). If an override runs the mover as a non-root user, that user must have permission to create the destination tree and apply the source ownership; otherwise the move is rejected before it can leave a partially configured directory chain.
+
 ## Inspect timer settings
 
 Show the effective unit (including drop-ins):

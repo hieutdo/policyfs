@@ -153,6 +153,7 @@ func (p *planner) runJob(ctx context.Context, j config.MoverJobConfig, hooks Hoo
 
 			srcRoot := p.storageByID[c.SrcStorageID].Path
 			srcPhys := filepath.Join(srcRoot, c.RelPath)
+			srcLocation := copyLocation{root: srcRoot, physicalPath: srcPhys}
 
 			if p.opts.DryRun {
 				if hooks.FileStart != nil && len(dests) > 0 {
@@ -179,6 +180,7 @@ func (p *planner) runJob(ctx context.Context, j config.MoverJobConfig, hooks Hoo
 				dstID = d.id
 				dstRoot = d.root
 				dstPhys = filepath.Join(dstRoot, c.RelPath)
+				dstLocation := copyLocation{root: dstRoot, physicalPath: dstPhys}
 				fileCtx := ctx
 				var cancel func()
 				if aw != nil && trigType == "usage" && !p.opts.Force && !finishCurrent && !winEnd.IsZero() {
@@ -190,7 +192,7 @@ func (p *planner) runJob(ctx context.Context, j config.MoverJobConfig, hooks Hoo
 						hooks.CopyProgress(j.Name, dstID, c.RelPath, phase, doneBytes, totalBytes)
 					}
 				}
-				err := copyFileWithVerifyRetry(fileCtx, srcPhys, dstPhys, c, jobVerifyEnabled(j), defaultCopyRetries, copyProgress)
+				err := copyFileWithVerifyRetry(fileCtx, srcLocation, dstLocation, c, jobVerifyEnabled(j), defaultCopyRetries, copyProgress)
 				if cancel != nil {
 					cancel()
 				}
@@ -223,6 +225,9 @@ func (p *planner) runJob(ctx context.Context, j config.MoverJobConfig, hooks Hoo
 				}
 				if _, ok := errors.AsType[*skipError](err); ok {
 					jr.FilesSkipped++
+					if errors.Is(err, errDestinationExists) {
+						jr.FilesSkippedExists++
+					}
 					movedThis = false
 					break
 				}

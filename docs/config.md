@@ -248,6 +248,10 @@ wins: if a path matches `ignore` or `ignore_file`, it is skipped regardless of `
 | `skip_if_exists_any` | bool   | `false`     | If `true`, skip a candidate when the destination path already exists on any destination storage (avoids duplicates; may increase disk I/O). When a file is skipped, `delete_source` does not apply - the source file is kept. |
 | `path_preserving`    | bool   | `false`     | Prefer destinations where the parent directory already exists. The mover applies `min_free_gb` to those destinations first, then falls back to all destinations if none remain eligible.                                      |
 
+When a move needs a missing destination parent, it creates each missing component separately. New directories copy ownership and permissions from the corresponding source directories, retain group write and traversal, and preserve setgid semantics. Existing destination directories are not changed, and symlink components are rejected.
+
+The mover must have permission to create directories and apply source ownership. Packaged systemd units run as root by default.
+
 #### `conditions`
 
 | Field      | Type   | Description                                 |

@@ -6,14 +6,217 @@ import (
 	"context"
 	"database/sql"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/hieutdo/policyfs/internal/config"
 	"github.com/stretchr/testify/require"
 )
+
+// setMoveTestMetadata assigns synthetic ownership and exact permission bits to a move fixture path.
+func setMoveTestMetadata(t *testing.T, path string, uid uint32, gid uint32, mode os.FileMode) {
+	t.Helper()
+	require.NoError(t, os.Chown(path, int(uid), int(gid)))
+	require.NoError(t, syscall.Chmod(path, uint32(mode)))
+}
+
+// runMoveTestAsIDs executes one filesystem command with synthetic numeric credentials.
+func runMoveTestAsIDs(t *testing.T, uid uint32, gid uint32, name string, args ...string) {
+	t.Helper()
+	cmd := exec.Command(name, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uid, Gid: gid}}
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, "expected %s to succeed as uid=%d gid=%d, output=%s", name, uid, gid, string(output))
+}
+
+// TestMove_missingDestinationDirs_shouldPreserveMetadataAndAllowMediaUserOperations verifies root mover copies
+// directory metadata, handles missing intermediate components, preserves existing directories, and permits rename/delete.
+func TestMove_missingDestinationDirs_shouldPreserveMetadataAndAllowMediaUserOperations(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("synthetic ownership test requires root")
+	}
+
+	jobName := "metadata"
+	movieRel := filepath.Join("library", "movies", "Test Movie (2026)", "Test Movie.mkv")
+	newRel := filepath.Join("library", "new", "season", "Movie", "movie.mkv")
+	existingRel := filepath.Join("library", "existing", "existing.mkv")
+	uid := uint32(50000 + os.Getpid()%1000)
+	gid := uid + 1
+
+	mv := &config.MoverConfig{
+		Enabled: new(true),
+		Jobs: []config.MoverJobConfig{{
+			Name:    jobName,
+			Trigger: config.MoverTriggerConfig{Type: "manual"},
+			Source: config.MoverSourceConfig{
+				Paths:    []string{"ssd1"},
+				Patterns: []string{"library/**"},
+			},
+			Destination: config.MoverDestinationConfig{
+				Paths:  []string{"hdd1"},
+				Policy: "first_found",
+			},
+			DeleteSource: new(true),
+			Verify:       new(true),
+		}},
+	}
+
+	cfg := IntegrationConfig{
+		Storages: []IntegrationStorage{
+			{ID: "ssd1", Indexed: false, BasePath: "/mnt/ssd1/pfs-integration"},
+			{ID: "hdd1", Indexed: false, BasePath: "/mnt/hdd1/pfs-integration"},
+		},
+		Targets:     []string{"ssd1"},
+		ReadTargets: []string{"ssd1"},
+		Mover:       mv,
+	}
+
+	withMountedFS(t, cfg, func(env *MountedFS) {
+		env.MustCreateFileInStoragePath(t, []byte("movie"), "ssd1", movieRel)
+		env.MustCreateFileInStoragePath(t, []byte("new"), "ssd1", newRel)
+		env.MustCreateFileInStoragePath(t, []byte("existing"), "ssd1", existingRel)
+
+		srcRoot := env.StorageRoot("ssd1")
+		dstRoot := env.StorageRoot("hdd1")
+		setMoveTestMetadata(t, filepath.Join(srcRoot, "library"), uid, gid, 0o755)
+		setMoveTestMetadata(t, filepath.Join(srcRoot, "library", "movies"), uid, gid, 0o2775)
+		setMoveTestMetadata(t, filepath.Join(srcRoot, "library", "movies", "Test Movie (2026)"), uid, gid, 0o2775)
+		setMoveTestMetadata(t, filepath.Join(srcRoot, "library", "new"), uid, gid, 0o755)
+		setMoveTestMetadata(t, filepath.Join(srcRoot, "library", "new", "season"), uid, gid, 0o2770)
+		setMoveTestMetadata(t, filepath.Join(srcRoot, "library", "new", "season", "Movie"), uid, gid, 0o0750)
+		setMoveTestMetadata(t, filepath.Join(srcRoot, "library", "existing"), uid, gid, 0o2775)
+		for _, rel := range []string{movieRel, newRel, existingRel} {
+			setMoveTestMetadata(t, filepath.Join(srcRoot, rel), uid, gid, 0o664)
+		}
+
+		dstMovieParent := filepath.Join(dstRoot, "library", "movies")
+		require.NoError(t, os.MkdirAll(dstMovieParent, 0o755))
+		setMoveTestMetadata(t, filepath.Join(dstRoot, "library"), 0, gid, 0o2775)
+		setMoveTestMetadata(t, dstMovieParent, 0, gid, 0o2775)
+		dstExisting := filepath.Join(dstRoot, "library", "existing")
+		require.NoError(t, os.MkdirAll(dstExisting, 0o755))
+		setMoveTestMetadata(t, dstExisting, 0, gid, 0o2701)
+		existingBefore := env.MustStatT(t, dstExisting)
+
+		mustRunPFS(t, env, "move", env.MountName, "--job", jobName, "--progress=off")
+
+		require.NoFileExists(t, env.StoragePath("ssd1", movieRel))
+		require.NoFileExists(t, env.StoragePath("ssd1", newRel))
+		require.NoFileExists(t, env.StoragePath("ssd1", existingRel))
+		require.Equal(t, []byte("movie"), mustReadMoveFile(t, env.StoragePath("hdd1", movieRel)))
+		require.Equal(t, []byte("new"), mustReadMoveFile(t, env.StoragePath("hdd1", newRel)))
+
+		for _, tc := range []struct {
+			rel  string
+			mode uint32
+		}{
+			{rel: filepath.Join("library", "movies", "Test Movie (2026)"), mode: 0o2775},
+			{rel: filepath.Join("library", "new"), mode: 0o2775},
+			{rel: filepath.Join("library", "new", "season"), mode: 0o2770},
+			{rel: filepath.Join("library", "new", "season", "Movie"), mode: 0o2770},
+		} {
+			st := env.MustStatT(t, env.StoragePath("hdd1", tc.rel))
+			require.Equal(t, uid, st.Uid, "expected new directory UID for %s, got %d", tc.rel, st.Uid)
+			require.Equal(t, gid, st.Gid, "expected new directory GID for %s, got %d", tc.rel, st.Gid)
+			require.Equal(t, tc.mode, uint32(st.Mode)&0o7777, "expected mode %04o for %s, got %04o", tc.mode, tc.rel, uint32(st.Mode)&0o7777)
+		}
+
+		movieFile := env.StoragePath("hdd1", movieRel)
+		movieSt := env.MustStatT(t, movieFile)
+		require.Equal(t, uid, movieSt.Uid, "expected destination file UID, got %d", movieSt.Uid)
+		require.Equal(t, gid, movieSt.Gid, "expected destination file GID, got %d", movieSt.Gid)
+		require.Equal(t, uint32(0o664), uint32(movieSt.Mode)&0o7777, "expected destination file mode 0664, got %04o", uint32(movieSt.Mode)&0o7777)
+
+		existingAfter := env.MustStatT(t, dstExisting)
+		require.Equal(t, existingBefore.Uid, existingAfter.Uid, "existing destination UID changed")
+		require.Equal(t, existingBefore.Gid, existingAfter.Gid, "existing destination GID changed")
+		require.Equal(t, uint32(existingBefore.Mode)&0o7777, uint32(existingAfter.Mode)&0o7777, "existing destination mode changed")
+
+		renamed := movieFile + ".renamed"
+		runMoveTestAsIDs(t, uid, gid, "mv", movieFile, renamed)
+		runMoveTestAsIDs(t, uid, gid, "rm", renamed)
+	})
+}
+
+// mustReadMoveFile reads a physical move fixture and fails the test on I/O errors.
+func mustReadMoveFile(t *testing.T, path string) []byte {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	require.NoError(t, err, "expected moved file to be readable: %s", path)
+	return content
+}
+
+// TestMove_deleteEmptyDir_shouldRecreateWritableDirectories verifies a later move recreates a deleted source chain correctly.
+func TestMove_deleteEmptyDir_shouldRecreateWritableDirectories(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("synthetic ownership test requires root")
+	}
+
+	jobRel := filepath.Join("library", "roundtrip", "movie.mkv")
+	uid := uint32(51000 + os.Getpid()%1000)
+	gid := uid + 1
+	jobs := []config.MoverJobConfig{
+		{
+			Name:    "forward",
+			Trigger: config.MoverTriggerConfig{Type: "manual"},
+			Source:  config.MoverSourceConfig{Paths: []string{"ssd1"}, Patterns: []string{"library/**"}},
+			Destination: config.MoverDestinationConfig{
+				Paths:  []string{"hdd1"},
+				Policy: "first_found",
+			},
+			DeleteSource:   new(true),
+			DeleteEmptyDir: new(true),
+		},
+		{
+			Name:    "backward",
+			Trigger: config.MoverTriggerConfig{Type: "manual"},
+			Source:  config.MoverSourceConfig{Paths: []string{"hdd1"}, Patterns: []string{"library/**"}},
+			Destination: config.MoverDestinationConfig{
+				Paths:  []string{"ssd1"},
+				Policy: "first_found",
+			},
+			DeleteSource:   new(true),
+			DeleteEmptyDir: new(true),
+		},
+	}
+	cfg := IntegrationConfig{
+		Storages: []IntegrationStorage{
+			{ID: "ssd1", Indexed: false, BasePath: "/mnt/ssd1/pfs-integration"},
+			{ID: "hdd1", Indexed: false, BasePath: "/mnt/hdd1/pfs-integration"},
+		},
+		Targets:     []string{"ssd1"},
+		ReadTargets: []string{"ssd1"},
+		Mover:       &config.MoverConfig{Enabled: new(true), Jobs: jobs},
+	}
+
+	withMountedFS(t, cfg, func(env *MountedFS) {
+		env.MustCreateFileInStoragePath(t, []byte("roundtrip"), "ssd1", jobRel)
+		srcFile := env.StoragePath("ssd1", jobRel)
+		srcDir := filepath.Dir(srcFile)
+		setMoveTestMetadata(t, srcDir, uid, gid, 0o2775)
+		setMoveTestMetadata(t, srcFile, uid, gid, 0o664)
+
+		mustRunPFS(t, env, "move", env.MountName, "--job", "forward", "--progress=off")
+
+		require.NoDirExists(t, srcDir)
+		require.NoFileExists(t, env.StoragePath("ssd1", jobRel))
+		require.FileExists(t, env.StoragePath("hdd1", jobRel))
+
+		mustRunPFS(t, env, "move", env.MountName, "--job", "backward", "--progress=off")
+
+		require.FileExists(t, env.StoragePath("ssd1", jobRel))
+		require.NoFileExists(t, env.StoragePath("hdd1", jobRel))
+		recreatedDir := filepath.Dir(env.StoragePath("ssd1", jobRel))
+		st := env.MustStatT(t, recreatedDir)
+		require.Equal(t, uid, st.Uid, "expected recreated directory UID, got %d", st.Uid)
+		require.Equal(t, gid, st.Gid, "expected recreated directory GID, got %d", st.Gid)
+		require.Equal(t, uint32(0o2775), uint32(st.Mode)&0o7777, "expected recreated directory mode 2775, got %04o", uint32(st.Mode)&0o7777)
+	})
+}
 
 // TestMove_shouldMoveFromNonIndexedToIndexed_andMountShouldExposeWithoutIndex verifies that moving a file
 // into an indexed destination upserts the indexdb entries (including directory chain) so the running mount
