@@ -3,17 +3,17 @@ Priority: optional
 Section: utils
 Maintainer: PolicyFS <hieutdo2@gmail.com>
 Architecture: amd64
-Version: 1.0.7
+Version: 1.0.8
 Replaces: pfs
 Provides: pfs
 Suggests: fuse3
 Conflicts: pfs
 Filename: pool/main/p/policyfs/policyfs_amd64.deb
-Size: 9593932
-MD5sum: 36198a2993cde8dc93b425d638606364
-SHA1: d0755781f52f361f1a269f01dc62f862632ac5ba
-SHA256: ebccb02e5e0f8126badf6c3e9940415d3d554c995d25cfc5ddd952ddd5dd8efd
-SHA512: 4628cf74503c0a09197ac95766b0900975862fafb3b79de736f48084828cf4aa4f4572e7c2cfb40a47f3aef34c1c24d6dc6761af3dad3d0a19fa9cbd94e9e7de
+Size: 9609972
+MD5sum: 88787b930f4b1140cac1c0e11835828c
+SHA1: e074167654e775ac627e48602a4be4aa69fe2ad5
+SHA256: c551f40e71e4ea37d8aa54be534ff06fe42a2f0fb82e109865bb4f8741dd207a
+SHA512: da5457837dca91dc75527e12f1882c8b24c6071c74a7b4ff4d3e721491f76a82e3e6e7d086322131992a43a1273cae903308d5acb6fd8319b0173de9981b11e7
 Description: Linux FUSE storage daemon with routing rules and indexing
  PolicyFS unifies multiple storage paths under one mountpoint with explicit
  read/write routing rules, an optional SQLite metadata index, and built-in
