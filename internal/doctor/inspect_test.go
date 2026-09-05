@@ -1,11 +1,18 @@
 package doctor
 
 import (
+	"context"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
 
+	"github.com/hieutdo/policyfs/internal/config"
 	"github.com/hieutdo/policyfs/internal/eventlog"
+	"github.com/hieutdo/policyfs/internal/indexdb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,6 +41,40 @@ func (r *fakePendingEventReader) Next() (line []byte, nextOffset int64, err erro
 
 // Close implements pendingEventReader.
 func (r *fakePendingEventReader) Close() error { return nil }
+
+// TestInspectFile_shouldSkipEveryIndexedStorageByDefault verifies one indexed hit does not stat other indexed disks.
+func TestInspectFile_shouldSkipEveryIndexedStorageByDefault(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	require.NoError(t, os.MkdirAll(stateDir, 0o755))
+	t.Setenv(config.EnvStateDir, stateDir)
+
+	db, err := indexdb.Open("media")
+	require.NoError(t, err)
+
+	size := int64(123)
+	mtime := time.Now().Unix()
+	mode := uint32(syscall.S_IFREG | 0o644)
+	require.NoError(t, db.UpsertFile(context.Background(), "hdd4", "library/movie.mkv", false, &size, mtime, mode, 1000, 1000))
+	require.NoError(t, db.Close())
+
+	storageIDs := []string{"hdd1", "hdd2", "hdd3", "hdd4"}
+	storagePaths := make([]config.StoragePath, 0, len(storageIDs))
+	for _, storageID := range storageIDs {
+		root := filepath.Join(t.TempDir(), "disk")
+		require.NoError(t, os.WriteFile(root, nil, 0o644))
+		storagePaths = append(storagePaths, config.StoragePath{ID: storageID, Path: root, Indexed: true})
+	}
+
+	report, err := InspectFile("media", "library/movie.mkv", config.MountConfig{StoragePaths: storagePaths}, false)
+	require.NoError(t, err)
+	require.Len(t, report.Storages, 4)
+	for _, storage := range report.Storages {
+		require.True(t, storage.DiskStatSkipped, "expected disk stat skipped for %s", storage.StorageID)
+		require.Nil(t, storage.DiskExists, "expected no disk result for %s", storage.StorageID)
+		require.Empty(t, storage.DiskError, "expected no disk error for %s", storage.StorageID)
+	}
+	require.True(t, report.Storages[3].InIndex)
+}
 
 // TestFindPendingEventsFromReader_shouldFilterMatchingEvents verifies findPendingEventsFromReader returns
 // only events that match the requested path (including renames where either old/new match).

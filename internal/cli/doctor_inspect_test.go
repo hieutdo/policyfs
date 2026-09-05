@@ -169,10 +169,8 @@ mounts:
 	require.Contains(t, stdout, "disk: not found")
 }
 
-// TestDoctor_FileInspect_shouldStatDiskWhenNotInIndex verifies that a file not present in the
-// index DB (out-of-band file on an indexed storage) still gets on-disk stat by default, so
-// users can distinguish "not indexed yet" from "missing" without passing --disk.
-func TestDoctor_FileInspect_shouldStatDiskWhenNotInIndex(t *testing.T) {
+// TestDoctor_FileInspect_shouldSkipIndexedStorageWhenNotInIndex verifies out-of-band files do not wake indexed disks.
+func TestDoctor_FileInspect_shouldSkipIndexedStorageWhenNotInIndex(t *testing.T) {
 	src := t.TempDir()
 
 	stateDir := filepath.Join(t.TempDir(), "state")
@@ -212,10 +210,9 @@ mounts:
 	code, stdout, stderr := runCLI(t, []string{"--config", cfg, "doctor", "media", "library/outofband.txt"})
 	require.Equal(t, ExitOK, code)
 	require.Empty(t, stderr)
-	require.Contains(t, stdout, "indexed: no")
-	require.Contains(t, stdout, "size:")
-	require.Contains(t, stdout, "mtime:")
-	require.NotContains(t, stdout, "disk: skipped")
+	require.Contains(t, stdout, "not found in any storage")
+	require.NotContains(t, stdout, "size:")
+	require.NotContains(t, stdout, "mtime:")
 }
 
 // TestPrintFileInspect_NotFound verifies print output when file is not found.

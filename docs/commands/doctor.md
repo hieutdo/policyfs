@@ -24,8 +24,8 @@ This requires JSON logs (`log.format: json`). To avoid stale one-off errors, onl
 **File inspect** (`pfs doctor <mount> <path>`):
 Inspects a specific virtual path across all storages, showing index metadata, pending events, and (optionally) physical disk state.
 
-By default, file inspect avoids touching disk for storages where the path is present in the index database (to prevent spinning up HDDs).
-To force an on-disk stat across storages, pass `--disk`.
+By default, file inspect does not touch storage paths configured with `indexed: true`, even when the path is absent from the index database. This prevents spinning up HDDs; the index remains the source of truth for indexed storage.
+To check for out-of-band files or force an on-disk stat across all storages, pass `--disk`.
 
 ## Exit codes
 

@@ -68,7 +68,7 @@ func InspectFile(mountName string, filePath string, mountCfg config.MountConfig,
 		}
 
 		s.PhysicalPath = filepath.Join(sp.Path, physicalRel)
-		if !statDisk && s.InIndex {
+		if !statDisk && sp.Indexed {
 			s.DiskStatSkipped = true
 		} else {
 			s.statDisk()
