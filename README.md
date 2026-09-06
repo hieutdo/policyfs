@@ -58,8 +58,10 @@ The development environment uses Docker Compose so you can work on macOS/Windows
 Start dev environment:
 
 ```bash
-make dev # Start the dev container
+make dev # Start this worktree's dev container
 ```
+
+Each Git worktree gets an isolated Compose project, cache volumes, virtual disks, and dynamically assigned localhost ports. Run `make dev-ports` to print the host ports for Delve and MkDocs.
 
 Run tests:
 

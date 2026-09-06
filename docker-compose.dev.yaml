@@ -1,6 +1,5 @@
 services:
   dev:
-    container_name: pfs-dev
     build:
       context: .
       dockerfile: Dockerfile.dev
@@ -18,14 +17,15 @@ services:
     command: sleep infinity
     volumes:
       - .:/workspace
+      - ${GIT_COMMON_DIR}:${GIT_COMMON_DIR}
       - go-mod-cache:/go/pkg/mod
       - go-build-cache:/root/.cache/go-build
       - pfs-disks:/var/lib/pfs-disks
     ports:
-      - 40000:40000
-      - 40010:40010
-      - 40020:40020
-      - 8000:8000 # mkdocs serve
+      - '127.0.0.1::40000'
+      - '127.0.0.1::40010'
+      - '127.0.0.1::40020'
+      - '127.0.0.1::8000'
 
 volumes:
   go-mod-cache:

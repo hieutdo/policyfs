@@ -1,4 +1,8 @@
-.PHONY: dev dev-build dev-down dev-shell build build-local build-linux-amd64 package-deb test test-unit test-integration coverage fmt fmt-staged lint lint-staged hooks clean docs docs-serve
+.PHONY: dev dev-build dev-down dev-shell dev-ports build build-local build-linux-amd64 package-deb test test-unit test-integration coverage fmt fmt-staged lint lint-staged hooks clean docs docs-serve
+
+# Mount the shared Git metadata at its host path so Git works inside linked worktrees.
+GIT_COMMON_DIR ?= $(shell cd "$$(git rev-parse --git-common-dir)" && pwd -P)
+export GIT_COMMON_DIR
 
 # Version info from git
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -34,6 +38,12 @@ dev-logs:
 
 dev-shell:
 	$(DCD_EXEC) bash
+
+dev-ports:
+	@printf 'Delve code: '; $(DCD) port dev 40000
+	@printf 'Delve unit tests: '; $(DCD) port dev 40010
+	@printf 'Delve integration tests: '; $(DCD) port dev 40020
+	@printf 'MkDocs: '; $(DCD) port dev 8000
 
 dev-watch:
 	$(DCD_EXEC) /go/bin/air -c /workspace/.air.toml

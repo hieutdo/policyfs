@@ -2,6 +2,8 @@
 set -euo pipefail
 
 DCD=${DCD:-"docker compose -f docker-compose.dev.yaml"}
+GIT_COMMON_DIR="$(cd "$(git rev-parse --git-common-dir)" && pwd -P)"
+export GIT_COMMON_DIR
 
 if ! $DCD ps -q dev >/dev/null 2>&1 || [[ -z "$($DCD ps -q dev 2>/dev/null || true)" ]]; then
   echo "pre-commit: dev container is not running. Run 'make dev' first." >&2

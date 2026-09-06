@@ -13,6 +13,16 @@ declare -A DISKS=(
   ["hdd3"]="xfs:2048:/mnt/hdd3"
 )
 
+# _ensure_loop_devices exposes enough loop minors for several worktree containers.
+_ensure_loop_devices() {
+  local minor
+  for minor in $(seq 0 63); do
+    if [[ ! -b "/dev/loop${minor}" ]]; then
+      mknod -m 0660 "/dev/loop${minor}" b 7 "$minor" >/dev/null 2>&1 || true
+    fi
+  done
+}
+
 _cleanup_mounts() {
   local name fstype size mp
   for name in "${DISK_ORDER[@]}"; do
@@ -101,6 +111,7 @@ up() {
   if [[ ! -e /dev/loop-control ]]; then
     mknod -m 0660 /dev/loop-control c 10 237 >/dev/null 2>&1 || true
   fi
+  _ensure_loop_devices
   mkdir -p "$DISK_DIR"
 
   # Cleanup first to avoid loop leaks across runs
