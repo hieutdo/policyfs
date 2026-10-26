@@ -243,3 +243,71 @@ func TestFUSE_Setattr_truncateChmodUtimens(t *testing.T) {
 		require.WithinDuration(t, mt, st.ModTime(), 2*time.Second)
 	})
 }
+
+// TestFUSE_Setattr_directory_multiTarget_shouldUpdateAllTargets verifies chmod and chown on a virtual directory
+// update all underlying non-indexed and indexed read targets where the directory exists.
+func TestFUSE_Setattr_directory_multiTarget_shouldUpdateAllTargets(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("chown test requires root")
+	}
+
+	uid := uint32(53000 + os.Getpid()%1000)
+	gid := uid + 1
+
+	cfg := IntegrationConfig{
+		AllowOther: true,
+		Storages: []IntegrationStorage{
+			{ID: "ssd1", Indexed: false, BasePath: "/mnt/ssd1/pfs-integration"},
+			{ID: "hdd1", Indexed: true, BasePath: "/mnt/hdd1/pfs-integration"},
+			{ID: "hdd2", Indexed: true, BasePath: "/mnt/hdd2/pfs-integration"},
+		},
+		RoutingRules: []config.RoutingRule{{
+			Match:        "**",
+			WriteTargets: []string{"ssd1"},
+			ReadTargets:  []string{"ssd1", "hdd1", "hdd2"},
+		}},
+	}
+
+	withMountedFS(t, cfg, func(env *MountedFS) {
+		relDir := "fuse-mutate/setattr-multi-dir/Movie (2026)"
+		relFile := relDir + "/movie.mkv"
+
+		env.MustCreateDirInStoragePath(t, "ssd1", relDir)
+		env.MustCreateDirInStoragePath(t, "hdd1", relDir)
+		env.MustCreateFileInStoragePath(t, []byte("secondary-branch-file"), "hdd2", relFile)
+
+		for _, id := range []string{"ssd1", "hdd1", "hdd2"} {
+			p := env.StoragePath(id, relDir)
+			require.NoError(t, os.Chown(p, 0, int(gid)))
+			require.NoError(t, syscall.Chmod(p, 0o2755))
+		}
+		filePhys := env.StoragePath("hdd2", relFile)
+		require.NoError(t, os.Chown(filePhys, 0, int(gid)))
+		require.NoError(t, syscall.Chmod(filePhys, 0o664))
+
+		mustRunPFS(t, env, "index", env.MountName)
+
+		// Action: chown and chmod the virtual directory through the mount.
+		require.NoError(t, os.Chown(env.MountPath(relDir), int(uid), int(gid)))
+		require.NoError(t, syscall.Chmod(env.MountPath(relDir), 0o2775))
+
+		// Verify: non-indexed target updated on disk.
+		stSSD1 := env.MustStatT(t, env.StoragePath("ssd1", relDir))
+		require.Equal(t, uid, stSSD1.Uid)
+		require.Equal(t, gid, stSSD1.Gid)
+		require.Equal(t, uint32(0o2775), uint32(stSSD1.Mode)&0o7777)
+
+		// Verify: caller with uid/gid can now unlink the file on the secondary indexed target (hdd2).
+		runMoveTestAsIDs(t, uid, gid, "rm", env.MountPath(relFile))
+		require.False(t, env.FileExistsInMountPoint(relFile))
+
+		// Verify: prune applies deferred setattr to both hdd1 and hdd2 on disk.
+		mustRunPFS(t, env, "prune", env.MountName)
+		for _, id := range []string{"hdd1", "hdd2"} {
+			st := env.MustStatT(t, env.StoragePath(id, relDir))
+			require.Equal(t, uid, st.Uid, "expected uid updated on %s", id)
+			require.Equal(t, gid, st.Gid, "expected gid updated on %s", id)
+			require.Equal(t, uint32(0o2775), uint32(st.Mode)&0o7777, "expected mode 2775 on %s", id)
+		}
+	})
+}

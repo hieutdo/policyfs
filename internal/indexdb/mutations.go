@@ -138,7 +138,16 @@ func ensureDirChainTx(ctx context.Context, tx *sql.Tx, storageID string, dir str
 		return nil
 	}
 
+	// When inserting a synthetic ancestor directory with no prior DB row,
+	// inherit group-write and setgid bits from the child entry's mode so group-writable
+	// media trees remain writable before the next index scan.
 	dirMode := uint32(syscall.S_IFDIR | 0o755)
+	if mode&0o020 != 0 {
+		dirMode |= 0o020
+	}
+	if mode&syscall.S_ISGID != 0 {
+		dirMode |= syscall.S_ISGID
+	}
 
 	parts := strings.Split(dir, "/")
 	cur := ""
@@ -157,11 +166,84 @@ func ensureDirChainTx(ctx context.Context, tx *sql.Tx, storageID string, dir str
 			return err
 		}
 		parentDir, name := splitParentName(cur)
-		if err := upsertFileRowPreserveRunIDTx(ctx, tx, storageID, cur, parentDir, name, true, nil, mtimeSec, dirMode, uid, gid, nil); err != nil {
+		if err := ensureDirRowPreserveExistingTx(ctx, tx, storageID, cur, parentDir, name, mtimeSec, dirMode, uid, gid); err != nil {
 			return err
 		}
 	}
 
+	return nil
+}
+
+// ensureDirRowPreserveExistingTx inserts a missing ancestor directory or revives a stale tombstone without overwriting live directory metadata.
+func ensureDirRowPreserveExistingTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	storageID string,
+	p string,
+	parentDir string,
+	name string,
+	mtimeSec int64,
+	mode uint32,
+	uid uint32,
+	gid uint32,
+) error {
+	if tx == nil {
+		return &errkind.NilError{What: "tx"}
+	}
+	storageID = strings.TrimSpace(storageID)
+	p = normalizeVirtualPath(p)
+	if storageID == "" {
+		return &errkind.RequiredError{What: "storage id"}
+	}
+	if p == "" {
+		return syscall.EPERM
+	}
+
+	_, err := tx.ExecContext(
+		ctx,
+		`INSERT INTO files (
+		    storage_id, path, real_path, parent_dir, name, is_dir,
+		    size, mtime, mode, uid, gid,
+		    deleted, last_seen_run_id,
+		    file_count, total_files, total_bytes
+		)
+		VALUES (
+		    ?, ?, ?, ?, ?, 1,
+		    NULL, ?, ?, ?, ?,
+		    0, NULL,
+		    0, 0, 0
+		)
+		ON CONFLICT (storage_id, path) DO UPDATE SET
+		    parent_dir = excluded.parent_dir,
+		    name = excluded.name,
+		    real_path = CASE
+		        WHEN files.real_path != '' AND files.real_path != files.path THEN files.real_path
+		        ELSE excluded.real_path
+		    END,
+		    is_dir = 1,
+		    size = NULL,
+		    mtime = CASE WHEN files.deleted = 0 THEN files.mtime ELSE excluded.mtime END,
+		    mode = CASE WHEN files.deleted = 0 THEN files.mode ELSE excluded.mode END,
+		    uid = CASE WHEN files.deleted = 0 THEN files.uid ELSE excluded.uid END,
+		    gid = CASE WHEN files.deleted = 0 THEN files.gid ELSE excluded.gid END,
+		    deleted = CASE
+		        WHEN files.deleted = 1 THEN 1
+		        ELSE 0
+		    END,
+		    last_seen_run_id = files.last_seen_run_id;`,
+		storageID,
+		p,
+		p,
+		parentDir,
+		name,
+		mtimeSec,
+		mode,
+		uid,
+		gid,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to ensure dir row: %w", err)
+	}
 	return nil
 }
 

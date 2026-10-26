@@ -309,6 +309,75 @@ func TestMove_shouldMoveFromNonIndexedToIndexed_andMountShouldExposeWithoutIndex
 	})
 }
 
+// TestMove_indexedDestination_shouldPreserveParentDirPermissionsForNonRootUnlinkRename verifies that moving a file
+// into an indexed destination preserves existing and newly created parent directory mode/ownership in index.db
+// so a non-root group member can rename and unlink the moved file through the FUSE mount without re-indexing.
+func TestMove_indexedDestination_shouldPreserveParentDirPermissionsForNonRootUnlinkRename(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("synthetic ownership test requires root")
+	}
+	if os.Getenv(config.EnvIntegrationUseExistingMount) != "" {
+		t.Skip("skip move flow test when using an existing mount")
+	}
+
+	jobName := "archive-indexed-perms"
+	movieDir := filepath.Join("library", "movies", "Movie (2026)")
+	movieRel := filepath.Join(movieDir, "file.mkv")
+	uidOwner := uint32(52000 + os.Getpid()%1000)
+	uidGroupMember := uidOwner + 1
+	gid := uidOwner + 2
+
+	mv := &config.MoverConfig{
+		Enabled: new(true),
+		Jobs: []config.MoverJobConfig{{
+			Name:    jobName,
+			Trigger: config.MoverTriggerConfig{Type: "manual"},
+			Source: config.MoverSourceConfig{
+				Paths:    []string{"ssd1"},
+				Patterns: []string{"library/**"},
+			},
+			Destination: config.MoverDestinationConfig{
+				Paths:  []string{"hdd1"},
+				Policy: "first_found",
+			},
+			DeleteSource: new(true),
+			Verify:       new(true),
+		}},
+	}
+
+	cfg := IntegrationConfig{
+		AllowOther: true,
+		Storages: []IntegrationStorage{
+			{ID: "ssd1", Indexed: false, BasePath: "/mnt/ssd1/pfs-integration"},
+			{ID: "hdd1", Indexed: true, BasePath: "/mnt/hdd1/pfs-integration"},
+		},
+		Targets:     []string{"ssd1"},
+		ReadTargets: []string{"ssd1", "hdd1"},
+		Mover:       mv,
+	}
+
+	withMountedFS(t, cfg, func(env *MountedFS) {
+		env.MustCreateFileInStoragePath(t, []byte("indexed-movie"), "ssd1", movieRel)
+		srcRoot := env.StorageRoot("ssd1")
+		setMoveTestMetadata(t, filepath.Join(srcRoot, "library"), uidOwner, gid, 0o2775)
+		setMoveTestMetadata(t, filepath.Join(srcRoot, "library", "movies"), uidOwner, gid, 0o2775)
+		setMoveTestMetadata(t, filepath.Join(srcRoot, movieDir), uidOwner, gid, 0o2775)
+		setMoveTestMetadata(t, filepath.Join(srcRoot, movieRel), 0, gid, 0o664)
+
+		dstRoot := env.StorageRoot("hdd1")
+		require.NoError(t, os.MkdirAll(filepath.Join(dstRoot, "library", "movies"), 0o755))
+		setMoveTestMetadata(t, filepath.Join(dstRoot, "library"), 0, gid, 0o2775)
+		setMoveTestMetadata(t, filepath.Join(dstRoot, "library", "movies"), 0, gid, 0o2775)
+
+		mustRunPFS(t, env, "index", env.MountName)
+		mustRunPFS(t, env, "move", env.MountName, "--job", jobName, "--progress=off")
+
+		renamedRel := filepath.Join(movieDir, "file-renamed.mkv")
+		runMoveTestAsIDs(t, uidGroupMember, gid, "mv", env.MountPath(movieRel), env.MountPath(renamedRel))
+		runMoveTestAsIDs(t, uidGroupMember, gid, "rm", env.MountPath(renamedRel))
+	})
+}
+
 // TestMove_pathPreservingBelowMinFree_shouldFallbackToEligibleDestination verifies an ineligible existing parent falls back to another destination.
 func TestMove_pathPreservingBelowMinFree_shouldFallbackToEligibleDestination(t *testing.T) {
 	if os.Getenv(config.EnvIntegrationUseExistingMount) != "" {

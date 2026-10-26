@@ -394,7 +394,7 @@ func applyRename(ctx context.Context, storageRoots map[string]string, db *indexd
 		return applyResult{succeeded: 1}, nil, true, false, nil
 	}
 
-	if err := os.MkdirAll(filepath.Dir(newP), 0o755); err != nil {
+	if err := ensureRenameDestinationParent(ctx, db, e.StorageID, storageRoots[e.StorageID], e.NewPath); err != nil {
 		return applyResult{failed: 1}, nil, false, true, fmt.Errorf("failed to create destination parent: %w", err)
 	}
 	log.Debug().Str("storage_id", e.StorageID).Str("old_path", e.OldPath).Str("new_path", e.NewPath).Msg("prune materialized rename destination parent")
@@ -575,4 +575,102 @@ func maybeTruncateEvents(mountName string, offset int64) (bool, error) {
 		return false, fmt.Errorf("failed to write event offset: %w", err)
 	}
 	return true, nil
+}
+
+// ensureRenameDestinationParent creates missing parent directories for a rename destination while preserving ownership and mode.
+func ensureRenameDestinationParent(ctx context.Context, db *indexdb.DB, storageID string, storageRoot string, newRel string) error {
+	storageRoot = filepath.Clean(strings.TrimSpace(storageRoot))
+	if storageRoot == "" || storageRoot == "." {
+		return &errkind.InvalidError{What: "storage root"}
+	}
+	parentRel := filepath.ToSlash(filepath.Dir(filepath.FromSlash(strings.TrimSpace(newRel))))
+	if parentRel == "." || parentRel == "/" || parentRel == "" {
+		return nil
+	}
+
+	canChown := os.Geteuid() == 0
+	curRel := ""
+	for part := range strings.SplitSeq(parentRel, "/") {
+		part = strings.TrimSpace(part)
+		if part == "" || part == "." {
+			continue
+		}
+		if curRel == "" {
+			curRel = part
+		} else {
+			curRel = curRel + "/" + part
+		}
+
+		curPhys := filepath.Join(storageRoot, filepath.FromSlash(curRel))
+		info, err := os.Lstat(curPhys)
+		if err == nil {
+			if !info.IsDir() {
+				return &os.PathError{Op: "mkdir", Path: curPhys, Err: syscall.ENOTDIR}
+			}
+			continue
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("failed to stat destination parent %s: %w", curPhys, err)
+		}
+
+		parentPhys := filepath.Dir(curPhys)
+		pInfo, err := os.Lstat(parentPhys)
+		if err != nil {
+			return fmt.Errorf("failed to stat parent directory %s: %w", parentPhys, err)
+		}
+		if !pInfo.IsDir() {
+			return &os.PathError{Op: "mkdir", Path: parentPhys, Err: syscall.ENOTDIR}
+		}
+		pst, _ := pInfo.Sys().(*syscall.Stat_t)
+
+		var wantUID, wantGID, wantMode uint32
+		parentMode := uint32(0o755)
+		if pst != nil {
+			parentMode = uint32(pst.Mode)
+			wantUID = pst.Uid
+			wantGID = pst.Gid
+		}
+		// Inherit only the parent's permission bits; never widen access beyond the parent.
+		wantMode = parentMode & 0o777
+		if parentMode&syscall.S_ISGID != 0 {
+			wantMode |= syscall.S_ISGID
+		}
+
+		if db != nil {
+			if dbDir, ok, dbErr := db.GetEffectiveFile(ctx, storageID, curRel); dbErr == nil && ok && dbDir.IsDir {
+				wantUID = dbDir.UID
+				wantGID = dbDir.GID
+				if pst != nil && parentMode&syscall.S_ISGID != 0 && wantGID == 0 && pst.Gid != 0 {
+					wantGID = pst.Gid
+				}
+				// The DB row is the source of truth for the directory's mode when present,
+				// while preserving setgid inheritance from a setgid physical parent directory.
+				if dbPerm := dbDir.Mode & 0o7777; dbPerm != 0 {
+					wantMode = dbPerm
+					if parentMode&syscall.S_ISGID != 0 {
+						wantMode |= syscall.S_ISGID
+					}
+				}
+			}
+		}
+
+		if err := os.Mkdir(curPhys, os.FileMode(wantMode&0o777)); err != nil {
+			if errors.Is(err, os.ErrExist) {
+				continue
+			}
+			return fmt.Errorf("failed to create directory %s: %w", curPhys, err)
+		}
+		if canChown {
+			if err := syscall.Lchown(curPhys, int(wantUID), int(wantGID)); err != nil {
+				_ = syscall.Rmdir(curPhys)
+				return &os.PathError{Op: "lchown", Path: curPhys, Err: err}
+			}
+		}
+		// Apply chmod after chown because chown on Linux may clear setgid bits on directories.
+		if err := syscall.Chmod(curPhys, wantMode); err != nil {
+			_ = syscall.Rmdir(curPhys)
+			return &os.PathError{Op: "chmod", Path: curPhys, Err: err}
+		}
+	}
+	return nil
 }

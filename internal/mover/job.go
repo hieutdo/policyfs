@@ -260,9 +260,7 @@ func (p *planner) runJob(ctx context.Context, j config.MoverJobConfig, hooks Hoo
 				if db == nil {
 					return jr, &errkind.NilError{What: "index db"}
 				}
-				sz := c.SizeBytes
-				err := db.UpsertFile(ctx, dstID, c.RelPath, false, &sz, c.MTimeSec, c.Mode, c.UID, c.GID)
-				if err != nil {
+				if err := upsertIndexedDestinationFile(ctx, db, dstID, dstRoot, c); err != nil {
 					jr.FilesErrored++
 					if hooks.Warn != nil {
 						hooks.Warn(j.Name, c.SrcStorageID, c.RelPath, err)
@@ -545,4 +543,51 @@ func (p *planner) activeSourcesForJob(triggerType string, j config.MoverJobConfi
 		out = append(out, u.id)
 	}
 	return out, nil
+}
+
+// upsertIndexedDestinationFile upserts any newly materialized ancestor directories and the moved file into indexdb.
+func upsertIndexedDestinationFile(ctx context.Context, db *indexdb.DB, dstID string, dstRoot string, c candidate) error {
+	if db == nil {
+		return &errkind.NilError{What: "index db"}
+	}
+	parentRel := path.Dir(strings.TrimPrefix(strings.TrimSpace(c.RelPath), "/"))
+	if parentRel != "." && parentRel != "/" && parentRel != "" {
+		cur := ""
+		for _, part := range strings.Split(parentRel, "/") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			if cur == "" {
+				cur = part
+			} else {
+				cur = cur + "/" + part
+			}
+			exists, err := db.DirExists(ctx, dstID, cur)
+			if err != nil {
+				return fmt.Errorf("failed to check indexed destination dir %s: %w", cur, err)
+			}
+			if exists {
+				continue
+			}
+			dirPhys := filepath.Join(dstRoot, filepath.FromSlash(cur))
+			info, err := os.Lstat(dirPhys)
+			if err != nil {
+				return fmt.Errorf("failed to stat destination dir %s: %w", dirPhys, err)
+			}
+			st, ok := info.Sys().(*syscall.Stat_t)
+			if !ok || st == nil {
+				return fmt.Errorf("failed to extract stat for destination dir %s", dirPhys)
+			}
+			if err := db.UpsertFile(ctx, dstID, cur, true, nil, info.ModTime().Unix(), uint32(st.Mode), st.Uid, st.Gid); err != nil {
+				return fmt.Errorf("failed to upsert destination dir %s: %w", cur, err)
+			}
+		}
+	}
+
+	sz := c.SizeBytes
+	if err := db.UpsertFile(ctx, dstID, c.RelPath, false, &sz, c.MTimeSec, c.Mode, c.UID, c.GID); err != nil {
+		return fmt.Errorf("failed to upsert destination file %s: %w", c.RelPath, err)
+	}
+	return nil
 }

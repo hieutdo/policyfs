@@ -453,6 +453,118 @@ func TestApplyRename_shouldWarnOnNotEmpty(t *testing.T) {
 	require.DirExists(t, oldP)
 }
 
+// TestApplyRename_shouldPreserveParentDirMetadataWhenCreatingMissingDestParents verifies applyRename creates missing destination parent directories with inherited setgid and group-write permissions.
+func TestApplyRename_shouldPreserveParentDirMetadataWhenCreatingMissingDestParents(t *testing.T) {
+	mount := "media"
+	_ = setupPruneTestEnv(t, mount)
+
+	root := t.TempDir()
+	storageRoots := map[string]string{"hdd4": root}
+
+	parentDir := filepath.Join(root, "library", "movies")
+	require.NoError(t, os.MkdirAll(parentDir, 0o755))
+	require.NoError(t, syscall.Chmod(parentDir, uint32(syscall.S_ISGID|0o775)))
+
+	oldRel := "library/movies/OldMovie/file.mkv"
+	oldPhys := filepath.Join(root, filepath.FromSlash(oldRel))
+	require.NoError(t, os.MkdirAll(filepath.Dir(oldPhys), 0o755))
+	require.NoError(t, syscall.Chmod(filepath.Dir(oldPhys), uint32(syscall.S_ISGID|0o775)))
+	mustWriteFile(t, oldPhys, []byte("movie-data"))
+
+	db, err := indexdb.Open(mount)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	ctx := context.Background()
+	wantDirMode := uint32(syscall.S_IFDIR | syscall.S_ISGID | 0o775)
+	require.NoError(t, db.UpsertFile(ctx, "hdd4", "library", true, nil, 10, wantDirMode, 0, 0))
+	require.NoError(t, db.UpsertFile(ctx, "hdd4", "library/movies", true, nil, 10, wantDirMode, 0, 0))
+	require.NoError(t, db.UpsertFile(ctx, "hdd4", "library/movies/NewMovie", true, nil, 10, wantDirMode, 0, 0))
+	sz := int64(10)
+	require.NoError(t, db.UpsertFile(ctx, "hdd4", oldRel, false, &sz, 10, uint32(syscall.S_IFREG|0o664), 0, 0))
+
+	newRel := "library/movies/NewMovie/file.mkv"
+	ev := eventlog.RenameEvent{Type: eventlog.TypeRename, StorageID: "hdd4", OldPath: oldRel, NewPath: newRel, TS: 1}
+	res, warnings, advance, retryLater, err := applyRename(ctx, storageRoots, db, ev, false, zerolog.Nop())
+
+	require.NoError(t, err)
+	require.True(t, advance)
+	require.False(t, retryLater)
+	require.Equal(t, int64(1), res.succeeded)
+	require.Empty(t, warnings)
+
+	newParentPhys := filepath.Join(root, "library", "movies", "NewMovie")
+	st := syscall.Stat_t{}
+	require.NoError(t, syscall.Lstat(newParentPhys, &st))
+	require.Equal(t, uint32(syscall.S_ISGID|0o775), uint32(st.Mode)&0o7777)
+}
+
+// TestApplyRename_shouldUseDBDirModeWhenCreatingMissingDestParent verifies a live DB directory row wins over the parent's mode.
+func TestApplyRename_shouldUseDBDirModeWhenCreatingMissingDestParent(t *testing.T) {
+	mount := "media"
+	_ = setupPruneTestEnv(t, mount)
+
+	root := t.TempDir()
+	storageRoots := map[string]string{"hdd4": root}
+
+	parentDir := filepath.Join(root, "library")
+	require.NoError(t, os.MkdirAll(parentDir, 0o755))
+	require.NoError(t, syscall.Chmod(parentDir, 0o755))
+
+	oldRel := "library/OldMovie/file.mkv"
+	oldPhys := filepath.Join(root, filepath.FromSlash(oldRel))
+	require.NoError(t, os.MkdirAll(filepath.Dir(oldPhys), 0o755))
+	mustWriteFile(t, oldPhys, []byte("movie-data"))
+
+	db, err := indexdb.Open(mount)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	ctx := context.Background()
+	require.NoError(t, db.UpsertFile(ctx, "hdd4", "library", true, nil, 10, uint32(syscall.S_IFDIR|0o755), 0, 0))
+	require.NoError(t, db.UpsertFile(ctx, "hdd4", "library/NewMovie", true, nil, 10, uint32(syscall.S_IFDIR|syscall.S_ISGID|0o775), 0, 0))
+	sz := int64(10)
+	require.NoError(t, db.UpsertFile(ctx, "hdd4", oldRel, false, &sz, 10, uint32(syscall.S_IFREG|0o664), 0, 0))
+
+	ev := eventlog.RenameEvent{Type: eventlog.TypeRename, StorageID: "hdd4", OldPath: oldRel, NewPath: "library/NewMovie/file.mkv", TS: 1}
+	_, _, _, _, err = applyRename(ctx, storageRoots, db, ev, false, zerolog.Nop())
+	require.NoError(t, err)
+
+	st := syscall.Stat_t{}
+	require.NoError(t, syscall.Lstat(filepath.Join(root, "library", "NewMovie"), &st))
+	require.Equal(t, uint32(syscall.S_ISGID|0o775), uint32(st.Mode)&0o7777)
+}
+
+// TestApplyRename_shouldNotWidenParentModeWhenNoDBRow verifies a missing destination parent inherits the parent's mode without added group write.
+func TestApplyRename_shouldNotWidenParentModeWhenNoDBRow(t *testing.T) {
+	mount := "media"
+	_ = setupPruneTestEnv(t, mount)
+
+	root := t.TempDir()
+	storageRoots := map[string]string{"hdd4": root}
+
+	parentDir := filepath.Join(root, "library")
+	require.NoError(t, os.MkdirAll(parentDir, 0o750))
+	require.NoError(t, syscall.Chmod(parentDir, 0o750))
+
+	oldRel := "library/OldMovie/file.mkv"
+	oldPhys := filepath.Join(root, filepath.FromSlash(oldRel))
+	require.NoError(t, os.MkdirAll(filepath.Dir(oldPhys), 0o750))
+	mustWriteFile(t, oldPhys, []byte("movie-data"))
+
+	db, err := indexdb.Open(mount)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	ev := eventlog.RenameEvent{Type: eventlog.TypeRename, StorageID: "hdd4", OldPath: oldRel, NewPath: "library/NewMovie/file.mkv", TS: 1}
+	_, _, _, _, err = applyRename(context.Background(), storageRoots, db, ev, false, zerolog.Nop())
+	require.NoError(t, err)
+
+	st := syscall.Stat_t{}
+	require.NoError(t, syscall.Lstat(filepath.Join(root, "library", "NewMovie"), &st))
+	require.Equal(t, uint32(0o750), uint32(st.Mode)&0o7777)
+}
+
 // TestRunOneshot_shouldReturnErrorWhenReaderNextFails verifies the event loop returns a wrapped
 // error when the event reader returns a non-EOF error.
 func TestRunOneshot_shouldReturnErrorWhenReaderNextFails(t *testing.T) {

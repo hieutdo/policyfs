@@ -485,3 +485,54 @@ func TestUpsertFile_shouldPreserveLastSeenRunID(t *testing.T) {
 	require.True(t, runID.Valid)
 	require.Equal(t, int64(7), runID.Int64)
 }
+
+// TestUpsertFile_shouldNotOverwriteExistingParentDirMetadata verifies UpsertFile preserves existing live parent directory mode, uid, and gid.
+func TestUpsertFile_shouldNotOverwriteExistingParentDirMetadata(t *testing.T) {
+	db := mustOpenTestDB(t)
+	ctx := context.Background()
+
+	wantDirMode := uint32(syscall.S_IFDIR | syscall.S_ISGID | 0o775)
+	require.NoError(t, db.UpsertFile(ctx, "hdd4", "library", true, nil, 100, wantDirMode, 0, 11000))
+	require.NoError(t, db.UpsertFile(ctx, "hdd4", "library/movies", true, nil, 100, wantDirMode, 0, 11000))
+	require.NoError(t, db.UpsertFile(ctx, "hdd4", "library/movies/MovieA", true, nil, 100, wantDirMode, 11000, 11000))
+
+	sz := int64(4096)
+	require.NoError(t, db.UpsertFile(ctx, "hdd4", "library/movies/MovieA/file.mkv", false, &sz, 200, uint32(syscall.S_IFREG|0o664), 0, 11000))
+
+	for _, tc := range []struct {
+		path string
+		uid  uint32
+		gid  uint32
+	}{
+		{path: "library", uid: 0, gid: 11000},
+		{path: "library/movies", uid: 0, gid: 11000},
+		{path: "library/movies/MovieA", uid: 11000, gid: 11000},
+	} {
+		dirRow, ok, err := db.GetEffectiveFile(ctx, "hdd4", tc.path)
+		require.NoError(t, err)
+		require.True(t, ok)
+		require.True(t, dirRow.IsDir)
+		require.Equal(t, wantDirMode, dirRow.Mode, "expected mode preserved for %s", tc.path)
+		require.Equal(t, tc.uid, dirRow.UID, "expected uid preserved for %s", tc.path)
+		require.Equal(t, tc.gid, dirRow.GID, "expected gid preserved for %s", tc.path)
+	}
+}
+
+// TestUpsertFile_shouldInheritGroupWriteAndSetgidForNewSyntheticParentDirs verifies newly created synthetic ancestor rows inherit group-write and setgid bits from the upserted entry.
+func TestUpsertFile_shouldInheritGroupWriteAndSetgidForNewSyntheticParentDirs(t *testing.T) {
+	db := mustOpenTestDB(t)
+	ctx := context.Background()
+
+	sz := int64(512)
+	require.NoError(t, db.UpsertFile(ctx, "hdd4", "library/movies/MovieB/file.mkv", false, &sz, 100, uint32(syscall.S_IFREG|syscall.S_ISGID|0o664), 11000, 11000))
+
+	for _, p := range []string{"library", "library/movies", "library/movies/MovieB"} {
+		dirRow, ok, err := db.GetEffectiveFile(ctx, "hdd4", p)
+		require.NoError(t, err)
+		require.True(t, ok)
+		require.True(t, dirRow.IsDir)
+		require.Equal(t, uint32(syscall.S_IFDIR|syscall.S_ISGID|0o775), dirRow.Mode, "expected synthetic dir mode for %s", p)
+		require.Equal(t, uint32(11000), dirRow.UID)
+		require.Equal(t, uint32(11000), dirRow.GID)
+	}
+}
