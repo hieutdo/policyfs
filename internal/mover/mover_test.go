@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hieutdo/policyfs/internal/config"
+	"github.com/hieutdo/policyfs/internal/indexdb"
 	"github.com/hieutdo/policyfs/internal/pathmatch"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
@@ -183,20 +184,21 @@ func TestPlanner_selectDestinations_policyMostFree_shouldSort(t *testing.T) {
 	require.Equal(t, "hdd2", dr.choices[0].id)
 }
 
-// TestDiscoverCandidatesOneSource_shouldFilterByMinAgeAndSort verifies min_age filtering uses planner.now and candidates are sorted by size desc then mtime asc.
+// TestDiscoverCandidatesOneSource_shouldFilterByMinAgeAndSort verifies min_age filtering uses planner.now
+// and candidates are sorted by oldest mtime first (tie-broken by size desc).
 func TestDiscoverCandidatesOneSource_shouldFilterByMinAgeAndSort(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "library"), 0o755))
 
-	pSmall := filepath.Join(root, "library", "small.txt")
-	require.NoError(t, os.WriteFile(pSmall, []byte("a"), 0o644))
+	pSmallOldest := filepath.Join(root, "library", "small-oldest.txt")
+	require.NoError(t, os.WriteFile(pSmallOldest, []byte("a"), 0o644))
 	pBigOld := filepath.Join(root, "library", "big-old.txt")
 	require.NoError(t, os.WriteFile(pBigOld, []byte("hello"), 0o644))
 	pBigNew := filepath.Join(root, "library", "big-new.txt")
 	require.NoError(t, os.WriteFile(pBigNew, []byte("world"), 0o644))
 
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	require.NoError(t, os.Chtimes(pSmall, now.Add(-2*time.Hour), now.Add(-2*time.Hour)))
+	require.NoError(t, os.Chtimes(pSmallOldest, now.Add(-72*time.Hour), now.Add(-72*time.Hour)))
 	require.NoError(t, os.Chtimes(pBigOld, now.Add(-48*time.Hour), now.Add(-48*time.Hour)))
 	require.NoError(t, os.Chtimes(pBigNew, now.Add(-2*time.Hour), now.Add(-2*time.Hour)))
 
@@ -211,8 +213,9 @@ func TestDiscoverCandidatesOneSource_shouldFilterByMinAgeAndSort(t *testing.T) {
 	cands, err := pl.discoverCandidatesOneSource(context.Background(), "job", "ssd1", m, nil, conds, nil)
 	require.NoError(t, err)
 
-	require.Len(t, cands, 1)
-	require.Equal(t, "library/big-old.txt", cands[0].RelPath)
+	require.Len(t, cands, 2)
+	require.Equal(t, "library/small-oldest.txt", cands[0].RelPath)
+	require.Equal(t, "library/big-old.txt", cands[1].RelPath)
 }
 
 // TestBuildSourceMatchers_includeFileOnly_shouldSelectListedFiles verifies include_file can be used
@@ -1079,4 +1082,333 @@ func TestDestPathExistsAny_shouldReturnErrorOnENOTDIR(t *testing.T) {
 	require.Error(t, err)
 	require.False(t, exists)
 	require.True(t, errors.Is(err, syscall.ENOTDIR), "expected ENOTDIR, got: %v", err)
+}
+
+// TestRunJob_modeEvict_replicaVerification verifies zero-copy replica safety checks across
+// matching, missing, size-mismatched, and outdated-mtime destination states.
+func TestRunJob_modeEvict_replicaVerification(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	oldTime := now.Add(-24 * time.Hour)
+
+	tests := []struct {
+		name                   string
+		srcContent             []byte
+		srcMTime               time.Time
+		dstExists              bool
+		dstContent             []byte
+		dstMTime               time.Time
+		wantMoved              int64
+		wantSkipped            int64
+		wantSkippedUnmirrored  int64
+		wantBytesFreed         int64
+		wantSourceStillPresent bool
+	}{
+		{
+			name:                   "should evict source when safe replica exists",
+			srcContent:             []byte("replica-data-12345"),
+			srcMTime:               now,
+			dstExists:              true,
+			dstContent:             []byte("replica-data-12345"),
+			dstMTime:               now,
+			wantMoved:              1,
+			wantSkipped:            0,
+			wantSkippedUnmirrored:  0,
+			wantBytesFreed:         int64(len("replica-data-12345")),
+			wantSourceStillPresent: false,
+		},
+		{
+			name:                   "should skip when replica is missing on destination",
+			srcContent:             []byte("unique-data"),
+			srcMTime:               now,
+			dstExists:              false,
+			wantMoved:              0,
+			wantSkipped:            1,
+			wantSkippedUnmirrored:  1,
+			wantBytesFreed:         0,
+			wantSourceStillPresent: true,
+		},
+		{
+			name:                   "should skip when destination replica size mismatches",
+			srcContent:             []byte("full-data-content"),
+			srcMTime:               now,
+			dstExists:              true,
+			dstContent:             []byte("partial"),
+			dstMTime:               now,
+			wantMoved:              0,
+			wantSkipped:            1,
+			wantSkippedUnmirrored:  1,
+			wantBytesFreed:         0,
+			wantSourceStillPresent: true,
+		},
+		{
+			name:                   "should skip when destination replica mtime is older than source",
+			srcContent:             []byte("data"),
+			srcMTime:               now,
+			dstExists:              true,
+			dstContent:             []byte("data"),
+			dstMTime:               oldTime,
+			wantMoved:              0,
+			wantSkipped:            1,
+			wantSkippedUnmirrored:  1,
+			wantBytesFreed:         0,
+			wantSourceStillPresent: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srcDir := t.TempDir()
+			dstDir := t.TempDir()
+
+			rel := filepath.Join("lib", "movie.mkv")
+			require.NoError(t, os.MkdirAll(filepath.Join(srcDir, "lib"), 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(srcDir, rel), tc.srcContent, 0o644))
+			require.NoError(t, os.Chtimes(filepath.Join(srcDir, rel), tc.srcMTime, tc.srcMTime))
+
+			if tc.dstExists {
+				require.NoError(t, os.MkdirAll(filepath.Join(dstDir, "lib"), 0o755))
+				require.NoError(t, os.WriteFile(filepath.Join(dstDir, rel), tc.dstContent, 0o644))
+				require.NoError(t, os.Chtimes(filepath.Join(dstDir, rel), tc.dstMTime, tc.dstMTime))
+			}
+
+			mc := &config.MountConfig{StoragePaths: []config.StoragePath{
+				{ID: "ssd1", Path: srcDir},
+				{ID: "hdd1", Path: dstDir},
+			}}
+			p := newPlanner("media", mc, Opts{})
+
+			j := config.MoverJobConfig{
+				Name:        "cache-evict",
+				Mode:        JobModeEvict,
+				Trigger:     config.MoverTriggerConfig{Type: "manual"},
+				Source:      config.MoverSourceConfig{Paths: []string{"ssd1"}, Patterns: []string{"lib/**"}},
+				Destination: config.MoverDestinationConfig{Paths: []string{"hdd1"}},
+			}
+
+			jr, err := p.runJob(context.Background(), j, Hooks{}, nil, 0, 0)
+			require.NoError(t, err)
+			require.Equal(t, tc.wantMoved, jr.FilesMoved)
+			require.Equal(t, int64(0), jr.BytesMoved, "evict mode must not copy data bytes")
+			require.Equal(t, tc.wantBytesFreed, jr.BytesFreed)
+			require.Equal(t, tc.wantSkipped, jr.FilesSkipped)
+			require.Equal(t, tc.wantSkippedUnmirrored, jr.FilesSkippedUnmirrored)
+
+			if tc.wantSourceStillPresent {
+				require.FileExists(t, filepath.Join(srcDir, rel))
+			} else {
+				require.NoFileExists(t, filepath.Join(srcDir, rel))
+				require.FileExists(t, filepath.Join(dstDir, rel))
+			}
+		})
+	}
+}
+
+// TestRunJob_modeEvict_shouldEvictOldestFirst verifies that mode=evict orders candidates by oldest mtime first
+// rather than largest size first, so newer large files stay cached while older smaller files are evicted first.
+func TestRunJob_modeEvict_shouldEvictOldestFirst(t *testing.T) {
+	srcDir := t.TempDir()
+	dstDir := t.TempDir()
+
+	require.NoError(t, os.MkdirAll(filepath.Join(srcDir, "lib"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(dstDir, "lib"), 0o755))
+
+	oldSmallRel := filepath.Join("lib", "old-small.mkv")
+	newLargeRel := filepath.Join("lib", "new-large.mkv")
+	smallContent := []byte("small")
+	largeContent := []byte("much-larger-recent-file-content")
+
+	require.NoError(t, os.WriteFile(filepath.Join(srcDir, oldSmallRel), smallContent, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dstDir, oldSmallRel), smallContent, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(srcDir, newLargeRel), largeContent, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dstDir, newLargeRel), largeContent, 0o644))
+
+	now := time.Now().Truncate(time.Second)
+	oldTime := now.Add(-48 * time.Hour)
+	newTime := now.Add(-1 * time.Hour)
+	require.NoError(t, os.Chtimes(filepath.Join(srcDir, oldSmallRel), oldTime, oldTime))
+	require.NoError(t, os.Chtimes(filepath.Join(dstDir, oldSmallRel), oldTime, oldTime))
+	require.NoError(t, os.Chtimes(filepath.Join(srcDir, newLargeRel), newTime, newTime))
+	require.NoError(t, os.Chtimes(filepath.Join(dstDir, newLargeRel), newTime, newTime))
+
+	mc := &config.MountConfig{StoragePaths: []config.StoragePath{
+		{ID: "ssd1", Path: srcDir},
+		{ID: "hdd1", Path: dstDir},
+	}}
+	p := newPlanner("media", mc, Opts{})
+
+	j := config.MoverJobConfig{
+		Name:        "cache-evict",
+		Mode:        JobModeEvict,
+		Trigger:     config.MoverTriggerConfig{Type: "manual"},
+		Source:      config.MoverSourceConfig{Paths: []string{"ssd1"}, Patterns: []string{"lib/**"}},
+		Destination: config.MoverDestinationConfig{Paths: []string{"hdd1"}},
+	}
+
+	// Limit to 1 file: only the oldest file (old-small.mkv) should be evicted.
+	jr, err := p.runJob(context.Background(), j, Hooks{}, nil, 1, 0)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), jr.FilesMoved)
+	require.NoFileExists(t, filepath.Join(srcDir, oldSmallRel), "oldest file should be evicted first")
+	require.FileExists(t, filepath.Join(srcDir, newLargeRel), "newer large file should remain cached")
+}
+
+// TestRunJob_modeEvict_indexedSource_shouldMarkDeletedAndDefer verifies that when the source storage
+// is indexed, mode=evict marks the file and empty parent directories deleted in indexdb and appends
+// deferred delete events instead of unlinking immediately.
+func TestRunJob_modeEvict_indexedSource_shouldMarkDeletedAndDefer(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv(config.EnvStateDir, stateDir)
+
+	srcDir := t.TempDir()
+	dstDir := t.TempDir()
+
+	rel := filepath.Join("lib", "sub", "movie.mkv")
+	require.NoError(t, os.MkdirAll(filepath.Join(srcDir, "lib", "sub"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(dstDir, "lib", "sub"), 0o755))
+	content := []byte("indexed-source-data")
+	require.NoError(t, os.WriteFile(filepath.Join(srcDir, rel), content, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dstDir, rel), content, 0o644))
+
+	now := time.Now().Truncate(time.Second)
+	require.NoError(t, os.Chtimes(filepath.Join(srcDir, rel), now, now))
+	require.NoError(t, os.Chtimes(filepath.Join(dstDir, rel), now, now))
+
+	db, err := indexdb.Open("media")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	sz := int64(len(content))
+	require.NoError(t, db.UpsertFile(context.Background(), "ssd1", "lib/sub/movie.mkv", false, &sz, now.Unix(), uint32(syscall.S_IFREG|0o644), 0, 0))
+
+	mc := &config.MountConfig{StoragePaths: []config.StoragePath{
+		{ID: "ssd1", Path: srcDir, Indexed: true},
+		{ID: "hdd1", Path: dstDir, Indexed: true},
+	}}
+	p := newPlanner("media", mc, Opts{})
+
+	j := config.MoverJobConfig{
+		Name:           "cache-evict",
+		Mode:           JobModeEvict,
+		Trigger:        config.MoverTriggerConfig{Type: "manual"},
+		Source:         config.MoverSourceConfig{Paths: []string{"ssd1"}, Patterns: []string{"lib/**"}},
+		Destination:    config.MoverDestinationConfig{Paths: []string{"hdd1"}},
+		DeleteEmptyDir: new(true),
+	}
+
+	jr, err := p.runJob(context.Background(), j, Hooks{}, db, 0, 0)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), jr.FilesMoved)
+	require.Equal(t, sz, jr.BytesFreed)
+
+	// Indexed source file is logically deleted in DB; physical file waits for prune.
+	_, found, err := db.GetEffectiveFile(context.Background(), "ssd1", "lib/sub/movie.mkv")
+	require.NoError(t, err)
+	require.False(t, found, "indexed source file must be marked deleted in indexdb")
+	require.FileExists(t, filepath.Join(srcDir, rel), "physical file on indexed source remains until prune")
+}
+
+// TestRunJob_modeEvict_dryRun_shouldNotDeleteSource verifies that mode=evict in dry-run mode
+// counts candidates as moved and computes freed bytes without deleting source files.
+func TestRunJob_modeEvict_dryRun_shouldNotDeleteSource(t *testing.T) {
+	srcDir := t.TempDir()
+	dstDir := t.TempDir()
+
+	rel := filepath.Join("lib", "movie.mkv")
+	require.NoError(t, os.MkdirAll(filepath.Join(srcDir, "lib"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(dstDir, "lib"), 0o755))
+	content := []byte("replica-data")
+	require.NoError(t, os.WriteFile(filepath.Join(srcDir, rel), content, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dstDir, rel), content, 0o644))
+
+	mc := &config.MountConfig{StoragePaths: []config.StoragePath{
+		{ID: "ssd1", Path: srcDir},
+		{ID: "hdd1", Path: dstDir},
+	}}
+	p := newPlanner("media", mc, Opts{DryRun: true})
+
+	j := config.MoverJobConfig{
+		Name:        "cache-evict",
+		Mode:        JobModeEvict,
+		Trigger:     config.MoverTriggerConfig{Type: "manual"},
+		Source:      config.MoverSourceConfig{Paths: []string{"ssd1"}, Patterns: []string{"lib/**"}},
+		Destination: config.MoverDestinationConfig{Paths: []string{"hdd1"}},
+	}
+
+	jr, err := p.runJob(context.Background(), j, Hooks{}, nil, 0, 0)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), jr.FilesMoved)
+	require.Equal(t, int64(len(content)), jr.BytesFreed)
+	require.FileExists(t, filepath.Join(srcDir, rel), "dry-run must not delete source file")
+}
+
+// TestRunJob_modeEvict_deleteEmptyDir verifies that mode=evict cleans up empty parent directories
+// on the source tier when delete_empty_dir is true.
+func TestRunJob_modeEvict_deleteEmptyDir(t *testing.T) {
+	srcDir := t.TempDir()
+	dstDir := t.TempDir()
+
+	rel := filepath.Join("lib", "sub", "movie.mkv")
+	require.NoError(t, os.MkdirAll(filepath.Join(srcDir, "lib", "sub"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(dstDir, "lib", "sub"), 0o755))
+	content := []byte("replica-data")
+	require.NoError(t, os.WriteFile(filepath.Join(srcDir, rel), content, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dstDir, rel), content, 0o644))
+
+	mc := &config.MountConfig{StoragePaths: []config.StoragePath{
+		{ID: "ssd1", Path: srcDir},
+		{ID: "hdd1", Path: dstDir},
+	}}
+	p := newPlanner("media", mc, Opts{})
+
+	j := config.MoverJobConfig{
+		Name:           "cache-evict",
+		Mode:           JobModeEvict,
+		Trigger:        config.MoverTriggerConfig{Type: "manual"},
+		Source:         config.MoverSourceConfig{Paths: []string{"ssd1"}, Patterns: []string{"lib/**"}},
+		Destination:    config.MoverDestinationConfig{Paths: []string{"hdd1"}},
+		DeleteEmptyDir: new(true),
+	}
+
+	jr, err := p.runJob(context.Background(), j, Hooks{}, nil, 0, 0)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), jr.FilesMoved)
+	require.NoFileExists(t, filepath.Join(srcDir, rel))
+	require.NoDirExists(t, filepath.Join(srcDir, "lib", "sub"), "empty parent directory should be removed")
+	require.DirExists(t, filepath.Join(dstDir, "lib", "sub"), "destination directory should remain intact")
+}
+
+// TestRunJob_modeEvict_multipleDestinations_shouldSucceedIfAnyMatches verifies that mode=evict
+// finds a safe replica across multiple destination paths.
+func TestRunJob_modeEvict_multipleDestinations_shouldSucceedIfAnyMatches(t *testing.T) {
+	srcDir := t.TempDir()
+	dst1Dir := t.TempDir()
+	dst2Dir := t.TempDir()
+
+	rel := filepath.Join("lib", "movie.mkv")
+	require.NoError(t, os.MkdirAll(filepath.Join(srcDir, "lib"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(dst2Dir, "lib"), 0o755))
+	content := []byte("multi-dest-data")
+	require.NoError(t, os.WriteFile(filepath.Join(srcDir, rel), content, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dst2Dir, rel), content, 0o644))
+
+	mc := &config.MountConfig{StoragePaths: []config.StoragePath{
+		{ID: "ssd1", Path: srcDir},
+		{ID: "hdd1", Path: dst1Dir},
+		{ID: "hdd2", Path: dst2Dir},
+	}}
+	p := newPlanner("media", mc, Opts{})
+
+	j := config.MoverJobConfig{
+		Name:        "cache-evict",
+		Mode:        JobModeEvict,
+		Trigger:     config.MoverTriggerConfig{Type: "manual"},
+		Source:      config.MoverSourceConfig{Paths: []string{"ssd1"}, Patterns: []string{"lib/**"}},
+		Destination: config.MoverDestinationConfig{Paths: []string{"hdd1", "hdd2"}},
+	}
+
+	jr, err := p.runJob(context.Background(), j, Hooks{}, nil, 0, 0)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), jr.FilesMoved)
+	require.NoFileExists(t, filepath.Join(srcDir, rel))
+	require.FileExists(t, filepath.Join(dst2Dir, rel))
 }

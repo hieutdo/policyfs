@@ -211,12 +211,14 @@ This command is typically scheduled via systemd timers for usage-triggered jobs.
 
 			totalSkippedOpen := int64(0)
 			totalSkippedExists := int64(0)
+			totalSkippedUnmirrored := int64(0)
 			for _, jr := range res.Jobs {
 				totalSkippedOpen += jr.FilesSkippedOpen
 				totalSkippedExists += jr.FilesSkippedExists
+				totalSkippedUnmirrored += jr.FilesSkippedUnmirrored
 			}
 			if res.TotalFilesMoved == 0 && len(warningsHuman) == 0 {
-				if totalSkippedOpen > 0 || totalSkippedExists > 0 {
+				if totalSkippedOpen > 0 || totalSkippedExists > 0 || totalSkippedUnmirrored > 0 {
 					if !quiet {
 						printMoveSummary(stdout, res, warningsHuman)
 					}
@@ -632,17 +634,28 @@ func printMoveSummary(w io.Writer, res mover.Result, warningsHuman []string) {
 
 	fmt.Fprintln(w, "\nSummary:")
 	for _, jr := range res.Jobs {
-		fmt.Fprintf(w, "  Job %s: moved %s files, %s, freed %s\n",
-			jr.Name,
-			humanize.Comma(jr.FilesMoved),
-			humanfmt.FormatBytesIEC(jr.BytesMoved, 1),
-			humanfmt.FormatBytesIEC(jr.BytesFreed, 1),
-		)
+		if jr.Mode == mover.JobModeEvict {
+			fmt.Fprintf(w, "  Job %s: evicted %s files, freed %s\n",
+				jr.Name,
+				humanize.Comma(jr.FilesMoved),
+				humanfmt.FormatBytesIEC(jr.BytesFreed, 1),
+			)
+		} else {
+			fmt.Fprintf(w, "  Job %s: moved %s files, %s, freed %s\n",
+				jr.Name,
+				humanize.Comma(jr.FilesMoved),
+				humanfmt.FormatBytesIEC(jr.BytesMoved, 1),
+				humanfmt.FormatBytesIEC(jr.BytesFreed, 1),
+			)
+		}
 		if jr.FilesSkippedOpen > 0 {
 			fmt.Fprintf(w, "         skipped_open %s\n", humanize.Comma(jr.FilesSkippedOpen))
 		}
 		if jr.FilesSkippedExists > 0 {
 			fmt.Fprintf(w, "         skipped_exists %s\n", humanize.Comma(jr.FilesSkippedExists))
+		}
+		if jr.FilesSkippedUnmirrored > 0 {
+			fmt.Fprintf(w, "         skipped_unmirrored %s\n", humanize.Comma(jr.FilesSkippedUnmirrored))
 		}
 	}
 	var totalErrors int64

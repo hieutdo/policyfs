@@ -164,6 +164,7 @@ type MoverConfig struct {
 type MoverJobConfig struct {
 	Name           string                 `yaml:"name"`
 	Description    string                 `yaml:"description"`
+	Mode           string                 `yaml:"mode"` // "move" (default) or "evict"
 	Trigger        MoverTriggerConfig     `yaml:"trigger"`
 	Source         MoverSourceConfig      `yaml:"source"`
 	Destination    MoverDestinationConfig `yaml:"destination"`

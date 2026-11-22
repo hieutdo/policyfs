@@ -24,16 +24,18 @@ type Result struct {
 
 // JobResult summarizes one mover job.
 type JobResult struct {
-	Name               string
-	FilesMoved         int64
-	BytesMoved         int64
-	BytesFreed         int64
-	FilesSkipped       int64
-	FilesSkippedOpen   int64
-	FilesSkippedExists int64
-	FilesErrored       int64
-	DurationMS         int64
-	TotalCandidates    int64
+	Name                   string
+	Mode                   string
+	FilesMoved             int64
+	BytesMoved             int64
+	BytesFreed             int64
+	FilesSkipped           int64
+	FilesSkippedOpen       int64
+	FilesSkippedExists     int64
+	FilesSkippedUnmirrored int64
+	FilesErrored           int64
+	DurationMS             int64
+	TotalCandidates        int64
 }
 
 // Opts controls mover behavior.
@@ -83,6 +85,7 @@ type PlanCandidate struct {
 // PlanJob describes the planned candidates for one mover job.
 type PlanJob struct {
 	Name       string
+	Mode       string
 	Candidates []PlanCandidate
 	WorkBytes  int64
 }
@@ -154,6 +157,9 @@ func Plan(ctx context.Context, mountName string, mountCfg *config.MountConfig, o
 		if verify {
 			mult = 2
 		}
+		if jobMode(j) == JobModeEvict {
+			mult = 0
+		}
 
 		// Best-effort destination resolution for display.
 		// This can be expensive (statfs/stat); only do it in debug mode.
@@ -162,7 +168,7 @@ func Plan(ctx context.Context, mountName string, mountCfg *config.MountConfig, o
 			dstIDs, _ = p.expandRefs(j.Destination.Paths, j.Destination.Groups)
 		}
 
-		pj := PlanJob{Name: j.Name}
+		pj := PlanJob{Name: j.Name, Mode: jobMode(j)}
 		for _, c := range cands {
 			if opts.Limit > 0 && out.TotalCandidates >= int64(opts.Limit) {
 				break
@@ -171,11 +177,18 @@ func Plan(ctx context.Context, mountName string, mountCfg *config.MountConfig, o
 			dstID := ""
 			var ppKept []string
 			if len(dstIDs) > 0 {
-				dr, err := p.selectDestinations(j, dstIDs, c)
-				if err == nil && len(dr.choices) > 0 {
-					dstID = dr.choices[0].id
+				if jobMode(j) == JobModeEvict {
+					found, id, err := destSafeReplicaExists(p, dstIDs, c)
+					if err == nil && found {
+						dstID = id
+					}
+				} else {
+					dr, err := p.selectDestinations(j, dstIDs, c)
+					if err == nil && len(dr.choices) > 0 {
+						dstID = dr.choices[0].id
+					}
+					ppKept = dr.pathPreservingKept
 				}
-				ppKept = dr.pathPreservingKept
 			}
 			pj.Candidates = append(pj.Candidates, PlanCandidate{
 				JobName:            j.Name,

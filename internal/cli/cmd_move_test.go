@@ -55,6 +55,34 @@ func TestMove_printMoveSummary_shouldIncludeTotalsAndWarnings(t *testing.T) {
 	require.Contains(t, out, "archive/ssd1: boom")
 }
 
+// TestMove_printMoveSummary_modeEvict_shouldPrintEvictedLine verifies the summary prints
+// "evicted X files, freed Y" and unmirrored skips for eviction jobs.
+func TestMove_printMoveSummary_modeEvict_shouldPrintEvictedLine(t *testing.T) {
+	var sb strings.Builder
+	res := mover.Result{
+		Jobs: []mover.JobResult{
+			{
+				Name:                   "cache-evict",
+				Mode:                   mover.JobModeEvict,
+				FilesMoved:             3,
+				BytesFreed:             1024 * 1024 * 50,
+				FilesSkippedUnmirrored: 2,
+				DurationMS:             500,
+			},
+		},
+		TotalFilesMoved: 3,
+		TotalBytesFreed: 1024 * 1024 * 50,
+		TotalDurationMS: 500,
+	}
+	printMoveSummary(&sb, res, nil)
+	out := sb.String()
+
+	require.Contains(t, out, "Summary:")
+	require.Contains(t, out, "Job cache-evict: evicted 3 files, freed 50.0 MiB")
+	require.Contains(t, out, "skipped_unmirrored 2")
+	require.Contains(t, out, "Done: 3 files, 0 B, freed 50.0 MiB")
+}
+
 // TestMove_invalidProgressValue_shouldReturnUsage verifies invalid --progress values are rejected.
 func TestMove_invalidProgressValue_shouldReturnUsage(t *testing.T) {
 	code, _, stderr := runCLI(t, []string{"move", "media", "--progress=nope"})

@@ -215,6 +215,21 @@ func ValidateConfigAll(c *config.RootConfig) []error {
 					seenJobs[j.Name] = struct{}{}
 				}
 
+				mode := strings.TrimSpace(j.Mode)
+				switch mode {
+				case "", "move", "evict":
+				default:
+					errList = append(errList, &MountConfigError{Mount: mountName, Msg: fmt.Sprintf("mover.jobs[%d].mode must be 'move' or 'evict'", ji)})
+				}
+				if mode == "evict" {
+					if j.DeleteSource != nil && !*j.DeleteSource {
+						errList = append(errList, &MountConfigError{Mount: mountName, Msg: fmt.Sprintf("mover.jobs[%d].delete_source cannot be false when mode is 'evict'", ji)})
+					}
+					if j.Destination.SkipIfExistsAny {
+						errList = append(errList, &MountConfigError{Mount: mountName, Msg: fmt.Sprintf("mover.jobs[%d].destination.skip_if_exists_any is invalid when mode is 'evict'", ji)})
+					}
+				}
+
 				tt := strings.TrimSpace(j.Trigger.Type)
 				switch tt {
 				case "usage", "manual":

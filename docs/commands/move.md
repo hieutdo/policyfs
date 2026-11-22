@@ -2,7 +2,7 @@
 
 Move files between storage paths based on the mount's [mover configuration](../config.md#mover).
 
-This command evaluates mover jobs, discovers candidates from source storages, and copies them to destination storages. It is typically scheduled via systemd timers.
+This command evaluates mover jobs, discovers candidates from source storages, and either moves them to destination storages (`mode: move`) or evicts cached copies after verifying a safe replica exists on destination storages (`mode: evict`). It is typically scheduled via systemd timers.
 
 ## Usage
 

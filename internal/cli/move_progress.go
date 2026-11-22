@@ -29,16 +29,22 @@ type plainMoveUI struct {
 	fileStart time.Time
 	curSize   int64
 	curDst    string
+	jobModes  map[string]string
 }
 
 func startPlainProgress(w io.Writer, _ mover.Opts, plan mover.PlanResult) *plainMoveUI {
+	jobModes := make(map[string]string, len(plan.Jobs))
+	for _, pj := range plan.Jobs {
+		jobModes[pj.Name] = pj.Mode
+	}
 	return &plainMoveUI{
-		w:     w,
-		total: plan.TotalCandidates,
+		w:        w,
+		total:    plan.TotalCandidates,
+		jobModes: jobModes,
 	}
 }
 
-func (u *plainMoveUI) OnFileStart(_ string, _ string, dstStorageID string, rel string, sizeBytes int64) {
+func (u *plainMoveUI) OnFileStart(jobName string, _ string, dstStorageID string, rel string, sizeBytes int64) {
 	if u == nil || u.w == nil {
 		return
 	}
@@ -52,7 +58,11 @@ func (u *plainMoveUI) OnFileStart(_ string, _ string, dstStorageID string, rel s
 	if dst == "" {
 		dst = "-"
 	}
-	fmt.Fprintf(u.w, "[%d/%d]  Copying  %s  %s \u2500\u25BA %s\n", u.index, u.total, rel, sz, dst)
+	action := "Copying"
+	if u.jobModes[jobName] == mover.JobModeEvict {
+		action = "Evicting"
+	}
+	fmt.Fprintf(u.w, "[%d/%d]  %s  %s  %s \u2500\u25BA %s\n", u.index, u.total, action, rel, sz, dst)
 }
 
 func (u *plainMoveUI) OnProgress(_ string, storageID string, rel string) {

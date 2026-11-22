@@ -190,17 +190,24 @@ The mover deletes the source file after a successful copy. Before running `pfs m
 
 Each job under `mover.jobs[]`:
 
-| Field              | Type   | Default | Description                                                                                                   |
-| ------------------ | ------ | ------- | ------------------------------------------------------------------------------------------------------------- |
-| `name`             | string | -       | Unique job name (used in `--job` flag and logs).                                                              |
-| `description`      | string | -       | Optional human-readable description.                                                                          |
-| `trigger`          | object | -       | When the job should run.                                                                                      |
-| `source`           | object | -       | Where candidates come from.                                                                                   |
-| `destination`      | object | -       | Where files are moved to.                                                                                     |
-| `conditions`       | object | -       | Filters applied to candidates.                                                                                |
-| `delete_source`    | bool   | `true`  | Delete the source file after a successful move. Use `--dry-run` to preview before running for the first time. |
-| `delete_empty_dir` | bool   | `true`  | Remove empty parent directories after moving.                                                                 |
-| `verify`           | bool   | `false` | Re-read the destination file after copying to verify integrity.                                               |
+| Field              | Type   | Default | Description                                                                                                                                                |
+| ------------------ | ------ | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`             | string | -       | Unique job name (used in `--job` flag and logs).                                                                                                           |
+| `description`      | string | -       | Optional human-readable description.                                                                                                                       |
+| `mode`             | string | `move`  | Operating mode: `move` (copy to destination, then delete source) or `evict` (verify replica exists on destination, then delete source without re-copying). |
+| `trigger`          | object | -       | When the job should run.                                                                                                                                   |
+| `source`           | object | -       | Where candidates come from.                                                                                                                                |
+| `destination`      | object | -       | Where files are moved to (or verified for eviction).                                                                                                       |
+| `conditions`       | object | -       | Filters applied to candidates.                                                                                                                             |
+| `delete_source`    | bool   | `true`  | Delete the source file after a successful move. In `mode: evict`, this cannot be set to `false`.                                                           |
+| `delete_empty_dir` | bool   | `true`  | Remove empty parent directories after moving or evicting.                                                                                                  |
+| `verify`           | bool   | `false` | Re-read the destination file after copying to verify integrity (ignored in `mode: evict`).                                                                 |
+
+**`mode: evict` semantics:** In eviction mode, the mover acts as a cache demoter. For each candidate
+on the source storage, it verifies that an identical replica (regular file with matching size and
+destination `mtime >= source mtime`) already exists on at least one eligible destination storage. If
+verified, the source copy is deleted without re-copying any data (zero-copy eviction). If no safe
+replica exists on any destination, the candidate is skipped and the source file is kept.
 
 #### `trigger`
 

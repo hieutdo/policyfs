@@ -1200,3 +1200,100 @@ func TestMove_includeFileWithComments_shouldIgnoreCommentLines(t *testing.T) {
 		require.FileExists(t, env.StoragePath("hdd1", "library/a.txt"))
 	})
 }
+
+// TestMove_modeEvict_shouldEvictSourceAfterMirror_andPreserveVirtualAccess verifies the full two-stage
+// caching lifecycle (SSD only -> SSD + HDD -> HDD only):
+// 1. A file created on cache is mirrored to HDD with delete_source=false (both tiers have copy).
+// 2. An eviction job with mode=evict removes the SSD copy while keeping the HDD copy intact.
+// 3. FUSE mount continues serving the file transparently from HDD after eviction.
+// 4. An unmirrored file on SSD is skipped and preserved by the eviction job.
+func TestMove_modeEvict_shouldEvictSourceAfterMirror_andPreserveVirtualAccess(t *testing.T) {
+	if os.Getenv(config.EnvIntegrationUseExistingMount) != "" {
+		t.Skip("skip move flow test when using an existing mount")
+	}
+
+	mirroredRel := filepath.Join("library", "movies", "mirrored.mkv")
+	unmirroredRel := filepath.Join("library", "movies", "unmirrored.mkv")
+	movieContent := []byte("4k-movie-stream-bytes-12345")
+	unmirroredContent := []byte("brand-new-download")
+
+	mv := &config.MoverConfig{
+		Enabled: new(true),
+		Jobs: []config.MoverJobConfig{
+			{
+				Name:        "mirror",
+				Description: "mirror new files to rust",
+				Trigger:     config.MoverTriggerConfig{Type: "manual"},
+				Source: config.MoverSourceConfig{
+					Paths:    []string{"ssd1"},
+					Patterns: []string{"library/**"},
+				},
+				Destination: config.MoverDestinationConfig{
+					Paths:  []string{"hdd1"},
+					Policy: "first_found",
+				},
+				DeleteSource: new(false),
+				Verify:       new(true),
+			},
+			{
+				Name:        "evict",
+				Description: "evict mirrored files from cache",
+				Mode:        "evict",
+				Trigger:     config.MoverTriggerConfig{Type: "manual"},
+				Source: config.MoverSourceConfig{
+					Paths:    []string{"ssd1"},
+					Patterns: []string{"library/**"},
+				},
+				Destination: config.MoverDestinationConfig{
+					Paths: []string{"hdd1"},
+				},
+			},
+		},
+	}
+
+	cfg := IntegrationConfig{
+		Storages: []IntegrationStorage{
+			{ID: "ssd1", Indexed: false, BasePath: "/mnt/ssd1/pfs-integration"},
+			{ID: "hdd1", Indexed: true, BasePath: "/mnt/hdd1/pfs-integration"},
+		},
+		Targets:     []string{"ssd1"},
+		ReadTargets: []string{"ssd1", "hdd1"},
+		Mover:       mv,
+	}
+
+	withMountedFS(t, cfg, func(env *MountedFS) {
+		// Stage 1: Ingest file onto SSD.
+		env.MustCreateFileInStoragePath(t, movieContent, "ssd1", mirroredRel)
+		require.FileExists(t, env.StoragePath("ssd1", mirroredRel))
+		require.NoFileExists(t, env.StoragePath("hdd1", mirroredRel))
+
+		// Mirror to HDD (delete_source=false).
+		mustRunPFS(t, env, "move", env.MountName, "--job", "mirror", "--progress=off")
+		require.FileExists(t, env.StoragePath("ssd1", mirroredRel), "source must remain after mirror")
+		require.FileExists(t, env.StoragePath("hdd1", mirroredRel), "destination copy must exist after mirror")
+
+		// Create a second, unmirrored file on SSD.
+		env.MustCreateFileInStoragePath(t, unmirroredContent, "ssd1", unmirroredRel)
+		require.FileExists(t, env.StoragePath("ssd1", unmirroredRel))
+		require.NoFileExists(t, env.StoragePath("hdd1", unmirroredRel))
+
+		// Stage 2: Evict cache.
+		out, err := runPFSOutput(t, env, "move", env.MountName, "--job", "evict", "--progress=off")
+		require.NoError(t, err, "evict job should succeed, output: %s", string(out))
+		require.Contains(t, string(out), "evicted 1 files", "summary should report 1 evicted file")
+		require.Contains(t, string(out), "skipped_unmirrored 1", "summary should report 1 skipped unmirrored file")
+
+		// Mirrored file should be evicted from SSD, but preserved on HDD.
+		require.NoFileExists(t, env.StoragePath("ssd1", mirroredRel), "mirrored file should be evicted from SSD")
+		require.FileExists(t, env.StoragePath("hdd1", mirroredRel), "HDD copy must remain after eviction")
+
+		// Unmirrored file must NOT be evicted from SSD.
+		require.FileExists(t, env.StoragePath("ssd1", unmirroredRel), "unmirrored file must remain on SSD")
+
+		// Stage 3: Virtual view - FUSE mount still serves mirroredRel cleanly from HDD!
+		require.True(t, env.FileExistsInMountPoint(mirroredRel))
+		require.Equal(t, movieContent, env.MustReadFileInMountPoint(t, mirroredRel))
+		require.True(t, env.FileExistsInMountPoint(unmirroredRel))
+		require.Equal(t, unmirroredContent, env.MustReadFileInMountPoint(t, unmirroredRel))
+	})
+}

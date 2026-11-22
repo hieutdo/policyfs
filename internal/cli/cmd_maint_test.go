@@ -227,3 +227,63 @@ mounts:
 	require.Empty(t, stderr)
 	require.Empty(t, stdout)
 }
+
+// TestMaint_modeEvict_unindexedSource_shouldNotTouchIndexedDestination verifies that when an eviction job
+// evicts files from an unindexed source after verifying replicas on an indexed destination, maint does not
+// mark the destination storage as touched and skips the index phase under --index=touch.
+func TestMaint_modeEvict_unindexedSource_shouldNotTouchIndexedDestination(t *testing.T) {
+	runtimeDir := filepath.Join(t.TempDir(), "runtime")
+	require.NoError(t, os.MkdirAll(runtimeDir, 0o755))
+	t.Setenv(config.EnvRuntimeDir, runtimeDir)
+
+	stateDir := filepath.Join(t.TempDir(), "state")
+	require.NoError(t, os.MkdirAll(stateDir, 0o755))
+	t.Setenv(config.EnvStateDir, stateDir)
+
+	src := t.TempDir()
+	dst := t.TempDir()
+
+	rel := filepath.Join("library", "movie.mkv")
+	require.NoError(t, os.MkdirAll(filepath.Join(src, "library"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(dst, "library"), 0o755))
+	content := []byte("cached-movie")
+	require.NoError(t, os.WriteFile(filepath.Join(src, rel), content, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dst, rel), content, 0o644))
+
+	cfg := writeTempConfig(t, `
+mounts:
+  media:
+    mountpoint: "/mnt/pfs/media"
+    storage_paths:
+      - id: "ssd1"
+        path: "`+src+`"
+        indexed: false
+      - id: "hdd1"
+        path: "`+dst+`"
+        indexed: true
+    routing_rules:
+      - match: "**"
+        targets: ["ssd1"]
+    mover:
+      enabled: true
+      jobs:
+        - name: "evict-cache"
+          mode: "evict"
+          trigger:
+            type: "manual"
+          source:
+            paths: ["ssd1"]
+            patterns: ["library/**"]
+          destination:
+            paths: ["hdd1"]
+`)
+
+	code, stdout, stderr := runCLI(t, []string{"--config", cfg, "maint", "media", "--index=touch"})
+	require.Equal(t, ExitOK, code, "expected exit_code=%d got=%d stderr=%s", ExitOK, code, stderr)
+	require.Empty(t, stderr)
+	require.Contains(t, stdout, "[1/1]  Evicting  library/movie.mkv")
+	require.Contains(t, stdout, "Job evict-cache: evicted 1 files")
+	require.Contains(t, stdout, "Skipped: no indexed storages touched")
+	require.NoFileExists(t, filepath.Join(src, rel))
+	require.FileExists(t, filepath.Join(dst, rel))
+}

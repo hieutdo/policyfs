@@ -295,6 +295,61 @@ func TestValidateConfigAll_shouldValidateMoverJobs(t *testing.T) {
 	require.Contains(t, msgs, "mover.jobs[3].conditions.min_size must be <= max_size")
 }
 
+// TestValidateConfigAll_shouldValidateMoverJobMode verifies mover job mode validation.
+func TestValidateConfigAll_shouldValidateMoverJobMode(t *testing.T) {
+	cfg := &config.RootConfig{Mounts: map[string]config.MountConfig{
+		"m": {
+			MountPoint:   "/mnt/pfs/m",
+			StoragePaths: []config.StoragePath{{ID: "ssd1", Path: "/mnt/ssd1"}, {ID: "hdd1", Path: "/mnt/hdd1"}},
+			RoutingRules: []config.RoutingRule{{Match: "**"}},
+			Mover: config.MoverConfig{
+				Enabled: boolPtr(true),
+				Jobs: []config.MoverJobConfig{
+					{
+						Name:        "invalid-mode",
+						Mode:        "badmode",
+						Trigger:     config.MoverTriggerConfig{Type: "manual"},
+						Source:      config.MoverSourceConfig{Paths: []string{"ssd1"}, Patterns: []string{"**"}},
+						Destination: config.MoverDestinationConfig{Paths: []string{"hdd1"}},
+					},
+					{
+						Name:         "evict-delete-false",
+						Mode:         "evict",
+						DeleteSource: boolPtr(false),
+						Trigger:      config.MoverTriggerConfig{Type: "manual"},
+						Source:       config.MoverSourceConfig{Paths: []string{"ssd1"}, Patterns: []string{"**"}},
+						Destination:  config.MoverDestinationConfig{Paths: []string{"hdd1"}},
+					},
+					{
+						Name:        "evict-skip-exists",
+						Mode:        "evict",
+						Trigger:     config.MoverTriggerConfig{Type: "manual"},
+						Source:      config.MoverSourceConfig{Paths: []string{"ssd1"}, Patterns: []string{"**"}},
+						Destination: config.MoverDestinationConfig{Paths: []string{"hdd1"}, SkipIfExistsAny: true},
+					},
+					{
+						Name:        "evict-valid",
+						Mode:        "evict",
+						Trigger:     config.MoverTriggerConfig{Type: "manual"},
+						Source:      config.MoverSourceConfig{Paths: []string{"ssd1"}, Patterns: []string{"**"}},
+						Destination: config.MoverDestinationConfig{Paths: []string{"hdd1"}},
+					},
+				},
+			},
+		},
+	}}
+
+	errList := ValidateConfigAll(cfg)
+	msgs := mountMsgs(t, errList, "m")
+
+	require.Contains(t, msgs, "mover.jobs[0].mode must be 'move' or 'evict'")
+	require.Contains(t, msgs, "mover.jobs[1].delete_source cannot be false when mode is 'evict'")
+	require.Contains(t, msgs, "mover.jobs[2].destination.skip_if_exists_any is invalid when mode is 'evict'")
+	for _, m := range msgs {
+		require.NotContains(t, m, "mover.jobs[3]")
+	}
+}
+
 // TestValidateConfigAll_shouldAllowIncludeFileWithoutPatterns verifies a job can omit source.patterns
 // when source.include_file is set.
 func TestValidateConfigAll_shouldAllowIncludeFileWithoutPatterns(t *testing.T) {

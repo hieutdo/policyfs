@@ -155,12 +155,21 @@ This command is intended for systemd timers to reduce disk wake-ups by batching 
 			var mvProgressUI moveProgressAdapter
 			sawCanceledCopy := false
 
-			baseFileStart := func(_ string, srcStorageID string, dstStorageID string, _ string, _ int64) {
-				touchStorageID(touched, srcStorageID)
-				touchStorageID(touched, dstStorageID)
+			jobModes := map[string]string{}
+			for _, j := range mountCfg.Mover.Jobs {
+				jobModes[j.Name] = strings.TrimSpace(j.Mode)
 			}
-			baseProgress := func(_ string, storageID string, _ string) {
-				touchStorageID(touched, storageID)
+
+			baseFileStart := func(jobName string, srcStorageID string, dstStorageID string, _ string, _ int64) {
+				touchStorageID(touched, srcStorageID)
+				if jobModes[jobName] != mover.JobModeEvict {
+					touchStorageID(touched, dstStorageID)
+				}
+			}
+			baseProgress := func(jobName string, storageID string, _ string) {
+				if jobModes[jobName] != mover.JobModeEvict {
+					touchStorageID(touched, storageID)
+				}
 			}
 
 			mvHooks.Warn = func(jobName string, storageID string, rel string, err error) {

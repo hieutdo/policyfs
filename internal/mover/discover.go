@@ -355,12 +355,12 @@ func (p *planner) discoverCandidatesOneSource(ctx context.Context, jobName strin
 		return nil, fmt.Errorf("failed to walk source: %w", err)
 	}
 
-	// Smart-ish: move largest files first to reduce number of moves needed for freeing space.
+	// Order candidates oldest mtime first (tie-broken by largest size first) so recent files stay cached on SSD.
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].SizeBytes != out[j].SizeBytes {
-			return out[i].SizeBytes > out[j].SizeBytes
+		if out[i].MTimeSec != out[j].MTimeSec {
+			return out[i].MTimeSec < out[j].MTimeSec
 		}
-		return out[i].MTimeSec < out[j].MTimeSec
+		return out[i].SizeBytes > out[j].SizeBytes
 	})
 
 	return out, nil
