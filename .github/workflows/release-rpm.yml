@@ -23,11 +23,17 @@ jobs:
     container:
       image: rockylinux:9
     steps:
-      - name: install base deps
+      - name: install deps
         run: |
           dnf -y install \
             git \
-            ca-certificates
+            ca-certificates \
+            gcc \
+            make \
+            sqlite-devel \
+            tar \
+            gzip \
+            curl-minimal
 
       - name: checkout
         uses: actions/checkout@v4
@@ -40,16 +46,15 @@ jobs:
           git config --global --add safe.directory "${GITHUB_WORKSPACE}"
 
       - name: setup go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      - name: install deps
         run: |
-          dnf -y install \
-            gcc \
-            make \
-            sqlite-devel
+          GO_VER="$(awk '/^go / {print $2; exit}' go.mod)"
+          curl -fsSL "https://go.dev/dl/go${GO_VER}.linux-amd64.tar.gz" -o /tmp/go.tgz
+          rm -rf /usr/local/go
+          tar -C /usr/local -xzf /tmp/go.tgz
+          rm -f /tmp/go.tgz
+          ln -sf /usr/local/go/bin/go /usr/bin/go
+          ln -sf /usr/local/go/bin/gofmt /usr/bin/gofmt
+          go version
 
       - name: unit tests
         run: go test ./...

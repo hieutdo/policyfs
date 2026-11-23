@@ -17,7 +17,7 @@ services:
     command: sleep infinity
     volumes:
       - .:/workspace
-      - ${GIT_COMMON_DIR}:${GIT_COMMON_DIR}
+      - ${GIT_COMMON_DIR:-./.git}:${GIT_COMMON_DIR:-/workspace/.git}
       - go-mod-cache:/go/pkg/mod
       - go-build-cache:/root/.cache/go-build
       - pfs-disks:/var/lib/pfs-disks

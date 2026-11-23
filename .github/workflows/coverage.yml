@@ -53,15 +53,21 @@ jobs:
           ls -l /dev/fuse
 
       - name: dev up
+        env:
+          GIT_COMMON_DIR: ${{ github.workspace }}/.git
         run: |
           docker compose -f docker-compose.dev.yaml up -d --build dev
 
       - name: coverage (unit + integration)
+        env:
+          GIT_COMMON_DIR: ${{ github.workspace }}/.git
         run: |
           docker compose -f docker-compose.dev.yaml exec -T -e GOFLAGS=-buildvcs=false dev bash /workspace/scripts/coverage.sh
 
       - name: dev down
         if: ${{ always() }}
+        env:
+          GIT_COMMON_DIR: ${{ github.workspace }}/.git
         run: |
           docker compose -f docker-compose.dev.yaml down -v
 
