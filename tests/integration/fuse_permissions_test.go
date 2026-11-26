@@ -4,6 +4,7 @@ package integration
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -530,4 +531,88 @@ func TestFUSE_permissions_note(t *testing.T) {
 	// The core invariant is: the operation must fail and no physical mutation occurs.
 	_ = syscall.EACCES
 	_ = syscall.EPERM
+}
+
+// TestFUSE_supplementaryGroup verifies shared-directory mutations use the caller's supplementary groups.
+// The caller (nobody) gets access to root-owned directories only through group 1001.
+func TestFUSE_supplementaryGroup(t *testing.T) {
+	withMountedFS(t, IntegrationConfig{
+		AllowOther: true,
+		RoutingRules: []config.RoutingRule{
+			{Match: "group-denied/**", ReadTargets: []string{"ssd1", "ssd2"}, WriteTargets: []string{"ssd2"}},
+			{Match: "**", Targets: []string{"ssd1"}},
+		},
+	}, func(env *MountedFS) {
+		const group = 1001
+		// mustGroupDir creates a root-owned directory with the given mode and group.
+		mustGroupDir := func(storage, rel string, mode os.FileMode) {
+			dir := env.StoragePath(storage, rel)
+			require.NoError(t, os.Mkdir(dir, mode))
+			require.NoError(t, os.Chown(dir, 0, group))
+			require.NoError(t, os.Chmod(dir, mode))
+		}
+		// runAsNobody runs the command with the supplied supplementary groups.
+		runAsNobody := func(script string, groups ...uint32) ([]byte, error) {
+			cmd := exec.Command("sh", "-c", script)
+			cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 65534, Gid: 65534, Groups: groups}}
+			return cmd.CombinedOutput()
+		}
+
+		mustGroupDir("ssd1", "shared", 0o770)
+		env.MustCreateFileInStoragePath(t, []byte("x"), "ssd1", "shared/unlink-me")
+		env.MustCreateFileInStoragePath(t, []byte("x"), "ssd1", "shared/rename-me")
+		mustGroupDir("ssd1", "shared/rmdir-me", 0o770)
+
+		tests := []struct {
+			name    string
+			script  string
+			created string
+			removed string
+		}{
+			{name: "create a file", script: "touch '%s/file'", created: "shared/file"},
+			{name: "create a directory", script: "mkdir '%s/dir'", created: "shared/dir"},
+			{name: "create a symlink", script: "ln -s target '%s/symlink'", created: "shared/symlink"},
+			{name: "create a FIFO", script: "mkfifo '%s/fifo'", created: "shared/fifo"},
+			{name: "unlink a file", script: "rm -f '%s/unlink-me'", removed: "shared/unlink-me"},
+			{name: "remove a directory", script: "rmdir '%s/rmdir-me'", removed: "shared/rmdir-me"},
+			{name: "rename a file", script: "mv '%[1]s/rename-me' '%[1]s/renamed'", created: "shared/renamed", removed: "shared/rename-me"},
+		}
+		for _, tc := range tests {
+			t.Run("should "+tc.name+" using supplementary group access", func(t *testing.T) {
+				output, err := runAsNobody(fmt.Sprintf(tc.script, env.MountPath("shared")), group)
+				require.NoError(t, err, "%s", output)
+				if tc.created != "" {
+					_, err := os.Lstat(env.StoragePath("ssd1", tc.created))
+					require.NoError(t, err)
+				}
+				if tc.removed != "" {
+					_, err := os.Lstat(env.StoragePath("ssd1", tc.removed))
+					require.ErrorIs(t, err, os.ErrNotExist)
+				}
+			})
+		}
+
+		t.Run("should deny a group member when group bits deny even if other bits allow", func(t *testing.T) {
+			// The kernel sees the readable parent on ssd1. Only the daemon checks ssd2.
+			const dir = "group-denied"
+			mustGroupDir("ssd1", dir, 0o777)
+			mustGroupDir("ssd2", dir, 0o777)
+			parent := env.MustLstatInMountPoint(t, dir)
+			require.Equal(t, os.FileMode(0o777), parent.Mode().Perm())
+
+			output, err := runAsNobody(fmt.Sprintf("touch '%s/control'", env.MountPath(dir)), group)
+			require.NoError(t, err, "%s", output)
+			require.FileExists(t, env.StoragePath("ssd2", dir+"/control"))
+
+			require.NoError(t, os.Chmod(env.StoragePath("ssd2", dir), 0o707))
+			output, err = runAsNobody(fmt.Sprintf("touch '%s/nonmember'", env.MountPath(dir)))
+			require.NoError(t, err, "%s", output)
+			require.FileExists(t, env.StoragePath("ssd2", dir+"/nonmember"))
+
+			output, err = runAsNobody(fmt.Sprintf("touch '%s/file'", env.MountPath(dir)), group)
+			require.Error(t, err, "%s", output)
+			_, err = os.Lstat(env.StoragePath("ssd2", dir+"/file"))
+			require.ErrorIs(t, err, os.ErrNotExist)
+		})
+	})
 }
