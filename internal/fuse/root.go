@@ -2,6 +2,7 @@ package fuse
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -19,7 +20,7 @@ import (
 
 // Node is a PolicyFS inode implementation (including the root inode).
 type Node struct {
-	*fs.LoopbackNode
+	fs.Inode
 	mountName string
 	state     *runtimeState
 	reload    *reloadState
@@ -37,9 +38,6 @@ func (n *Node) runtime() (*router.Router, zerolog.Logger) {
 }
 
 // NewRoot creates the PolicyFS root node for mounting.
-//
-// Currently this is a thin wrapper around go-fuse's loopback root to keep behavior
-// identical while we incrementally add PolicyFS operations.
 func NewRoot(mountName string, m *config.MountConfig, primaryRootPath string, db *indexdb.DB, baseLog zerolog.Logger, diskCfg DiskAccessConfig) (fs.InodeEmbedder, error) {
 	return NewRootWithReload(mountName, m, primaryRootPath, db, baseLog, diskCfg, false, config.LogConfig{})
 }
@@ -51,36 +49,18 @@ func NewRootWithReload(mountName string, m *config.MountConfig, primaryRootPath 
 		return nil, fmt.Errorf("failed to create router: %w", err)
 	}
 
+	var st syscall.Stat_t
+	if err := syscall.Stat(primaryRootPath, &st); err != nil {
+		return nil, fmt.Errorf("failed to stat primary root: %w", err)
+	}
+
 	fuseLog := baseLog.With().Str("component", "fuse").Str("mount", mountName).Logger()
 	state := newRuntimeState(rt, fuseLog)
 	reload := newReloadState(mountName, m, primaryRootPath, fuseAllowOther, rootLogCfg)
 	diskLog := newDiskAccessLogger(fuseLog, diskCfg)
 
-	op, err := fs.NewLoopbackRoot(primaryRootPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create loopback root: %w", err)
-	}
-
-	lb, ok := op.(*fs.LoopbackNode)
-	if !ok {
-		// Fallback: preserve behavior if go-fuse changes the concrete type.
-		return op, nil
-	}
-
-	n := &Node{LoopbackNode: lb, mountName: mountName, state: state, reload: reload, db: db, disk: diskLog, open: NewOpenTracker()}
-	if lb.RootData != nil {
-		lb.RootData.RootNode = n
-	}
+	n := &Node{mountName: mountName, state: state, reload: reload, db: db, disk: diskLog, open: NewOpenTracker()}
 	return n, nil
-}
-
-// WrapChild wraps descendant nodes.
-func (n *Node) WrapChild(ctx context.Context, ops fs.InodeEmbedder) fs.InodeEmbedder {
-	lb, ok := ops.(*fs.LoopbackNode)
-	if !ok {
-		return ops
-	}
-	return &Node{LoopbackNode: lb, mountName: n.mountName, state: n.state, reload: n.reload, db: n.db, disk: n.disk, open: n.open}
 }
 
 // OpenCounts implements daemonctl.OpenCountsProvider for the daemon control socket.
@@ -94,7 +74,7 @@ func (n *Node) OpenCounts(ctx context.Context, files []daemonctl.OpenFileID) ([]
 // Lookup resolves a child entry using the router's read target order.
 func (n *Node) Lookup(ctx context.Context, name string, out *gofuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	rt, log := n.runtime()
-	ch, errno := lookupChild(ctx, n.EmbeddedInode(), n.RootData, n.mountName, n.state, n.reload, rt, n.db, log, n.disk, n.open, name, out)
+	ch, errno := lookupChild(ctx, n.EmbeddedInode(), n.mountName, n.state, n.reload, rt, n.db, log, n.disk, n.open, name, out)
 	if errno != 0 && errno != syscall.ENOENT {
 		log.Error().Str("op", "lookup").Str("path", filepath.Join(n.Path(n.Root()), name)).Err(errno).Msg("failed to lookup")
 	}
@@ -109,6 +89,12 @@ func (n *Node) Getattr(ctx context.Context, f fs.FileHandle, out *gofuse.AttrOut
 		log.Error().Str("op", "getattr").Str("path", n.Path(n.Root())).Err(errno).Msg("failed to getattr")
 	}
 	return errno
+}
+
+// Statx disables FUSE_STATX so the kernel falls back to router-aware Getattr instead of
+// probing primaryRootPath via the embedded LoopbackNode.
+func (n *Node) Statx(ctx context.Context, f fs.FileHandle, flags uint32, mask uint32, out *gofuse.StatxOut) syscall.Errno {
+	return syscall.ENOSYS
 }
 
 // Readdir returns a union of directory entries across read targets, deduped by name.
@@ -202,11 +188,11 @@ func (n *Node) Statfs(ctx context.Context, out *gofuse.StatfsOut) syscall.Errno 
 				if statfsWriteTarget(rt, virtualPath, out) {
 					return 0
 				}
-				return n.LoopbackNode.Statfs(ctx, out)
+				return n.statfsLoopback(virtualPath, out)
 			case "fallback_loopback", "ignore_failed":
-				return n.LoopbackNode.Statfs(ctx, out)
+				return n.statfsLoopback(virtualPath, out)
 			default:
-				return n.LoopbackNode.Statfs(ctx, out)
+				return n.statfsLoopback(virtualPath, out)
 			}
 		}
 
@@ -219,21 +205,21 @@ func (n *Node) Statfs(ctx context.Context, out *gofuse.StatfsOut) syscall.Errno 
 			if ok {
 				return 0
 			}
-			return n.LoopbackNode.Statfs(ctx, out)
+			return n.statfsLoopback(virtualPath, out)
 		case "fail_eio":
 			return syscall.EIO
 		case "fallback_effective_target":
 			if statfsWriteTarget(rt, virtualPath, out) {
 				return 0
 			}
-			return n.LoopbackNode.Statfs(ctx, out)
+			return n.statfsLoopback(virtualPath, out)
 		case "fallback_loopback":
-			return n.LoopbackNode.Statfs(ctx, out)
+			return n.statfsLoopback(virtualPath, out)
 		default:
 			if ok {
 				return 0
 			}
-			return n.LoopbackNode.Statfs(ctx, out)
+			return n.statfsLoopback(virtualPath, out)
 		}
 	}
 
@@ -268,8 +254,27 @@ func (n *Node) Statfs(ctx context.Context, out *gofuse.StatfsOut) syscall.Errno 
 		if statfsWriteTarget(rt, virtualPath, out) {
 			return 0
 		}
-		return n.LoopbackNode.Statfs(ctx, out)
+		return n.statfsLoopback(virtualPath, out)
 	}
+}
+
+// statfsLoopback reports filesystem stats from primaryRootPath when pooled or target statfs falls back.
+func (n *Node) statfsLoopback(virtualPath string, out *gofuse.StatfsOut) syscall.Errno {
+	if n == nil || n.reload == nil || strings.TrimSpace(n.reload.primaryRootPath) == "" {
+		return syscall.EIO
+	}
+	primaryRoot := n.reload.primaryRootPath
+	p := filepath.Join(primaryRoot, virtualPath)
+	var st syscall.Statfs_t
+	err := syscall.Statfs(p, &st)
+	if err != nil && errors.Is(err, syscall.ENOENT) && p != primaryRoot {
+		err = syscall.Statfs(primaryRoot, &st)
+	}
+	if err != nil {
+		return toErrno(err)
+	}
+	out.FromStatfsT(&st)
+	return 0
 }
 
 // Release closes any file handles we created.

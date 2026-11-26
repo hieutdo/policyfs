@@ -10,6 +10,7 @@ import (
 
 	"github.com/hieutdo/policyfs/internal/config"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 )
 
 // createIndexedOnlyCfg returns a minimal config with a single indexed storage.
@@ -271,5 +272,80 @@ func TestMixed_lookup_shouldResolveIndexedDirAtRulePartitionBoundary(t *testing.
 
 		got := env.MustReadFileInMountPoint(t, rel)
 		require.Equal(t, content, got)
+	})
+}
+
+// TestMixed_statx_shouldResolveSecondaryTargetWhenPrimaryStorageLacksPath verifies that statx(2)
+// requests (including STATX_BTIME, which triggers FUSE_STATX on Linux 6.9+) succeed for directories
+// and files that exist only on a secondary read target and not on storage_paths[0].
+func TestMixed_statx_shouldResolveSecondaryTargetWhenPrimaryStorageLacksPath(t *testing.T) {
+	cfg := IntegrationConfig{
+		Storages: []IntegrationStorage{
+			{ID: "ssd1", Indexed: false, BasePath: "/mnt/ssd1/pfs-integration"},
+			{ID: "ssd2", Indexed: false, BasePath: "/mnt/ssd2/pfs-integration"},
+			{ID: "hdd1", Indexed: true, BasePath: "/mnt/hdd1/pfs-integration"},
+		},
+		StorageGroups: map[string][]string{
+			"ssds": {"ssd1"},
+			"hdds": {"ssd2", "hdd1"},
+		},
+		RoutingRules: []config.RoutingRule{{
+			Match:          "**",
+			ReadTargets:    []string{"ssds", "hdds"},
+			WriteTargets:   []string{"ssds"},
+			WritePolicy:    "first_found",
+			PathPreserving: true,
+		}},
+	}
+
+	withMountedFS(t, cfg, func(env *MountedFS) {
+		unindexedContent := []byte("unindexed-secondary")
+		indexedContent := []byte("indexed-secondary")
+		env.MustCreateFileInStoragePath(t, unindexedContent, "ssd2", "download_services/tv/show.mkv")
+		env.MustCreateFileInStoragePath(t, indexedContent, "hdd1", "library/movies/film.mkv")
+
+		mustRunPFS(t, env, "index", env.MountName)
+
+		cases := []struct {
+			name     string
+			rel      string
+			wantType uint16
+			wantSize uint64
+		}{
+			{name: "should resolve non-indexed secondary top-level dir", rel: "download_services", wantType: unix.S_IFDIR},
+			{name: "should resolve non-indexed secondary nested dir", rel: "download_services/tv", wantType: unix.S_IFDIR},
+			{name: "should resolve non-indexed secondary file", rel: "download_services/tv/show.mkv", wantType: unix.S_IFREG, wantSize: uint64(len(unindexedContent))},
+			{name: "should resolve indexed secondary top-level dir", rel: "library", wantType: unix.S_IFDIR},
+			{name: "should resolve indexed secondary nested dir", rel: "library/movies", wantType: unix.S_IFDIR},
+			{name: "should resolve indexed secondary file", rel: "library/movies/film.mkv", wantType: unix.S_IFREG, wantSize: uint64(len(indexedContent))},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				var stx unix.Statx_t
+				err := unix.Statx(
+					unix.AT_FDCWD,
+					env.MountPath(tc.rel),
+					unix.AT_SYMLINK_NOFOLLOW,
+					unix.STATX_BASIC_STATS|unix.STATX_BTIME,
+					&stx,
+				)
+				require.NoError(t, err, "expected statx to succeed for %s", tc.rel)
+				require.Equal(t, tc.wantType, stx.Mode&unix.S_IFMT)
+				if tc.wantType == unix.S_IFREG {
+					require.Equal(t, tc.wantSize, stx.Size)
+				}
+			})
+		}
+
+		t.Run("should list mount root and secondary parent directory with ls -la without placeholder metadata", func(t *testing.T) {
+			for _, dir := range []string{env.MountPoint, env.MountPath("download_services"), env.MountPath("library")} {
+				cmd := exec.Command("ls", "-la", dir)
+				out, err := cmd.CombinedOutput()
+				require.NoError(t, err, "expected ls -la %s to succeed: out=%s", dir, string(out))
+				require.NotContains(t, string(out), "?????????")
+				require.NotContains(t, strings.ToLower(string(out)), "cannot access")
+			}
+		})
 	})
 }

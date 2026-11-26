@@ -92,7 +92,7 @@ func (n *Node) Create(ctx context.Context, name string, flags uint32, mode uint3
 	}
 	out.FromStat(&st)
 
-	ch := newChildInode(ctx, n.EmbeddedInode(), n.RootData, n.mountName, n.state, n.reload, n.db, n.disk, n.open, target.ID, virtualPath, uint32(st.Mode))
+	ch := newChildInode(ctx, n.EmbeddedInode(), n.mountName, n.state, n.reload, n.db, n.disk, n.open, target.ID, virtualPath, uint32(st.Mode))
 
 	fh := &FileHandle{virtualPath: virtualPath, physicalPath: physicalPath, storageID: target.ID, indexed: target.Indexed, fd: fd, flags: flags}
 	write := flags&gofuse.O_ANYWRITE != 0
@@ -190,7 +190,86 @@ func (n *Node) Mkdir(ctx context.Context, name string, mode uint32, out *gofuse.
 	}
 	out.FromStat(&st)
 
-	ch := newChildInode(ctx, n.EmbeddedInode(), n.RootData, n.mountName, n.state, n.reload, n.db, n.disk, n.open, target.ID, virtualPath, uint32(st.Mode))
+	ch := newChildInode(ctx, n.EmbeddedInode(), n.mountName, n.state, n.reload, n.db, n.disk, n.open, target.ID, virtualPath, uint32(st.Mode))
 	log.Debug().Str("op", "mkdir").Str("path", virtualPath).Str("storage_id", target.ID).Str("real_path", physicalPath).Bool("indexed", false).Msg("mkdir")
+	return ch, 0
+}
+
+// Mknod creates a special or regular filesystem node (e.g., FIFO/named pipe) on a selected write target.
+func (n *Node) Mknod(ctx context.Context, name string, mode uint32, rdev uint32, out *gofuse.EntryOut) (*fs.Inode, syscall.Errno) {
+	if n == nil {
+		return nil, toErrno(&errkind.NilError{What: "node"})
+	}
+	rt, log := n.runtime()
+	if rt == nil {
+		return nil, toErrno(&errkind.NilError{What: "router"})
+	}
+
+	caller, callerOK := gofuse.FromContext(ctx)
+	if !callerOK {
+		return nil, syscall.EPERM
+	}
+
+	parentVirtualPath := n.Path(n.Root())
+	if parentVirtualPath == "." {
+		parentVirtualPath = ""
+	}
+	virtualPath, errno := joinVirtualPath(parentVirtualPath, name)
+	if errno != 0 {
+		return nil, errno
+	}
+
+	target, err := rt.SelectWriteTarget(virtualPath)
+	if err != nil {
+		log.Error().Str("op", "mknod").Str("path", virtualPath).Err(err).Msg("failed to select write target")
+		return nil, toErrno(err)
+	}
+	log.Debug().Str("op", "mknod").Str("path", virtualPath).Str("storage_id", target.ID).Bool("indexed", target.Indexed).Msg("mknod selected write target")
+	if target.Indexed {
+		log.Debug().Str("op", "mknod").Str("path", virtualPath).Str("storage_id", target.ID).Msg("mknod blocked: indexed target is read-only")
+		return nil, syscall.EROFS
+	}
+
+	physicalPath := filepath.Join(target.Root, virtualPath)
+	if err := materializeParentDirs(ctx, target.Root, virtualPath); err != nil {
+		log.Error().Str("op", "mknod").Str("path", virtualPath).Str("storage_id", target.ID).Err(err).Msg("failed to materialize parent dirs")
+		return nil, toErrno(err)
+	}
+	log.Debug().Str("op", "mknod").Str("path", virtualPath).Str("storage_id", target.ID).Str("real_path", physicalPath).Msg("mknod materialized parent dirs")
+
+	parentPhysical := filepath.Dir(physicalPath)
+	pst := syscall.Stat_t{}
+	if err := syscall.Lstat(parentPhysical, &pst); err != nil {
+		log.Error().Str("op", "mknod").Str("path", virtualPath).Str("storage_id", target.ID).Err(err).Msg("failed to lstat parent")
+		return nil, toErrno(err)
+	}
+	if uint32(pst.Mode)&syscall.S_IFMT != syscall.S_IFDIR {
+		return nil, syscall.ENOTDIR
+	}
+	if errno := dirWriteExecPermErrno(caller, uint32(pst.Mode), pst.Uid, pst.Gid); errno != 0 {
+		return nil, errno
+	}
+
+	if err := syscall.Mknod(physicalPath, mode, int(rdev)); err != nil {
+		log.Error().Str("op", "mknod").Str("path", virtualPath).Str("storage_id", target.ID).Err(err).Msg("failed to mknod")
+		return nil, toErrno(err)
+	}
+	log.Debug().Str("op", "mknod").Str("path", virtualPath).Str("storage_id", target.ID).Str("real_path", physicalPath).Msg("mknod created node on disk")
+
+	if err := preserveOwnerForCreate(ctx, parentPhysical, -1, physicalPath); err != nil {
+		_ = syscall.Unlink(physicalPath)
+		log.Error().Str("op", "mknod").Str("path", virtualPath).Str("storage_id", target.ID).Err(err).Msg("failed to preserve owner")
+		return nil, toErrno(err)
+	}
+
+	st := syscall.Stat_t{}
+	if err := syscall.Lstat(physicalPath, &st); err != nil {
+		_ = syscall.Unlink(physicalPath)
+		return nil, toErrno(err)
+	}
+	out.FromStat(&st)
+
+	ch := newChildInode(ctx, n.EmbeddedInode(), n.mountName, n.state, n.reload, n.db, n.disk, n.open, target.ID, virtualPath, uint32(st.Mode))
+	log.Debug().Str("op", "mknod").Str("path", virtualPath).Str("storage_id", target.ID).Str("real_path", physicalPath).Bool("indexed", false).Msg("mknod")
 	return ch, 0
 }

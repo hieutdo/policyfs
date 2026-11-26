@@ -7,6 +7,7 @@ import (
 	"syscall"
 	"testing"
 
+	gofuse "github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/hieutdo/policyfs/internal/config"
 	"github.com/hieutdo/policyfs/internal/router"
 	"github.com/rs/zerolog"
@@ -89,4 +90,34 @@ func Test_listDirEntriesForVirtualPath(t *testing.T) {
 		require.Nil(t, entries)
 		require.Equal(t, syscall.ENOENT, errno)
 	})
+}
+
+// TestNode_Statx_shouldReturnENOSYS verifies that Node overrides LoopbackNode.Statx with ENOSYS
+// so Linux kernels with FUSE_STATX fall back to router-aware Getattr instead of probing primaryRootPath.
+func TestNode_Statx_shouldReturnENOSYS(t *testing.T) {
+	root1 := t.TempDir()
+	root2 := t.TempDir()
+
+	mountCfg := &config.MountConfig{
+		MountPoint: "/mnt/unused",
+		StoragePaths: []config.StoragePath{
+			{ID: "ssd1", Path: root1, Indexed: false},
+			{ID: "hdd1", Path: root2, Indexed: false},
+		},
+		RoutingRules: []config.RoutingRule{{
+			Match:       "**",
+			Targets:     []string{"ssd1", "hdd1"},
+			ReadTargets: []string{"ssd1", "hdd1"},
+		}},
+	}
+
+	embedder, err := NewRoot("media", mountCfg, root1, nil, zerolog.Logger{}, DiskAccessConfig{})
+	require.NoError(t, err)
+
+	node, ok := embedder.(*Node)
+	require.True(t, ok)
+
+	var out gofuse.StatxOut
+	errno := node.Statx(context.Background(), nil, 0, 0, &out)
+	require.Equal(t, syscall.ENOSYS, errno)
 }

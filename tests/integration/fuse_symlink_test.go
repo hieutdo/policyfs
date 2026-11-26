@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/hieutdo/policyfs/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -212,5 +213,59 @@ func TestFUSE_Symlink_Unlink(t *testing.T) {
 		require.True(t, env.FileExistsInMountPoint(targetRel))
 		got := env.MustReadFileInMountPoint(t, targetRel)
 		require.Equal(t, want, got)
+	})
+}
+
+// TestFUSE_Symlink_SecondaryStorageRouting verifies that Symlink and Readlink use router write/read
+// targets rather than falling back to storage_paths[0] (ssd1).
+func TestFUSE_Symlink_SecondaryStorageRouting(t *testing.T) {
+	cfg := IntegrationConfig{
+		Storages: []IntegrationStorage{
+			{ID: "ssd1", Indexed: false, BasePath: "/mnt/ssd1/pfs-integration"},
+			{ID: "ssd2", Indexed: false, BasePath: "/mnt/ssd2/pfs-integration"},
+		},
+		RoutingRules: []config.RoutingRule{{
+			Match:        "**",
+			ReadTargets:  []string{"ssd1", "ssd2"},
+			WriteTargets: []string{"ssd2"},
+		}},
+	}
+
+	withMountedFS(t, cfg, func(env *MountedFS) {
+		t.Run("should create symlink on routed secondary write target", func(t *testing.T) {
+			targetRel := "routed-symlink/create/target.txt"
+			linkRel := "routed-symlink/create/link.txt"
+			want := []byte("created on ssd2")
+
+			env.MustWriteFileInMountPoint(t, targetRel, want)
+			env.MustSymlinkInMountPoint(t, "target.txt", linkRel)
+
+			require.False(t, env.FileExistsInStoragePath("ssd1", linkRel))
+			require.True(t, env.FileExistsInStoragePath("ssd2", linkRel))
+
+			gotTarget := env.MustReadlinkInMountPoint(t, linkRel)
+			require.Equal(t, "target.txt", gotTarget)
+
+			gotContent := env.MustReadFileInMountPoint(t, linkRel)
+			require.Equal(t, want, gotContent)
+		})
+
+		t.Run("should readlink pre-existing symlink on secondary read target when missing on primary storage", func(t *testing.T) {
+			targetRel := "routed-symlink/existing/target.txt"
+			linkRel := "routed-symlink/existing/link.txt"
+			want := []byte("existing on ssd2 only")
+
+			env.MustCreateFileInStoragePath(t, want, "ssd2", targetRel)
+			require.NoError(t, os.Symlink("target.txt", env.StoragePath("ssd2", linkRel)))
+
+			fi := env.MustLstatInMountPoint(t, linkRel)
+			require.True(t, fi.Mode()&os.ModeSymlink != 0)
+
+			gotTarget := env.MustReadlinkInMountPoint(t, linkRel)
+			require.Equal(t, "target.txt", gotTarget)
+
+			gotContent := env.MustReadFileInMountPoint(t, linkRel)
+			require.Equal(t, want, gotContent)
+		})
 	})
 }

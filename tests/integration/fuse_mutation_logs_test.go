@@ -150,9 +150,15 @@ func TestMutationLogs_shouldShowLinkLifecycle(t *testing.T) {
 }
 
 // TestMutationLogs_shouldShowSymlinkLifecycle verifies debug logs cover symbolic link
-// creation while preserving the current loopback behavior.
+// write target selection, parent materialization, and physical symlink creation.
 func TestMutationLogs_shouldShowSymlinkLifecycle(t *testing.T) {
-	withMountedFS(t, IntegrationConfig{LogLevel: "debug"}, func(env *MountedFS) {
+	withMountedFS(t, IntegrationConfig{
+		LogLevel: "debug",
+		RoutingRules: []config.RoutingRule{
+			{Match: "mutation-logs/symlink/**", WriteTargets: []string{"ssd2"}, ReadTargets: []string{"ssd2"}},
+			{Match: "**", WriteTargets: []string{"ssd1"}, ReadTargets: []string{"ssd1"}},
+		},
+	}, func(env *MountedFS) {
 		linkRel := "mutation-logs/symlink/link.txt"
 		target := "target.txt"
 
@@ -160,8 +166,10 @@ func TestMutationLogs_shouldShowSymlinkLifecycle(t *testing.T) {
 		require.Equal(t, target, env.MustReadlinkInMountPoint(t, linkRel))
 
 		logData := env.MustWaitForDaemonLogSequence(t, 10*time.Second, []DaemonLogExpectation{
-			{Msg: "symlink using loopback behavior", Fields: map[string]string{"op": "symlink", "path": linkRel, "target": target}},
-			{Msg: "symlink", Fields: map[string]string{"op": "symlink", "path": linkRel, "target": target}},
+			{Msg: "symlink selected write target", Fields: map[string]string{"op": "symlink", "path": linkRel, "target": target, "storage_id": "ssd2"}},
+			{Msg: "symlink materialized parent dirs", Fields: map[string]string{"op": "symlink", "path": linkRel, "target": target, "storage_id": "ssd2", "real_path": env.StoragePath("ssd2", linkRel)}},
+			{Msg: "symlink created on disk", Fields: map[string]string{"op": "symlink", "path": linkRel, "target": target, "storage_id": "ssd2", "real_path": env.StoragePath("ssd2", linkRel)}},
+			{Msg: "symlink", Fields: map[string]string{"op": "symlink", "path": linkRel, "target": target, "storage_id": "ssd2", "real_path": env.StoragePath("ssd2", linkRel), "indexed": "false"}},
 		})
 		require.NotEmpty(t, logData)
 	})

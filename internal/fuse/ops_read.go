@@ -222,13 +222,13 @@ func resolveLookupPathOnTarget(ctx context.Context, t router.Target, db *indexdb
 }
 
 // newResolvedChildInode creates a child inode from resolved lookup metadata.
-func newResolvedChildInode(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoot, mountName string, state *runtimeState, reload *reloadState, db *indexdb.DB, disk *diskAccessLogger, open *OpenTracker, virtualPath string, resolved *resolvedLookupPath) *fs.Inode {
-	child := &Node{LoopbackNode: &fs.LoopbackNode{RootData: rootData}, mountName: mountName, state: state, reload: reload, db: db, disk: disk, open: open}
+func newResolvedChildInode(ctx context.Context, parent *fs.Inode, mountName string, state *runtimeState, reload *reloadState, db *indexdb.DB, disk *diskAccessLogger, open *OpenTracker, virtualPath string, resolved *resolvedLookupPath) *fs.Inode {
+	child := &Node{mountName: mountName, state: state, reload: reload, db: db, disk: disk, open: open}
 	return parent.NewInode(ctx, child, fs.StableAttr{Mode: resolved.typeMode(), Ino: stableIno(resolved.targetID, virtualPath), Gen: 1})
 }
 
 // lookupChild looks up a child by name using router read targets.
-func lookupChild(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoot, mountName string, state *runtimeState, reload *reloadState, rt *router.Router, db *indexdb.DB, log zerolog.Logger, disk *diskAccessLogger, open *OpenTracker, name string, out *gofuse.EntryOut) (*fs.Inode, syscall.Errno) {
+func lookupChild(ctx context.Context, parent *fs.Inode, mountName string, state *runtimeState, reload *reloadState, rt *router.Router, db *indexdb.DB, log zerolog.Logger, disk *diskAccessLogger, open *OpenTracker, name string, out *gofuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	if parent == nil {
 		return nil, toErrno(&errkind.NilError{What: "parent inode"})
 	}
@@ -248,7 +248,7 @@ func lookupChild(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoo
 	}
 
 	resolved.attr.applyToEntryOut(out)
-	return newResolvedChildInode(ctx, parent, rootData, mountName, state, reload, db, disk, open, childPath, resolved), 0
+	return newResolvedChildInode(ctx, parent, mountName, state, reload, db, disk, open, childPath, resolved), 0
 }
 
 // getattrPath gets attributes for a virtual path by searching read targets.
@@ -340,10 +340,7 @@ func listDirEntriesForVirtualPath(ctx context.Context, virtualPath string, rt *r
 			log.Debug().Str("op", "readdir").Str("path", virtualPath).Str("storage_id", t.ID).Str("real_path", p).Msg("readdir scanning non-indexed target")
 			for _, e := range list {
 				name := e.Name()
-				mode := uint32(gofuse.S_IFREG)
-				if e.IsDir() {
-					mode = uint32(gofuse.S_IFDIR)
-				}
+				mode := dirEntryTypeMode(e)
 
 				childPath, errno := joinVirtualPath(virtualPath, name)
 				if errno != 0 {
@@ -485,4 +482,26 @@ func listDirEntriesForVirtualPath(ctx context.Context, virtualPath string, rt *r
 	log.Debug().Str("op", "readdir").Str("path", virtualPath).Msg("readdir merged entries")
 	_ = ctx
 	return out, 0
+}
+
+// dirEntryTypeMode maps an os.DirEntry type bitmask to the corresponding FUSE S_IFMT file type.
+func dirEntryTypeMode(e os.DirEntry) uint32 {
+	if e.IsDir() {
+		return uint32(gofuse.S_IFDIR)
+	}
+	typ := e.Type()
+	switch {
+	case typ&os.ModeSymlink != 0:
+		return uint32(gofuse.S_IFLNK)
+	case typ&os.ModeNamedPipe != 0:
+		return uint32(syscall.S_IFIFO)
+	case typ&os.ModeSocket != 0:
+		return uint32(syscall.S_IFSOCK)
+	case typ&os.ModeCharDevice != 0:
+		return uint32(syscall.S_IFCHR)
+	case typ&os.ModeDevice != 0:
+		return uint32(syscall.S_IFBLK)
+	default:
+		return uint32(gofuse.S_IFREG)
+	}
 }

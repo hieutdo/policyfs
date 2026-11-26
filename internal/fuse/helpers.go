@@ -138,8 +138,8 @@ func openFirst(ctx context.Context, rt *router.Router, db *indexdb.DB, log zerol
 }
 
 // newChildInode creates a child inode with Node ops and a deterministic inode number.
-func newChildInode(ctx context.Context, parent *fs.Inode, rootData *fs.LoopbackRoot, mountName string, state *runtimeState, reload *reloadState, db *indexdb.DB, disk *diskAccessLogger, open *OpenTracker, storageID string, virtualPath string, stMode uint32) *fs.Inode {
-	child := &Node{LoopbackNode: &fs.LoopbackNode{RootData: rootData}, mountName: mountName, state: state, reload: reload, db: db, disk: disk, open: open}
+func newChildInode(ctx context.Context, parent *fs.Inode, mountName string, state *runtimeState, reload *reloadState, db *indexdb.DB, disk *diskAccessLogger, open *OpenTracker, storageID string, virtualPath string, stMode uint32) *fs.Inode {
+	child := &Node{mountName: mountName, state: state, reload: reload, db: db, disk: disk, open: open}
 	typeMode := uint32(stMode & syscall.S_IFMT)
 	ch := parent.NewInode(ctx, child, fs.StableAttr{Mode: typeMode, Ino: stableIno(storageID, virtualPath), Gen: 1})
 	return ch
