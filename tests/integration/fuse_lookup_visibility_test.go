@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hieutdo/policyfs/internal/config"
 	"github.com/stretchr/testify/require"
@@ -306,6 +307,25 @@ func TestMixed_statx_shouldResolveSecondaryTargetWhenPrimaryStorageLacksPath(t *
 
 		mustRunPFS(t, env, "index", env.MountName)
 
+		t.Run("should preserve physical metadata for an unindexed sparse file", func(t *testing.T) {
+			const rel = "sparse.bin"
+			env.MustCreateFileInStoragePath(t, nil, "ssd1", rel)
+			physicalPath := env.StoragePath("ssd1", rel)
+			require.NoError(t, os.Truncate(physicalPath, 32<<20))
+			atime := time.Unix(1_700_000_000, 123_456_789)
+			require.NoError(t, os.Chtimes(physicalPath, atime, atime))
+
+			want := env.MustStatT(t, physicalPath)
+			got := env.MustStatT(t, env.MountPath(rel))
+			require.Equal(t, want.Atim, got.Atim)
+			require.Equal(t, want.Ctim, got.Ctim)
+			require.Equal(t, want.Blocks, got.Blocks)
+			require.Equal(t, want.Blksize, got.Blksize)
+		})
+
+		// Cached indexed metadata must remain readable without the backing directory.
+		require.NoError(t, os.Rename(env.StoragePath("hdd1", "library"), env.StoragePath("hdd1", "offline-library")))
+
 		cases := []struct {
 			name     string
 			rel      string
@@ -326,7 +346,7 @@ func TestMixed_statx_shouldResolveSecondaryTargetWhenPrimaryStorageLacksPath(t *
 				err := unix.Statx(
 					unix.AT_FDCWD,
 					env.MountPath(tc.rel),
-					unix.AT_SYMLINK_NOFOLLOW,
+					unix.AT_SYMLINK_NOFOLLOW|unix.AT_STATX_FORCE_SYNC,
 					unix.STATX_BASIC_STATS|unix.STATX_BTIME,
 					&stx,
 				)
@@ -334,6 +354,9 @@ func TestMixed_statx_shouldResolveSecondaryTargetWhenPrimaryStorageLacksPath(t *
 				require.Equal(t, tc.wantType, stx.Mode&unix.S_IFMT)
 				if tc.wantType == unix.S_IFREG {
 					require.Equal(t, tc.wantSize, stx.Size)
+				}
+				if strings.HasPrefix(tc.rel, "library") {
+					require.Zero(t, stx.Mask&unix.STATX_BTIME)
 				}
 			})
 		}
@@ -345,6 +368,81 @@ func TestMixed_statx_shouldResolveSecondaryTargetWhenPrimaryStorageLacksPath(t *
 				require.NoError(t, err, "expected ls -la %s to succeed: out=%s", dir, string(out))
 				require.NotContains(t, string(out), "?????????")
 				require.NotContains(t, strings.ToLower(string(out)), "cannot access")
+			}
+		})
+	})
+}
+
+// TestFUSE_openFileMetadata verifies descriptor-based metadata survives unlink.
+func TestFUSE_openFileMetadata(t *testing.T) {
+	withMountedFS(t, IntegrationConfig{}, func(env *MountedFS) {
+		for _, origin := range []string{"created through mount", "opened from storage"} {
+			t.Run("should stat an unlinked file "+origin, func(t *testing.T) {
+				const rel = "open-file"
+				path := env.MountPath(rel)
+				var f *os.File
+				var err error
+				if origin == "created through mount" {
+					f, err = os.Create(path)
+					require.NoError(t, err)
+					_, err = f.WriteString("hello")
+				} else {
+					env.MustCreateFileInStoragePath(t, []byte("hello"), "ssd1", rel)
+					f, err = os.Open(path)
+				}
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, f.Close()) })
+				env.MustRemoveFileInMountPoint(t, rel)
+				env.MustWriteFileInMountPoint(t, rel, []byte("replacement"))
+
+				var st unix.Statx_t
+				require.NoError(t, unix.Statx(int(f.Fd()), "", unix.AT_EMPTY_PATH|unix.AT_STATX_FORCE_SYNC, unix.STATX_BASIC_STATS|unix.STATX_BTIME, &st))
+				require.EqualValues(t, 5, st.Size)
+				info, err := f.Stat()
+				require.NoError(t, err)
+				require.EqualValues(t, 5, info.Size())
+				env.MustRemoveFileInMountPoint(t, rel)
+			})
+		}
+	})
+}
+
+// TestFUSE_statxDuringPlacementChange keeps the secondary copy visible throughout.
+func TestFUSE_statxDuringPlacementChange(t *testing.T) {
+	withMountedFS(t, IntegrationConfig{ReadTargets: []string{"ssd1", "ssd2"}}, func(env *MountedFS) {
+		t.Run("should stat a visible file while the primary copy moves", func(t *testing.T) {
+			const rel = "moving"
+			env.MustCreateFileInStoragePath(t, []byte("copy"), "ssd1", rel)
+			env.MustCreateFileInStoragePath(t, []byte("copy"), "ssd2", rel)
+			primary := env.StoragePath("ssd1", rel)
+			stop := make(chan struct{})
+			done := make(chan error, 1)
+			go func() {
+				for {
+					select {
+					case <-stop:
+						done <- nil
+						return
+					default:
+					}
+					if err := os.Rename(primary, primary+".parked"); err != nil {
+						done <- err
+						return
+					}
+					if err := os.Rename(primary+".parked", primary); err != nil {
+						done <- err
+						return
+					}
+				}
+			}()
+			defer func() {
+				close(stop)
+				require.NoError(t, <-done)
+			}()
+			for range 256 {
+				var st unix.Statx_t
+				require.NoError(t, unix.Statx(unix.AT_FDCWD, env.MountPath(rel), unix.AT_STATX_FORCE_SYNC, unix.STATX_BASIC_STATS|unix.STATX_BTIME, &st))
+				require.EqualValues(t, 4, st.Size)
 			}
 		})
 	})

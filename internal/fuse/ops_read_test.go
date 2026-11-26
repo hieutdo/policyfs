@@ -7,11 +7,13 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/hanwen/go-fuse/v2/fs"
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/hieutdo/policyfs/internal/config"
 	"github.com/hieutdo/policyfs/internal/router"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 )
 
 // Test_listDirEntriesForVirtualPath verifies union+dedupe behavior for directory listings.
@@ -92,9 +94,9 @@ func Test_listDirEntriesForVirtualPath(t *testing.T) {
 	})
 }
 
-// TestNode_Statx_shouldReturnENOSYS verifies that Node overrides LoopbackNode.Statx with ENOSYS
-// so Linux kernels with FUSE_STATX fall back to router-aware Getattr instead of probing primaryRootPath.
-func TestNode_Statx_shouldReturnENOSYS(t *testing.T) {
+// TestNode_Statx verifies Statx resolves through router read targets and returns physical
+// statx fields (blocks, ctime, btime) from the target that holds the path.
+func TestNode_Statx(t *testing.T) {
 	root1 := t.TempDir()
 	root2 := t.TempDir()
 
@@ -111,13 +113,30 @@ func TestNode_Statx_shouldReturnENOSYS(t *testing.T) {
 		}},
 	}
 
-	embedder, err := NewRoot("media", mountCfg, root1, nil, zerolog.Logger{}, DiskAccessConfig{})
+	root, err := NewRoot("media", mountCfg, root1, nil, zerolog.Logger{}, DiskAccessConfig{})
 	require.NoError(t, err)
+	raw := fs.NewNodeFS(root, &fs.Options{})
 
-	node, ok := embedder.(*Node)
-	require.True(t, ok)
+	t.Run("should report physical statx metadata from a secondary read target", func(t *testing.T) {
+		const name = "sparse.bin"
+		physicalPath := filepath.Join(root2, name)
+		require.NoError(t, os.WriteFile(physicalPath, nil, 0o600))
+		require.NoError(t, os.Truncate(physicalPath, 32<<20))
+		const mask = unix.STATX_BASIC_STATS | unix.STATX_BTIME
+		var want unix.Statx_t
+		require.NoError(t, unix.Statx(unix.AT_FDCWD, physicalPath, unix.AT_SYMLINK_NOFOLLOW, mask, &want))
 
-	var out gofuse.StatxOut
-	errno := node.Statx(context.Background(), nil, 0, 0, &out)
-	require.Equal(t, syscall.ENOSYS, errno)
+		var entry gofuse.EntryOut
+		require.Equal(t, gofuse.OK, raw.Lookup(nil, &gofuse.InHeader{NodeId: gofuse.FUSE_ROOT_ID}, name, &entry))
+		in := gofuse.StatxIn{InHeader: gofuse.InHeader{NodeId: entry.NodeId}, SxMask: mask}
+		var got gofuse.StatxOut
+		require.Equal(t, gofuse.OK, raw.Statx(nil, &in, &got))
+		require.Equal(t, want.Size, got.Size)
+		require.Equal(t, want.Blocks, got.Blocks)
+		require.Equal(t, want.Blksize, got.Blksize)
+		require.Equal(t, want.Ctime.Sec, int64(got.Ctime.Sec))
+		require.Equal(t, want.Mask&unix.STATX_BTIME, got.Mask&unix.STATX_BTIME)
+		require.Equal(t, want.Btime.Sec, int64(got.Btime.Sec))
+		require.Equal(t, want.Btime.Nsec, got.Btime.Nsec)
+	})
 }

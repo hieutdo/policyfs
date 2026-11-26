@@ -96,6 +96,7 @@ func (n *Node) Create(ctx context.Context, name string, flags uint32, mode uint3
 
 	fh := &FileHandle{virtualPath: virtualPath, physicalPath: physicalPath, storageID: target.ID, indexed: target.Indexed, fd: fd, flags: flags}
 	write := flags&gofuse.O_ANYWRITE != 0
+	ch.Operations().(*Node).rememberHandle(fh)
 	attachOpenTrackingFromStat(n, virtualPath, fh, write, &st)
 	log.Debug().Str("op", "create").Str("path", virtualPath).Str("storage_id", target.ID).Str("real_path", physicalPath).Bool("indexed", false).Msg("create")
 	return ch, fh, 0, 0

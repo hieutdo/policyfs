@@ -162,15 +162,17 @@ func TestFUSE_Mknod_createsFIFOOnSelectedWriteTarget(t *testing.T) {
 			{Match: "**", WriteTargets: []string{"ssd1"}, ReadTargets: []string{"ssd1", "ssd2"}},
 		},
 	}, func(env *MountedFS) {
-		env.MustCreateDirInStoragePath(t, "ssd1", "fuse-mutate/mknod")
-		rel := "fuse-mutate/mknod/pipe.fifo"
-		require.NoError(t, syscall.Mkfifo(env.MountPath(rel), 0o640))
+		t.Run("should create a FIFO on the secondary write target", func(t *testing.T) {
+			env.MustCreateDirInStoragePath(t, "ssd1", "fuse-mutate/mknod")
+			rel := "fuse-mutate/mknod/pipe.fifo"
+			require.NoError(t, syscall.Mkfifo(env.MountPath(rel), 0o640))
 
-		require.NoFileExists(t, env.StoragePath("ssd1", rel))
-		stPhysical := env.MustStatT(t, env.StoragePath("ssd2", rel))
-		require.Equal(t, uint32(syscall.S_IFIFO), uint32(stPhysical.Mode)&syscall.S_IFMT)
+			require.NoFileExists(t, env.StoragePath("ssd1", rel))
+			stPhysical := env.MustStatT(t, env.StoragePath("ssd2", rel))
+			require.Equal(t, uint32(syscall.S_IFIFO), uint32(stPhysical.Mode)&syscall.S_IFMT)
 
-		fi := env.MustLstatInMountPoint(t, rel)
-		require.NotZero(t, fi.Mode()&os.ModeNamedPipe, "expected named pipe mode on mount")
+			fi := env.MustLstatInMountPoint(t, rel)
+			require.NotZero(t, fi.Mode()&os.ModeNamedPipe, "expected named pipe mode on mount")
+		})
 	})
 }

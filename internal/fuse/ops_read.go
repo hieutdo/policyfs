@@ -14,95 +14,53 @@ import (
 	"github.com/hieutdo/policyfs/internal/indexdb"
 	"github.com/hieutdo/policyfs/internal/router"
 	"github.com/rs/zerolog"
+	"golang.org/x/sys/unix"
 )
-
-// resolvedLookupAttr holds the attributes returned by lookup/getattr resolution.
-type resolvedLookupAttr struct {
-	size      uint64
-	mtime     uint64
-	mtimensec uint32
-	mode      uint32
-	nlink     uint32
-	uid       uint32
-	gid       uint32
-}
-
-// applyToEntryOut copies the resolved attributes into a go-fuse entry response.
-func (a resolvedLookupAttr) applyToEntryOut(out *gofuse.EntryOut) {
-	out.Size = a.size
-	out.Mtime = a.mtime
-	out.Mtimensec = a.mtimensec
-	out.Mode = a.mode
-	out.Nlink = a.nlink
-	out.Uid = a.uid
-	out.Gid = a.gid
-}
-
-// applyToAttrOut copies the resolved attributes into a go-fuse getattr response.
-func (a resolvedLookupAttr) applyToAttrOut(out *gofuse.AttrOut) {
-	out.Size = a.size
-	out.Mtime = a.mtime
-	out.Mtimensec = a.mtimensec
-	out.Mode = a.mode
-	out.Nlink = a.nlink
-	out.Uid = a.uid
-	out.Gid = a.gid
-}
 
 // resolvedLookupPath describes a resolved virtual path and the target that supplied it.
 type resolvedLookupPath struct {
 	targetID string
-	attr     resolvedLookupAttr
+	statx    *unix.Statx_t // populated by physical statx requests
+	attr     gofuse.Attr
 }
 
 // typeMode returns the file type bits needed for the child inode stable attributes.
 func (r resolvedLookupPath) typeMode() uint32 {
-	return r.attr.mode & uint32(syscall.S_IFMT)
+	return r.attr.Mode & uint32(syscall.S_IFMT)
 }
 
-// newResolvedLookupAttrFromStat converts syscall stat metadata into lookup/getattr output fields.
-func newResolvedLookupAttrFromStat(st *syscall.Stat_t) resolvedLookupAttr {
-	entryOut := gofuse.EntryOut{}
-	entryOut.FromStat(st)
-
-	return resolvedLookupAttr{
-		size:      entryOut.Size,
-		mtime:     entryOut.Mtime,
-		mtimensec: entryOut.Mtimensec,
-		mode:      entryOut.Mode,
-		nlink:     entryOut.Nlink,
-		uid:       entryOut.Uid,
-		gid:       entryOut.Gid,
-	}
+// metadataRequest selects the physical metadata syscall for this routing pass.
+type metadataRequest struct {
+	op           string
+	readPhysical func(path string) (*resolvedLookupPath, syscall.Errno)
 }
 
-// newSyntheticDirLookupAttr returns the fallback directory attributes for indexed directory hits.
-func newSyntheticDirLookupAttr() resolvedLookupAttr {
-	return resolvedLookupAttr{
-		size:      0,
-		mtime:     0,
-		mtimensec: 0,
-		mode:      uint32(syscall.S_IFDIR | 0o755),
-		nlink:     1,
-		uid:       0,
-		gid:       0,
+// lstatMetadata reads physical lookup/getattr fields without following symlinks.
+func lstatMetadata(path string) (*resolvedLookupPath, syscall.Errno) {
+	var st syscall.Stat_t
+	if err := syscall.Lstat(path, &st); err != nil {
+		return nil, toErrno(err)
 	}
+	result := &resolvedLookupPath{}
+	result.attr.FromStat(&st)
+	result.attr.Ino = 0 // go-fuse supplies the virtual inode number
+	return result, 0
 }
 
 // resolveLookupPath resolves a virtual path using first-match read targets and a directory-only list fallback.
-func resolveLookupPath(ctx context.Context, rt *router.Router, db *indexdb.DB, log zerolog.Logger, virtualPath string, op string, logNilDB bool) (*resolvedLookupPath, syscall.Errno) {
+func resolveLookupPath(ctx context.Context, rt *router.Router, db *indexdb.DB, log zerolog.Logger, virtualPath string, req metadataRequest) (*resolvedLookupPath, syscall.Errno) {
 	targets, err := rt.ResolveReadTargets(virtualPath)
 	if err != nil {
 		return nil, toErrno(err)
 	}
-	log.Debug().Str("op", op).Str("path", virtualPath).Msg("lookup resolved read targets")
+	log.Debug().Str("op", req.op).Str("path", virtualPath).Msg("lookup resolved read targets")
 
-	resolved, seenTargets, errno := resolveLookupPathInTargets(ctx, targets, db, log, virtualPath, op, false, logNilDB, nil)
+	resolved, seenTargets, errno := resolveLookupPathInTargets(ctx, targets, db, log, virtualPath, req, false, nil)
 	if errno != 0 {
 		return nil, errno
 	}
 	if resolved != nil {
-		log.Debug().Str("op", op).Str("path", virtualPath).Str("storage_id", resolved.targetID).Msg("lookup resolved on read target")
+		log.Debug().Str("op", req.op).Str("path", virtualPath).Str("storage_id", resolved.targetID).Msg("lookup resolved on read target")
 		return resolved, 0
 	}
 
@@ -110,36 +68,36 @@ func resolveLookupPath(ctx context.Context, rt *router.Router, db *indexdb.DB, l
 	if err != nil {
 		return nil, toErrno(err)
 	}
-	log.Debug().Str("op", op).Str("path", virtualPath).Msg("lookup read targets exhausted; trying list fallback")
+	log.Debug().Str("op", req.op).Str("path", virtualPath).Msg("lookup read targets exhausted; trying list fallback")
 
-	resolved, _, errno = resolveLookupPathInTargets(ctx, listTargets, db, log, virtualPath, op, true, logNilDB, seenTargets)
+	resolved, _, errno = resolveLookupPathInTargets(ctx, listTargets, db, log, virtualPath, req, true, seenTargets)
 	if errno != 0 {
 		return nil, errno
 	}
 	if resolved != nil {
-		log.Debug().Str("op", op).Str("path", virtualPath).Str("storage_id", resolved.targetID).Msg("lookup resolved on list fallback")
+		log.Debug().Str("op", req.op).Str("path", virtualPath).Str("storage_id", resolved.targetID).Msg("lookup resolved on list fallback")
 		return resolved, 0
 	}
 
-	log.Debug().Str("op", op).Str("path", virtualPath).Msg("lookup missed on all targets")
+	log.Debug().Str("op", req.op).Str("path", virtualPath).Msg("lookup missed on all targets")
 	return nil, syscall.ENOENT
 }
 
 // resolveLookupPathInTargets scans targets in order and optionally restricts matches to directories.
-func resolveLookupPathInTargets(ctx context.Context, targets []router.Target, db *indexdb.DB, log zerolog.Logger, virtualPath string, op string, directoriesOnly bool, logNilDB bool, seenTargets map[string]struct{}) (*resolvedLookupPath, map[string]struct{}, syscall.Errno) {
+func resolveLookupPathInTargets(ctx context.Context, targets []router.Target, db *indexdb.DB, log zerolog.Logger, virtualPath string, req metadataRequest, directoriesOnly bool, seenTargets map[string]struct{}) (*resolvedLookupPath, map[string]struct{}, syscall.Errno) {
 	if seenTargets == nil {
 		seenTargets = make(map[string]struct{}, len(targets))
 	}
 
 	for _, t := range targets {
 		if _, seen := seenTargets[t.ID]; seen {
-			log.Debug().Str("op", op).Str("path", virtualPath).Str("storage_id", t.ID).Bool("indexed", t.Indexed).Msg("lookup skipped previously scanned target")
+			log.Debug().Str("op", req.op).Str("path", virtualPath).Str("storage_id", t.ID).Bool("indexed", t.Indexed).Msg("lookup skipped previously scanned target")
 			continue
 		}
 		seenTargets[t.ID] = struct{}{}
-		log.Debug().Str("op", op).Str("path", virtualPath).Str("storage_id", t.ID).Bool("indexed", t.Indexed).Msg("lookup scanning target")
+		log.Debug().Str("op", req.op).Str("path", virtualPath).Str("storage_id", t.ID).Bool("indexed", t.Indexed).Msg("lookup scanning target")
 
-		resolved, errno := resolveLookupPathOnTarget(ctx, t, db, log, virtualPath, op, directoriesOnly, logNilDB)
+		resolved, errno := resolveLookupPathOnTarget(ctx, t, db, log, virtualPath, req, directoriesOnly)
 		if errno != 0 {
 			return nil, seenTargets, errno
 		}
@@ -152,73 +110,71 @@ func resolveLookupPathInTargets(ctx context.Context, targets []router.Target, db
 }
 
 // resolveLookupPathOnTarget resolves a virtual path against a single target.
-func resolveLookupPathOnTarget(ctx context.Context, t router.Target, db *indexdb.DB, log zerolog.Logger, virtualPath string, op string, directoriesOnly bool, logNilDB bool) (*resolvedLookupPath, syscall.Errno) {
+func resolveLookupPathOnTarget(ctx context.Context, t router.Target, db *indexdb.DB, log zerolog.Logger, virtualPath string, req metadataRequest, directoriesOnly bool) (*resolvedLookupPath, syscall.Errno) {
 	if !t.Indexed {
 		p := filepath.Join(t.Root, virtualPath)
-		st := syscall.Stat_t{}
-		err := syscall.Lstat(p, &st)
-		if err != nil {
-			if errors.Is(err, syscall.ENOENT) {
-				log.Debug().Str("op", op).Str("path", virtualPath).Str("storage_id", t.ID).Str("real_path", p).Msg("lookup missed on non-indexed target")
+		resolved, errno := req.readPhysical(p)
+		if errno != 0 {
+			if errno == syscall.ENOENT {
+				log.Debug().Str("op", req.op).Str("path", virtualPath).Str("storage_id", t.ID).Str("real_path", p).Msg("lookup missed on non-indexed target")
 				return nil, 0
 			}
-			log.Debug().Str("op", op).Str("path", virtualPath).Str("storage_id", t.ID).Str("real_path", p).Err(err).Msg("failed to lookup on non-indexed target")
-			return nil, toErrno(err)
+			log.Debug().Str("op", req.op).Str("path", virtualPath).Str("storage_id", t.ID).Str("real_path", p).Err(errno).Msg("failed to lookup on non-indexed target")
+			return nil, errno
 		}
-		if directoriesOnly && st.Mode&syscall.S_IFMT != syscall.S_IFDIR {
-			log.Debug().Str("op", op).Str("path", virtualPath).Str("storage_id", t.ID).Str("real_path", p).Msg("lookup skipped non-directory on non-indexed target")
+		if directoriesOnly && resolved.typeMode() != syscall.S_IFDIR {
+			log.Debug().Str("op", req.op).Str("path", virtualPath).Str("storage_id", t.ID).Str("real_path", p).Msg("lookup skipped non-directory on non-indexed target")
 			return nil, 0
 		}
-		log.Debug().Str("op", op).Str("path", virtualPath).Str("storage_id", t.ID).Str("real_path", p).Msg("lookup hit on non-indexed target")
-		return &resolvedLookupPath{targetID: t.ID, attr: newResolvedLookupAttrFromStat(&st)}, 0
+		log.Debug().Str("op", req.op).Str("path", virtualPath).Str("storage_id", t.ID).Str("real_path", p).Msg("lookup hit on non-indexed target")
+		resolved.targetID = t.ID
+		return resolved, 0
 	}
 
 	if db == nil {
-		if logNilDB {
-			log.Error().Str("op", op).Str("path", virtualPath).Str("storage_id", t.ID).Msg("failed to lookup: db is nil for indexed target")
+		if req.op == "lookup" {
+			log.Error().Str("op", req.op).Str("path", virtualPath).Str("storage_id", t.ID).Msg("failed to lookup: db is nil for indexed target")
 		}
 		return nil, syscall.EIO
 	}
 
 	f, ok, err := db.GetEffectiveFile(ctx, t.ID, virtualPath)
 	if err != nil {
-		log.Debug().Str("op", op).Str("path", virtualPath).Str("storage_id", t.ID).Err(err).Msg("failed to lookup indexed file")
-		return nil, toErrno(fmt.Errorf("failed to %s indexed file: %w", op, err))
+		log.Debug().Str("op", req.op).Str("path", virtualPath).Str("storage_id", t.ID).Err(err).Msg("failed to lookup indexed file")
+		return nil, toErrno(fmt.Errorf("failed to %s indexed file: %w", req.op, err))
 	}
 	if ok {
 		realPath := filepath.Join(t.Root, f.RealPath)
 		if directoriesOnly && !f.IsDir {
-			log.Debug().Str("op", op).Str("path", virtualPath).Str("storage_id", t.ID).Str("real_path", realPath).Msg("lookup skipped non-directory on indexed target")
+			log.Debug().Str("op", req.op).Str("path", virtualPath).Str("storage_id", t.ID).Str("real_path", realPath).Msg("lookup skipped non-directory on indexed target")
 			return nil, 0
 		}
-		log.Debug().Str("op", op).Str("path", virtualPath).Str("storage_id", t.ID).Str("real_path", realPath).Msg("lookup hit on indexed target")
+		log.Debug().Str("op", req.op).Str("path", virtualPath).Str("storage_id", t.ID).Str("real_path", realPath).Msg("lookup hit on indexed target")
 		return &resolvedLookupPath{
 			targetID: t.ID,
-			attr: resolvedLookupAttr{
-				size:      uint64(f.Size),
-				mtime:     uint64(f.MTimeSec),
-				mtimensec: 0,
-				mode:      f.Mode,
-				nlink:     1,
-				uid:       f.UID,
-				gid:       f.GID,
+			attr: gofuse.Attr{
+				Size:  uint64(f.Size),
+				Mtime: uint64(f.MTimeSec),
+				Mode:  f.Mode,
+				Nlink: 1,
+				Owner: gofuse.Owner{Uid: f.UID, Gid: f.GID},
 			},
 		}, 0
 	}
-	log.Debug().Str("op", op).Str("path", virtualPath).Str("storage_id", t.ID).Msg("lookup indexed file missed; probing directory")
+	log.Debug().Str("op", req.op).Str("path", virtualPath).Str("storage_id", t.ID).Msg("lookup indexed file missed; probing directory")
 
 	dirOK, err := db.DirExists(ctx, t.ID, virtualPath)
 	if err != nil {
-		log.Debug().Str("op", op).Str("path", virtualPath).Str("storage_id", t.ID).Err(err).Msg("failed to lookup indexed dir")
-		return nil, toErrno(fmt.Errorf("failed to %s indexed dir: %w", op, err))
+		log.Debug().Str("op", req.op).Str("path", virtualPath).Str("storage_id", t.ID).Err(err).Msg("failed to lookup indexed dir")
+		return nil, toErrno(fmt.Errorf("failed to %s indexed dir: %w", req.op, err))
 	}
 	if !dirOK {
-		log.Debug().Str("op", op).Str("path", virtualPath).Str("storage_id", t.ID).Msg("lookup missed on indexed target")
+		log.Debug().Str("op", req.op).Str("path", virtualPath).Str("storage_id", t.ID).Msg("lookup missed on indexed target")
 		return nil, 0
 	}
 
-	log.Debug().Str("op", op).Str("path", virtualPath).Str("storage_id", t.ID).Msg("lookup synthesized indexed directory")
-	return &resolvedLookupPath{targetID: t.ID, attr: newSyntheticDirLookupAttr()}, 0
+	log.Debug().Str("op", req.op).Str("path", virtualPath).Str("storage_id", t.ID).Msg("lookup synthesized indexed directory")
+	return &resolvedLookupPath{targetID: t.ID, attr: gofuse.Attr{Mode: syscall.S_IFDIR | 0o755, Nlink: 1}}, 0
 }
 
 // newResolvedChildInode creates a child inode from resolved lookup metadata.
@@ -242,22 +198,22 @@ func lookupChild(ctx context.Context, parent *fs.Inode, mountName string, state 
 		return nil, errno
 	}
 
-	resolved, errno := resolveLookupPath(ctx, rt, db, log, childPath, "lookup", true)
+	resolved, errno := resolveLookupPath(ctx, rt, db, log, childPath, metadataRequest{op: "lookup", readPhysical: lstatMetadata})
 	if errno != 0 {
 		return nil, errno
 	}
 
-	resolved.attr.applyToEntryOut(out)
+	out.Attr = resolved.attr
 	return newResolvedChildInode(ctx, parent, mountName, state, reload, db, disk, open, childPath, resolved), 0
 }
 
-// getattrPath gets attributes for a virtual path by searching read targets.
-func getattrPath(ctx context.Context, ino *fs.Inode, rt *router.Router, db *indexdb.DB, log zerolog.Logger, out *gofuse.AttrOut) syscall.Errno {
+// resolveInodeMetadata finds metadata for an inode using the same routing as Lookup.
+func resolveInodeMetadata(ctx context.Context, ino *fs.Inode, rt *router.Router, db *indexdb.DB, log zerolog.Logger, req metadataRequest) (*resolvedLookupPath, syscall.Errno) {
 	if ino == nil {
-		return toErrno(&errkind.NilError{What: "inode"})
+		return nil, toErrno(&errkind.NilError{What: "inode"})
 	}
 	if rt == nil {
-		return toErrno(&errkind.NilError{What: "router"})
+		return nil, toErrno(&errkind.NilError{What: "router"})
 	}
 
 	virtualPath := ino.Path(ino.Root())
@@ -265,16 +221,10 @@ func getattrPath(ctx context.Context, ino *fs.Inode, rt *router.Router, db *inde
 		virtualPath = ""
 	}
 	if errno := validateVirtualPath(virtualPath); errno != 0 {
-		return errno
+		return nil, errno
 	}
 
-	resolved, errno := resolveLookupPath(ctx, rt, db, log, virtualPath, "getattr", false)
-	if errno != 0 {
-		return errno
-	}
-
-	resolved.attr.applyToAttrOut(out)
-	return 0
+	return resolveLookupPath(ctx, rt, db, log, virtualPath, req)
 }
 
 // readdirPath lists directory entries across read targets and dedupes by name.

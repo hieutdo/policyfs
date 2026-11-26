@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -16,17 +17,20 @@ import (
 	"github.com/hieutdo/policyfs/internal/indexdb"
 	"github.com/hieutdo/policyfs/internal/router"
 	"github.com/rs/zerolog"
+	"golang.org/x/sys/unix"
 )
 
 // Node is a PolicyFS inode implementation (including the root inode).
 type Node struct {
 	fs.Inode
-	mountName string
-	state     *runtimeState
-	reload    *reloadState
-	db        *indexdb.DB
-	disk      *diskAccessLogger
-	open      *OpenTracker
+	mountName        string
+	state            *runtimeState
+	reload           *reloadState
+	db               *indexdb.DB
+	disk             *diskAccessLogger
+	open             *OpenTracker
+	handlesMu        sync.Mutex
+	unindexedHandles map[*FileHandle]struct{}
 }
 
 // runtime returns a stable snapshot of the current router/logger for this mount.
@@ -83,18 +87,100 @@ func (n *Node) Lookup(ctx context.Context, name string, out *gofuse.EntryOut) (*
 
 // Getattr reads attributes using the router's read target order.
 func (n *Node) Getattr(ctx context.Context, f fs.FileHandle, out *gofuse.AttrOut) syscall.Errno {
-	rt, log := n.runtime()
-	errno := getattrPath(ctx, n.EmbeddedInode(), rt, n.db, log, out)
-	if errno != 0 && errno != syscall.ENOENT {
-		log.Error().Str("op", "getattr").Str("path", n.Path(n.Root())).Err(errno).Msg("failed to getattr")
+	if h, ok := f.(*FileHandle); ok && !h.indexed {
+		var st syscall.Stat_t
+		if err := syscall.Fstat(h.fd, &st); err != nil {
+			return toErrno(err)
+		}
+		out.FromStat(&st)
+		out.Ino = n.StableAttr().Ino
+		return 0
 	}
-	return errno
+	rt, log := n.runtime()
+	resolved, errno := resolveInodeMetadata(ctx, n.EmbeddedInode(), rt, n.db, log, metadataRequest{op: "getattr", readPhysical: lstatMetadata})
+	if errno != 0 {
+		if errno != syscall.ENOENT {
+			log.Error().Str("op", "getattr").Str("path", n.Path(n.Root())).Err(errno).Msg("failed to getattr")
+		}
+		return errno
+	}
+	out.Attr = resolved.attr
+	return 0
 }
 
-// Statx disables FUSE_STATX so the kernel falls back to router-aware Getattr instead of
-// probing primaryRootPath via the embedded LoopbackNode.
+// Statx resolves metadata through the router and keeps indexed reads in the database.
 func (n *Node) Statx(ctx context.Context, f fs.FileHandle, flags uint32, mask uint32, out *gofuse.StatxOut) syscall.Errno {
-	return syscall.ENOSYS
+	syncFlags := int(flags) & (unix.AT_STATX_FORCE_SYNC | unix.AT_STATX_DONT_SYNC)
+	if h, ok := f.(*FileHandle); ok && !h.indexed {
+		return n.statxHandle(h, syncFlags, mask, out)
+	}
+	// Linux can omit the handle on FUSE_STATX, even for AT_EMPTY_PATH.
+	// A detached inode has no pathname left to resolve.
+	if f == nil && !n.IsRoot() {
+		if _, parent := n.Parent(); parent == nil {
+			n.handlesMu.Lock()
+			defer n.handlesMu.Unlock()
+			for h := range n.unindexedHandles {
+				return n.statxHandle(h, syncFlags, mask, out)
+			}
+			return syscall.ENOENT
+		}
+	}
+	rt, log := n.runtime()
+	req := metadataRequest{op: "statx", readPhysical: func(path string) (*resolvedLookupPath, syscall.Errno) {
+		var st unix.Statx_t
+		// Directory-only fallback needs the type even when the caller requests only birth time.
+		if err := unix.Statx(unix.AT_FDCWD, path, unix.AT_SYMLINK_NOFOLLOW|syncFlags, int(mask)|unix.STATX_TYPE, &st); err != nil {
+			return nil, toErrno(err)
+		}
+		return &resolvedLookupPath{attr: gofuse.Attr{Mode: uint32(st.Mode)}, statx: &st}, 0
+	}}
+	resolved, errno := resolveInodeMetadata(ctx, n.EmbeddedInode(), rt, n.db, log, req)
+	if errno != 0 {
+		return errno
+	}
+	if resolved.statx != nil {
+		out.FromStatx(resolved.statx)
+		out.Ino = n.StableAttr().Ino
+		return 0
+	}
+
+	attr := resolved.attr
+	out.Statx = gofuse.Statx{
+		Mask:  unix.STATX_TYPE | unix.STATX_MODE | unix.STATX_NLINK | unix.STATX_UID | unix.STATX_GID | unix.STATX_MTIME | unix.STATX_INO | unix.STATX_SIZE,
+		Mode:  uint16(attr.Mode),
+		Nlink: attr.Nlink,
+		Uid:   attr.Uid,
+		Gid:   attr.Gid,
+		Ino:   n.StableAttr().Ino,
+		Mtime: gofuse.SxTime{Sec: attr.Mtime, Nsec: attr.Mtimensec},
+		Size:  attr.Size,
+	}
+	return 0
+}
+
+// statxHandle reads the backing inode held open by the caller.
+func (n *Node) statxHandle(h *FileHandle, flags int, mask uint32, out *gofuse.StatxOut) syscall.Errno {
+	var st unix.Statx_t
+	if err := unix.Statx(h.fd, "", unix.AT_EMPTY_PATH|flags, int(mask), &st); err != nil {
+		return toErrno(err)
+	}
+	out.FromStatx(&st)
+	out.Ino = n.StableAttr().Ino
+	return 0
+}
+
+// rememberHandle keeps unindexed descriptors available for detached inode metadata.
+func (n *Node) rememberHandle(h *FileHandle) {
+	if h.indexed {
+		return
+	}
+	n.handlesMu.Lock()
+	defer n.handlesMu.Unlock()
+	if n.unindexedHandles == nil {
+		n.unindexedHandles = make(map[*FileHandle]struct{})
+	}
+	n.unindexedHandles[h] = struct{}{}
 }
 
 // Readdir returns a union of directory entries across read targets, deduped by name.
@@ -140,6 +226,7 @@ func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 		return nil, 0, errno
 	}
 	if h, ok := fh.(*FileHandle); ok {
+		n.rememberHandle(h)
 		attachOpenTracking(ctx, n, virtualPath, h, write)
 		if h.fallback {
 			log.Warn().Str("op", "open").Str("path", virtualPath).Str("storage_id", h.storageID).Msg("open: stale real_path fallback triggered")
@@ -282,6 +369,11 @@ func (n *Node) Release(ctx context.Context, f fs.FileHandle) syscall.Errno {
 	_, log := n.runtime()
 	start := time.Now()
 	fh, fhOK := f.(*FileHandle)
+	if fhOK && fh != nil && !fh.indexed {
+		n.handlesMu.Lock()
+		delete(n.unindexedHandles, fh)
+		n.handlesMu.Unlock()
+	}
 	if r, ok := f.(interface {
 		Release(ctx context.Context) syscall.Errno
 	}); ok {
