@@ -216,7 +216,8 @@ func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 	write := flags&gofuse.O_ANYWRITE != 0
 
 	start := time.Now()
-	fh, openFlags, errno := openFirst(ctx, rt, n.db, log, virtualPath, int(flags), write)
+	backingFlags := backingOpenFlags(int(flags), n.StableAttr().Mode)
+	fh, openFlags, errno := openFirst(ctx, rt, n.db, log, virtualPath, backingFlags, write)
 	if errno != 0 {
 		if errno == syscall.EROFS {
 			log.Debug().Str("op", "open").Str("path", virtualPath).Bool("write", write).Msg("open blocked: indexed target is read-only")
@@ -226,6 +227,7 @@ func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 		return nil, 0, errno
 	}
 	if h, ok := fh.(*FileHandle); ok {
+		h.flags = flags
 		n.rememberHandle(h)
 		attachOpenTracking(ctx, n, virtualPath, h, write)
 		if h.fallback {

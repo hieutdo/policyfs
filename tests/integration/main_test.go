@@ -55,8 +55,19 @@ func run(m *testing.M) int {
 		return 2
 	}
 
-	buildArgs := []string{"build", "-o", pfsBin}
-	if strings.TrimSpace(os.Getenv(config.EnvIntegrationCover)) != "" {
+	cover := strings.TrimSpace(os.Getenv(config.EnvIntegrationCover)) != ""
+	if err := buildPFSBinary(pfsBin, cover); err != nil {
+		fmt.Fprintln(os.Stderr, "failed to build pfs", err)
+		return 2
+	}
+	return m.Run()
+}
+
+// buildPFSBinary compiles the pfs daemon with optional integration coverage and debug flags.
+func buildPFSBinary(outPath string, cover bool, extraArgs ...string) error {
+	buildArgs := []string{"build", "-o", outPath}
+	buildArgs = append(buildArgs, extraArgs...)
+	if cover {
 		buildArgs = append(buildArgs, "-tags=cover", "-cover", "-covermode=atomic", "-coverpkg=./cmd/...,./internal/...")
 	}
 	if strings.TrimSpace(os.Getenv(config.EnvIntegrationDebugBuild)) != "" {
@@ -68,10 +79,9 @@ func run(m *testing.M) int {
 	buildCmd.Stdout = os.Stdout
 	buildCmd.Stderr = os.Stderr
 	if err := buildCmd.Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "failed to build pfs", err)
-		return 2
+		return fmt.Errorf("failed to build pfs binary: %w", err)
 	}
-	return m.Run()
+	return nil
 }
 
 // baseEnvWithoutKeys returns the current process environment without the given keys.
@@ -232,7 +242,11 @@ func withMountedFS(t *testing.T, cfg IntegrationConfig, fn func(env *MountedFS))
 
 	args := []string{"--config", env.ConfigPath, "mount", env.MountName}
 	args = append(args, cfg.MountArgs...)
-	mountCmd := exec.CommandContext(ctx, pfsBin, args...)
+	program := pfsBin
+	if cfg.mountBinary != "" {
+		program = cfg.mountBinary
+	}
+	mountCmd := exec.CommandContext(ctx, program, args...)
 	mountCmd.Env = pfsTestEnv(env, env.LogPath)
 	mountCmd.Stdout = os.Stdout
 	mountCmd.Stderr = os.Stderr

@@ -13,6 +13,47 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Test_backingOpenFlags verifies sync flags are stripped only for cached regular-file opens.
+func Test_backingOpenFlags(t *testing.T) {
+	tests := []struct {
+		name  string
+		flags int
+		mode  uint32
+		want  int
+	}{
+		{
+			name:  "should strip O_SYNC on regular file",
+			flags: syscall.O_WRONLY | syscall.O_SYNC,
+			mode:  syscall.S_IFREG | 0o600,
+			want:  syscall.O_WRONLY,
+		},
+		{
+			name:  "should strip O_DSYNC on regular file",
+			flags: syscall.O_RDWR | syscall.O_DSYNC,
+			mode:  syscall.S_IFREG | 0o644,
+			want:  syscall.O_RDWR,
+		},
+		{
+			name:  "should preserve sync flags when O_DIRECT is set",
+			flags: syscall.O_WRONLY | syscall.O_DIRECT | syscall.O_SYNC,
+			mode:  syscall.S_IFREG | 0o600,
+			want:  syscall.O_WRONLY | syscall.O_DIRECT | syscall.O_SYNC,
+		},
+		{
+			name:  "should preserve sync flags on non-regular files",
+			flags: syscall.O_WRONLY | syscall.O_SYNC,
+			mode:  syscall.S_IFIFO | 0o600,
+			want:  syscall.O_WRONLY | syscall.O_SYNC,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, backingOpenFlags(tc.flags, tc.mode))
+		})
+	}
+}
+
 // Test_openFirst verifies we resolve targets in order and return stable errno values.
 func Test_openFirst(t *testing.T) {
 	// This test uses real filesystem temp dirs because openFirst is a thin syscall wrapper.

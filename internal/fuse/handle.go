@@ -19,7 +19,7 @@ type FileHandle struct {
 	indexed      bool
 	fallback     bool // true when stale real_path triggered fallback to virtualPath
 	fd           int
-	flags        uint32
+	flags        uint32 // client open flags; fd may lack O_SYNC/O_DSYNC (see backingOpenFlags)
 
 	openTracker *OpenTracker
 	openID      daemonctl.OpenFileID
@@ -45,14 +45,25 @@ func (h *FileHandle) Write(ctx context.Context, data []byte, off int64) (uint32,
 	return uint32(n), 0
 }
 
-// Fsync flushes writes to stable storage.
-func (h *FileHandle) Fsync(ctx context.Context, flags uint32) syscall.Errno {
-	if err := syscall.Fsync(h.fd); err != nil {
-		return toErrno(err)
+// fuseFsyncFdatasync is FUSE_FSYNC_FDATASYNC: the kernel sets it for fdatasync(2)
+// and O_DSYNC writes, which only need data (not full metadata) on stable storage.
+const fuseFsyncFdatasync = 1
+
+// Fsync flushes writes to stable storage, using fdatasync when the kernel asks for it.
+//
+// It also carries O_SYNC/O_DSYNC durability, because backingOpenFlags strips those
+// flags from the backing fd. Never return ENOSYS here: the kernel would then disable
+// FSYNC for the whole mount and sync writes would silently stop being durable.
+func (h *FileHandle) Fsync(_ context.Context, flags uint32) syscall.Errno {
+	dataOnly := flags&fuseFsyncFdatasync != 0
+	errno := syncBackingFD(h.fd, dataOnly)
+	if dataOnly && (errno == syscall.ENOSYS || errno == syscall.EOPNOTSUPP) {
+		errno = syncBackingFD(h.fd, false)
 	}
-	_ = ctx
-	_ = flags
-	return 0
+	if errno == syscall.ENOSYS {
+		return syscall.EIO
+	}
+	return errno
 }
 
 // Release closes the underlying file descriptor.

@@ -32,6 +32,9 @@ type IntegrationConfig struct {
 	// in a test-specific way.
 	MountArgs []string
 
+	// mountBinary overrides the daemon for syscall fault-injection tests.
+	mountBinary string
+
 	// AllowOther controls whether the mount enables FUSE allow_other.
 	AllowOther bool
 

@@ -46,6 +46,21 @@ func stableIno(storageID string, virtualPath string) uint64 {
 	return ino
 }
 
+// backingOpenFlags lets Linux's cached FUSE write path sync the whole application
+// write via FSYNC before returning, instead of syncing every backing pwrite.
+//
+// Safe only while all of these hold; revisit before changing any of them:
+//   - no handle returns FOPEN_DIRECT_IO and the mount does not use direct_io,
+//     passthrough or writeback cache (the kernel then sends FSYNC after each
+//     O_SYNC/O_DSYNC write via generic_write_sync);
+//   - Fsync never returns ENOSYS (see FileHandle.Fsync).
+func backingOpenFlags(flags int, mode uint32) int {
+	if mode&syscall.S_IFMT == syscall.S_IFREG && flags&syscall.O_DIRECT == 0 {
+		return flags &^ (syscall.O_SYNC | syscall.O_DSYNC)
+	}
+	return flags
+}
+
 // openFirst opens a file by searching targets in the router-defined order.
 func openFirst(ctx context.Context, rt *router.Router, db *indexdb.DB, log zerolog.Logger, virtualPath string, flags int, write bool) (fs.FileHandle, uint32, syscall.Errno) {
 	if rt == nil {

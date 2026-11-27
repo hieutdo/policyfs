@@ -21,6 +21,7 @@ func (n *Node) Fsync(ctx context.Context, f fs.FileHandle, flags uint32) syscall
 		return fh.Fsync(ctx, flags)
 	}
 	// Without a FileHandle we don't know which physical fd to sync.
+	// ENOTSUP, not ENOSYS: ENOSYS makes the kernel stop sending FSYNC for the whole mount.
 	_ = ctx
 	_ = flags
 	return syscall.ENOTSUP

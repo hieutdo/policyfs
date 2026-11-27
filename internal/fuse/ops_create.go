@@ -71,7 +71,7 @@ func (n *Node) Create(ctx context.Context, name string, flags uint32, mode uint3
 		}
 	}
 
-	openFlags := int(flags) &^ syscall.O_APPEND
+	openFlags := backingOpenFlags(int(flags), mode|syscall.S_IFREG) &^ syscall.O_APPEND
 	fd, err := syscall.Open(physicalPath, openFlags|syscall.O_CREAT, mode)
 	if err != nil {
 		log.Error().Str("op", "create").Str("path", virtualPath).Str("storage_id", target.ID).Err(err).Msg("failed to open file for create")
