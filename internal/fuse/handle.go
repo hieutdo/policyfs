@@ -66,18 +66,12 @@ func (h *FileHandle) Fsync(_ context.Context, flags uint32) syscall.Errno {
 	return errno
 }
 
-// Release closes the underlying file descriptor.
+// Release closes the backing descriptor without requesting an additional sync.
 func (h *FileHandle) Release(ctx context.Context) syscall.Errno {
 	if h.openTracker != nil && h.openTracked {
 		defer h.openTracker.Dec(h.openID, h.openWrite)
 	}
 
-	if h.flags&gofuse.O_ANYWRITE != 0 {
-		if err := syscall.Fsync(h.fd); err != nil {
-			_ = syscall.Close(h.fd)
-			return toErrno(err)
-		}
-	}
 	if err := syscall.Close(h.fd); err != nil {
 		return toErrno(err)
 	}

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -165,7 +166,7 @@ func TestFUSE_syncWriteError(t *testing.T) {
 
 			_, err = f.WriteAt([]byte("tail"), 4)
 			require.ErrorIs(t, err, unix.EIO)
-			// O_DSYNC only needs data integrity; Release fsyncs are full, so count datasync exactly.
+			// O_DSYNC only needs data integrity, so count datasync exactly.
 			require.Equal(t, int32(1), backing.datasync.Load())
 			got, err := os.ReadFile(path)
 			require.NoError(t, err)
@@ -174,6 +175,64 @@ func TestFUSE_syncWriteError(t *testing.T) {
 	})
 }
 
+// TestFUSE_releaseDoesNotSync verifies that Release issues no extra backing sync.
+func TestFUSE_releaseDoesNotSync(t *testing.T) {
+	if os.Getenv(config.EnvIntegrationUseExistingMount) != "" {
+		t.Skip("requires test-owned backing storage")
+	}
+
+	t.Run("should not invoke backing fsync or fdatasync on standard write and close", func(t *testing.T) {
+		withMountedFS(t, IntegrationConfig{Targets: []string{"ssd1"}}, func(env *MountedFS) {
+			_, backing := mountSyncTestFS(t, env, fuse.OK, fuse.OK)
+			path := env.MountPath("fault/buffered.txt")
+			physicalPath := env.StoragePath("ssd1", "fault/buffered.txt")
+			f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				_ = f.Close()
+				waitForBackingFDClosed(t, env, physicalPath)
+			})
+
+			_, err = f.Write([]byte("buffered payload"))
+			require.NoError(t, err)
+			require.NoError(t, f.Close())
+			waitForBackingFDClosed(t, env, physicalPath)
+
+			// Neither full fsync nor datasync should be invoked on Release.
+			require.Zero(t, backing.full.Load(), "Release must not issue full fsync")
+			require.Zero(t, backing.datasync.Load(), "Release must not issue fdatasync")
+		})
+	})
+
+	t.Run("should invoke backing fsync when client explicitly calls Sync", func(t *testing.T) {
+		withMountedFS(t, IntegrationConfig{Targets: []string{"ssd1"}}, func(env *MountedFS) {
+			_, backing := mountSyncTestFS(t, env, fuse.OK, fuse.OK)
+			path := env.MountPath("fault/explicit_sync.txt")
+			physicalPath := env.StoragePath("ssd1", "fault/explicit_sync.txt")
+			f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				_ = f.Close()
+				waitForBackingFDClosed(t, env, physicalPath)
+			})
+
+			_, err = f.Write([]byte("synced payload"))
+			require.NoError(t, err)
+			require.NoError(t, f.Sync())
+
+			require.Equal(t, int32(1), backing.full.Load(), "explicit Sync must issue full fsync")
+
+			require.NoError(t, f.Close())
+			waitForBackingFDClosed(t, env, physicalPath)
+			// Close after Sync should still not issue any additional sync.
+			require.Equal(t, int32(1), backing.full.Load(), "Release after explicit Sync must not issue additional fsync")
+			require.Zero(t, backing.datasync.Load(), "Release after explicit Sync must not issue fdatasync")
+		})
+	})
+}
+
+// TestFUSE_syncUnsupportedDatasync verifies Fsync falls back to full fsync when the
+// backing filesystem rejects fdatasync with EOPNOTSUPP.
 func TestFUSE_syncUnsupportedDatasync(t *testing.T) {
 	if os.Getenv(config.EnvIntegrationUseExistingMount) != "" {
 		t.Skip("requires test-owned backing storage")
@@ -271,4 +330,23 @@ func backingFDFlags(t *testing.T, env *MountedFS, path string) int {
 	}
 	t.Fatalf("backing fd flags missing for %s", path)
 	return 0
+}
+
+// waitForBackingFDClosed polls the test daemon's open descriptors until asynchronous
+// FUSE_RELEASE closes the backing file descriptor.
+func waitForBackingFDClosed(t *testing.T, env *MountedFS, path string) {
+	t.Helper()
+	fdDir := fmt.Sprintf("/proc/%d/fd", env.mountProc.Pid)
+	require.Eventually(t, func() bool {
+		entries, err := os.ReadDir(fdDir)
+		if err != nil {
+			return false
+		}
+		for _, entry := range entries {
+			if target, err := os.Readlink(filepath.Join(fdDir, entry.Name())); err == nil && target == path {
+				return false
+			}
+		}
+		return true
+	}, 2*time.Second, 10*time.Millisecond, "backing fd still open for %s", path)
 }
