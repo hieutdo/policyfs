@@ -35,9 +35,9 @@ func Test_backingOpenFlags(t *testing.T) {
 		},
 		{
 			name:  "should preserve sync flags when O_DIRECT is set",
-			flags: syscall.O_WRONLY | syscall.O_DIRECT | syscall.O_SYNC,
+			flags: syscall.O_WRONLY | openDirect | syscall.O_SYNC,
 			mode:  syscall.S_IFREG | 0o600,
-			want:  syscall.O_WRONLY | syscall.O_DIRECT | syscall.O_SYNC,
+			want:  syscall.O_WRONLY | openDirect | syscall.O_SYNC,
 		},
 		{
 			name:  "should preserve sync flags on non-regular files",

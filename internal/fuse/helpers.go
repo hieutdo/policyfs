@@ -55,7 +55,7 @@ func stableIno(storageID string, virtualPath string) uint64 {
 //     O_SYNC/O_DSYNC write via generic_write_sync);
 //   - Fsync never returns ENOSYS (see FileHandle.Fsync).
 func backingOpenFlags(flags int, mode uint32) int {
-	if mode&syscall.S_IFMT == syscall.S_IFREG && flags&syscall.O_DIRECT == 0 {
+	if mode&syscall.S_IFMT == syscall.S_IFREG && flags&openDirect == 0 {
 		return flags &^ (syscall.O_SYNC | syscall.O_DSYNC)
 	}
 	return flags
